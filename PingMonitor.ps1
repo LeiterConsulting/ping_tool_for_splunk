@@ -26,7 +26,7 @@
 
 .NOTES
     Author: Splunk Ping Monitor
-    Version: 1.2.0
+    Version: 1.3.0
     Requires: PowerShell 7.4+ (no external modules - airgap friendly)
 #>
 
@@ -104,6 +104,35 @@ function Get-Configuration {
     }
     else {
         $config['hec'] = $defaults.hec
+    }
+    
+    # Validate and sanitize numeric values
+    if ($config.pings_per_cycle -lt 1) {
+        Write-Warning "Invalid pings_per_cycle ($($config.pings_per_cycle)). Using default: 4"
+        $config.pings_per_cycle = 4
+    }
+    if ($config.cycle_interval_seconds -lt 1) {
+        Write-Warning "Invalid cycle_interval_seconds ($($config.cycle_interval_seconds)). Using default: 60"
+        $config.cycle_interval_seconds = 60
+    }
+    if ($config.timeout_ms -lt 100) {
+        Write-Warning "Invalid timeout_ms ($($config.timeout_ms)). Using default: 1000"
+        $config.timeout_ms = 1000
+    }
+    if ($config.parallel_threads -lt 1) {
+        Write-Warning "Invalid parallel_threads ($($config.parallel_threads)). Using default: 10"
+        $config.parallel_threads = 10
+    }
+    if ($config.log_rotation_size_mb -lt 1) {
+        Write-Warning "Invalid log_rotation_size_mb ($($config.log_rotation_size_mb)). Using default: 50"
+        $config.log_rotation_size_mb = 50
+    }
+    
+    # Validate output_mode
+    $validModes = @('file', 'hec', 'both')
+    if ($config.output_mode -notin $validModes) {
+        Write-Warning "Invalid output_mode '$($config.output_mode)'. Using default: file"
+        $config.output_mode = 'file'
     }
     
     return $config
