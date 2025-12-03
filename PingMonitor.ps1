@@ -167,6 +167,11 @@ function Invoke-PingEndpoint {
         try {
             $pingResult = Test-Connection -TargetName $Endpoint.ip -Count 1 -TimeoutSeconds ([math]::Ceiling($TimeoutMs / 1000)) -ErrorAction Stop
             
+            # Check if ping actually succeeded (PowerShell 7 doesn't throw on timeout)
+            if ($pingResult.Status -ne "Success") {
+                throw "Ping failed with status: $($pingResult.Status)"
+            }
+            
             $latency = [int]$pingResult.Latency
             $ttl = $pingResult.Reply.Options.Ttl
             
@@ -264,6 +269,11 @@ function Invoke-ParallelPing {
             
             try {
                 $pingResult = Test-Connection -TargetName $endpoint.ip -Count 1 -TimeoutSeconds ([math]::Ceiling($timeout / 1000)) -ErrorAction Stop
+                
+                # Check if ping actually succeeded (PowerShell 7 doesn't throw on timeout)
+                if ($pingResult.Status -ne "Success") {
+                    throw "Ping failed with status: $($pingResult.Status)"
+                }
                 
                 $latency = [int]$pingResult.Latency
                 $ttl = $pingResult.Reply.Options.Ttl
