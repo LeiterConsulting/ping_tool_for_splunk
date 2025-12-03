@@ -1,0 +1,3 @@
+# This directory contains ping result logs
+# Files are automatically rotated when they exceed the configured size
+# Old logs are automatically cleaned up (keeps last 5 rotations)

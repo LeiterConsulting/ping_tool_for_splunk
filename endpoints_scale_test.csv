@@ -1,0 +1,101 @@
+ip,hostname,group,description
+8.8.8.8,google-dns-1,dns,Google Public DNS Primary
+8.8.4.4,google-dns-2,dns,Google Public DNS Secondary
+1.1.1.1,cloudflare-dns-1,dns,Cloudflare DNS Primary
+1.0.0.1,cloudflare-dns-2,dns,Cloudflare DNS Secondary
+208.67.222.222,opendns-1,dns,OpenDNS Primary
+208.67.220.220,opendns-2,dns,OpenDNS Secondary
+9.9.9.9,quad9-dns-1,dns,Quad9 DNS Primary
+149.112.112.112,quad9-dns-2,dns,Quad9 DNS Secondary
+76.76.19.19,alternate-dns-1,dns,Alternate DNS Primary
+76.223.122.150,alternate-dns-2,dns,Alternate DNS Secondary
+94.140.14.14,adguard-dns-1,dns,AdGuard DNS Primary
+94.140.15.15,adguard-dns-2,dns,AdGuard DNS Secondary
+185.228.168.9,cleanbrowsing-1,dns,CleanBrowsing DNS Primary
+185.228.169.9,cleanbrowsing-2,dns,CleanBrowsing DNS Secondary
+77.88.8.8,yandex-dns-1,dns,Yandex DNS Primary
+77.88.8.1,yandex-dns-2,dns,Yandex DNS Secondary
+13.107.21.200,microsoft-azure-1,cloud,Microsoft Azure
+20.112.52.29,microsoft-azure-2,cloud,Microsoft Azure
+20.236.44.162,microsoft-azure-3,cloud,Microsoft Azure
+20.53.203.50,microsoft-azure-4,cloud,Microsoft Azure
+52.96.0.1,microsoft-o365-1,cloud,Microsoft 365
+52.97.0.1,microsoft-o365-2,cloud,Microsoft 365
+172.217.14.78,google-cloud-1,cloud,Google Cloud
+142.250.80.46,google-cloud-2,cloud,Google Cloud
+104.16.0.1,cloudflare-cdn-1,cloud,Cloudflare CDN
+104.17.0.1,cloudflare-cdn-2,cloud,Cloudflare CDN
+151.101.1.140,fastly-cdn-1,cloud,Fastly CDN
+151.101.65.140,fastly-cdn-2,cloud,Fastly CDN
+54.239.28.85,aws-ec2-1,cloud,AWS EC2
+52.94.236.248,aws-ec2-2,cloud,AWS EC2
+157.240.1.35,facebook-www,websites,Facebook
+157.240.3.35,facebook-www-2,websites,Facebook Secondary
+104.244.42.1,twitter-www,websites,Twitter/X
+104.244.42.65,twitter-www-2,websites,Twitter/X Secondary
+23.192.0.1,akamai-cdn-1,websites,Akamai CDN
+23.193.0.1,akamai-cdn-2,websites,Akamai CDN
+31.13.65.36,instagram-www,websites,Instagram
+31.13.65.174,instagram-www-2,websites,Instagram Secondary
+140.82.121.4,github-www,websites,GitHub
+140.82.121.3,github-www-2,websites,GitHub Secondary
+13.107.42.14,linkedin-www,websites,LinkedIn
+13.107.42.12,linkedin-www-2,websites,LinkedIn Secondary
+198.35.26.96,wikipedia-www,websites,Wikipedia
+198.35.26.112,wikipedia-www-2,websites,Wikipedia Secondary
+198.41.0.4,root-dns-a,infrastructure,A Root DNS Server (Verisign)
+199.9.14.201,root-dns-b,infrastructure,B Root DNS Server (USC-ISI)
+192.33.4.12,root-dns-c,infrastructure,C Root DNS Server (Cogent)
+199.7.91.13,root-dns-d,infrastructure,D Root DNS Server (UMD)
+192.203.230.10,root-dns-e,infrastructure,E Root DNS Server (NASA)
+192.5.5.241,root-dns-f,infrastructure,F Root DNS Server (ISC)
+192.112.36.4,root-dns-g,infrastructure,G Root DNS Server (DISA)
+198.97.190.53,root-dns-h,infrastructure,H Root DNS Server (US Army)
+192.36.148.17,root-dns-i,infrastructure,I Root DNS Server (Netnod)
+192.58.128.30,root-dns-j,infrastructure,J Root DNS Server (Verisign)
+193.0.14.129,root-dns-k,infrastructure,K Root DNS Server (RIPE NCC)
+199.7.83.42,root-dns-l,infrastructure,L Root DNS Server (ICANN)
+202.12.27.33,root-dns-m,infrastructure,M Root DNS Server (WIDE)
+80.81.192.1,ams-ix-1,exchange,Amsterdam Internet Exchange
+195.69.144.1,de-cix-1,exchange,DE-CIX Frankfurt
+198.32.132.1,equinix-ash,exchange,Equinix Ashburn
+206.126.236.1,equinix-chi,exchange,Equinix Chicago
+206.223.116.1,equinix-sjo,exchange,Equinix San Jose
+198.32.124.1,equinix-nyc,exchange,Equinix New York
+206.108.34.1,equinix-dal,exchange,Equinix Dallas
+206.126.232.1,equinix-la,exchange,Equinix Los Angeles
+198.32.176.1,equinix-mia,exchange,Equinix Miami
+4.2.2.1,level3-dns-1,network-test,Level3 DNS
+4.2.2.2,level3-dns-2,network-test,Level3 DNS
+4.2.2.3,level3-dns-3,network-test,Level3 DNS
+4.2.2.4,level3-dns-4,network-test,Level3 DNS
+4.2.2.5,level3-dns-5,network-test,Level3 DNS
+4.2.2.6,level3-dns-6,network-test,Level3 DNS
+64.6.64.6,verisign-dns-1,network-test,Verisign DNS Primary
+64.6.65.6,verisign-dns-2,network-test,Verisign DNS Secondary
+216.146.35.35,dyn-dns-1,network-test,Dyn DNS Primary
+216.146.36.36,dyn-dns-2,network-test,Dyn DNS Secondary
+156.154.70.1,neustar-dns-1,network-test,Neustar DNS Primary
+156.154.71.1,neustar-dns-2,network-test,Neustar DNS Secondary
+45.90.28.1,nextdns-1,network-test,NextDNS Primary
+45.90.30.1,nextdns-2,network-test,NextDNS Secondary
+176.103.130.130,adguard-family-1,network-test,AdGuard Family DNS
+176.103.130.131,adguard-family-2,network-test,AdGuard Family DNS
+200.221.2.45,brazil-uol,regional-americas,UOL Brazil
+200.49.130.1,argentina-telecom,regional-americas,Telecom Argentina
+201.144.135.1,mexico-telmex,regional-americas,Telmex Mexico
+190.217.0.1,colombia-claro,regional-americas,Claro Colombia
+200.75.0.1,chile-entel,regional-americas,Entel Chile
+168.95.1.1,taiwan-hinet,regional-apac,HiNet Taiwan
+168.95.192.1,taiwan-hinet-2,regional-apac,HiNet Taiwan Secondary
+203.69.0.1,taiwan-seednet,regional-apac,Seednet Taiwan
+168.126.63.1,korea-kt,regional-apac,KT Korea
+164.124.101.2,korea-lg,regional-apac,LG Uplus Korea
+203.248.252.2,korea-dacom,regional-apac,Dacom Korea
+202.12.27.33,japan-wide,regional-apac,WIDE Project Japan
+203.134.0.1,australia-telstra,regional-apac,Telstra Australia
+139.130.4.5,australia-optus,regional-apac,Optus Australia
+101.226.4.6,china-dnspai,regional-apac,DNSPai China
+114.114.114.114,china-114dns,regional-apac,114DNS China
+223.5.5.5,china-alidns,regional-apac,Alibaba DNS China
+119.29.29.29,china-dnspod,regional-apac,DNSPod China (Tencent)

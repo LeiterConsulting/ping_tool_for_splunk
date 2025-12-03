@@ -1,0 +1,364 @@
+<dashboard version="1.1" theme="dark">
+  <label>Ping Monitor Dashboard</label>
+  <description>Network endpoint availability and latency monitoring. Replace YOUR_INDEX and YOUR_SOURCETYPE with your actual values.</description>
+  
+  <!-- 
+    SETUP INSTRUCTIONS:
+    1. Find and replace "YOUR_INDEX" with your actual Splunk index name
+    2. Find and replace "YOUR_SOURCETYPE" with your sourcetype (default: ping_monitor)
+    3. Save the dashboard
+  -->
+  
+  <fieldset submitButton="true" autoRun="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="multiselect" token="selected_groups" searchWhenChanged="true">
+      <label>Group</label>
+      <choice value="*">All Groups</choice>
+      <default>*</default>
+      <delimiter> OR group=</delimiter>
+      <prefix>group=</prefix>
+      <fieldForLabel>group</fieldForLabel>
+      <fieldForValue>group</fieldForValue>
+      <search>
+        <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary | dedup group | table group</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="multiselect" token="selected_hosts" searchWhenChanged="true">
+      <label>Hostname</label>
+      <choice value="*">All Hosts</choice>
+      <default>*</default>
+      <delimiter> OR hostname=</delimiter>
+      <prefix>hostname=</prefix>
+      <fieldForLabel>hostname</fieldForLabel>
+      <fieldForValue>hostname</fieldForValue>
+      <search>
+        <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary | dedup hostname | table hostname</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+  </fieldset>
+
+  <!-- Row 1: Key Metrics -->
+  <row>
+    <panel>
+      <single>
+        <title>Total Endpoints Monitored</title>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats dc(target_ip) as total_endpoints</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Overall Availability (%)</title>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats sum(pings_successful) as success, sum(pings_sent) as total
+| eval availability=round((success/total)*100, 2)
+| fields availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0xdc4e41","0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[90,99]</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Average Latency (ms)</title>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+| stats avg(avg_latency_ms) as avg_latency
+| eval avg_latency=round(avg_latency, 2)</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[50,200]</option>
+        <option name="unit">ms</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Hosts with Issues</title>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats latest(packet_loss_pct) as packet_loss by hostname
+| where packet_loss > 0
+| stats count as hosts_with_issues</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Row 2: Availability Over Time -->
+  <row>
+    <panel>
+      <title>Availability Over Time by Group</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| timechart span=5m avg(eval(100-packet_loss_pct)) as availability by group</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Availability (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 3: Latency Analysis -->
+  <row>
+    <panel>
+      <title>Average Latency Over Time</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+| timechart span=5m avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Latency (ms)</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.chart.stackMode">default</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Latency by Host</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+| stats avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency by hostname
+| sort -avg_latency
+| head 20</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.axisTitleX.text">Latency (ms)</option>
+        <option name="charting.axisTitleY.text">Hostname</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 4: Packet Loss Analysis -->
+  <row>
+    <panel>
+      <title>Packet Loss Over Time</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| timechart span=5m avg(packet_loss_pct) as avg_packet_loss by hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Packet Loss (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Packet Loss Distribution</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| eval loss_bucket=case(
+    packet_loss_pct==0, "0% (No Loss)",
+    packet_loss_pct>0 AND packet_loss_pct&lt;=25, "1-25%",
+    packet_loss_pct>25 AND packet_loss_pct&lt;=50, "26-50%",
+    packet_loss_pct>50 AND packet_loss_pct&lt;=75, "51-75%",
+    packet_loss_pct>75 AND packet_loss_pct&lt;100, "76-99%",
+    packet_loss_pct==100, "100% (Total Loss)"
+)
+| stats count by loss_bucket
+| sort loss_bucket</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 5: Host Status Table -->
+  <row>
+    <panel>
+      <title>Current Host Status</title>
+      <table>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats latest(timestamp) as last_check, 
+        latest(packet_loss_pct) as packet_loss,
+        latest(avg_latency_ms) as avg_latency,
+        latest(min_latency_ms) as min_latency,
+        latest(max_latency_ms) as max_latency,
+        latest(pings_successful) as last_success,
+        latest(pings_sent) as last_sent,
+        values(group) as group,
+        values(description) as description
+        by hostname, target_ip
+| eval status=case(
+    packet_loss==0, "✅ Healthy",
+    packet_loss>0 AND packet_loss&lt;50, "⚠️ Degraded",
+    packet_loss>=50 AND packet_loss&lt;100, "🔶 Critical",
+    packet_loss==100, "❌ Down"
+)
+| eval avg_latency=if(avg_latency>0, round(avg_latency, 2)." ms", "N/A")
+| eval min_latency=if(min_latency>0, round(min_latency, 2)." ms", "N/A")
+| eval max_latency=if(max_latency>0, round(max_latency, 2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table status, hostname, target_ip, group, description, packet_loss, avg_latency, min_latency, max_latency, last_check
+| sort status</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="status">
+          <colorPalette type="map">{"✅ Healthy":#53a051,"⚠️ Degraded":#f8be34,"🔶 Critical":#f1813f,"❌ Down":#dc4e41}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 6: Individual Ping Results -->
+  <row>
+    <panel>
+      <title>Recent Ping Events</title>
+      <table>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=ping ($selected_groups$) ($selected_hosts$)
+| eval status_icon=if(status=="success", "✅", "❌")
+| eval latency_display=if(latency_ms>0, latency_ms." ms", "N/A")
+| table timestamp, status_icon, hostname, target_ip, group, latency_display, ttl, error_message
+| rename status_icon as Status, latency_display as Latency, error_message as "Error Message"
+| sort -timestamp
+| head 100</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+        <format type="color" field="Status">
+          <colorPalette type="map">{"✅":#53a051,"❌":#dc4e41}</colorPalette>
+        </format>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 7: Group Summary -->
+  <row>
+    <panel>
+      <title>Availability by Group</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats sum(pings_successful) as success, sum(pings_sent) as total by group
+| eval availability=round((success/total)*100, 2)
+| fields group, availability
+| sort -availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.axisTitleX.text">Group</option>
+        <option name="charting.axisTitleY.text">Availability (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Host Count by Group</title>
+      <chart>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats dc(hostname) as host_count by group
+| sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 8: Alerts/Issues Summary -->
+  <row>
+    <panel>
+      <title>Hosts with Recent Issues (Packet Loss > 0%)</title>
+      <table>
+        <search>
+          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary packet_loss_pct>0 ($selected_groups$) ($selected_hosts$)
+| stats count as issue_count, 
+        avg(packet_loss_pct) as avg_loss,
+        max(packet_loss_pct) as max_loss,
+        latest(timestamp) as last_issue,
+        values(group) as group
+        by hostname, target_ip
+| eval avg_loss=round(avg_loss, 2)."%"
+| eval max_loss=max_loss."%"
+| sort -issue_count
+| rename issue_count as "Issue Count", avg_loss as "Avg Loss", max_loss as "Max Loss", last_issue as "Last Issue"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+
+</dashboard>

@@ -1,0 +1,30 @@
+# Logs (keep structure, ignore content)
+logs/*.log
+logs/*_*.log
+
+# Keep the logs directory
+!logs/.gitkeep
+
+# PowerShell module cache
+*.psm1.cache
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sensitive files (tokens, credentials)
+*.secret
+*.credentials
+
+# NSSM executable (downloaded at runtime)
+nssm.exe

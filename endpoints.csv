@@ -1,0 +1,7 @@
+ip,hostname,group,description
+8.8.8.8,google-dns-primary,dns,Google Public DNS Primary
+8.8.4.4,google-dns-secondary,dns,Google Public DNS Secondary
+1.1.1.1,cloudflare-dns,dns,Cloudflare DNS
+208.67.222.222,opendns-primary,dns,OpenDNS Primary
+192.168.1.1,local-gateway,network,Local Network Gateway
+10.0.0.1,core-router,network,Core Router
