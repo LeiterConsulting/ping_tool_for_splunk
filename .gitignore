@@ -28,3 +28,7 @@ Desktop.ini
 
 # NSSM executable (downloaded at runtime)
 nssm.exe
+
+# Development tools (not part of the main app)
+DiscoverEndpoints.ps1
+discovered_endpoints.csv

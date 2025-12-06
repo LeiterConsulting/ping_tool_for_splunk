@@ -1,12 +1,17 @@
 # Splunk Ping Monitor
 
-A PowerShell 7.4+ based network monitoring tool that pings endpoints and sends results to Splunk for visualization and alerting.
+A cross-platform network monitoring tool that pings endpoints and sends results to Splunk for visualization and alerting.
+
+**Available in two editions:**
+- 🪟 **Windows Edition** (PowerShell 7.4+) - `PingMonitor.ps1`
+- 🐧 **Unix Edition** (POSIX Shell) - `ping_monitor.sh`
 
 ## Features
 
-- **Airgap Friendly**: No external modules required - uses only native PowerShell 7.4+ features
+- **Truly Cross-Platform**: Runs on Windows, Linux, macOS, BSD, Alpine, Raspberry Pi, and even iOS (iSH)
+- **Airgap Friendly**: No external dependencies - uses only native OS tools
 - **Flexible Endpoint Configuration**: CSV-based endpoint list with optional grouping and descriptions
-- **Parallel Ping Execution**: Efficiently ping multiple endpoints simultaneously
+- **Parallel Ping Execution**: Efficiently ping multiple endpoints simultaneously (Windows)
 - **Dual Output Modes**: 
   - File-based logging (for Splunk Universal Forwarder)
   - Direct Splunk HEC (HTTP Event Collector) integration
@@ -14,7 +19,153 @@ A PowerShell 7.4+ based network monitoring tool that pings endpoints and sends r
 - **Automatic Log Rotation**: Prevents disk space issues
 - **Comprehensive Dashboard**: Pre-built Splunk dashboard for visualization
 
-## Requirements
+---
+
+## 🐧 Unix/Linux/macOS Edition
+
+### Supported Platforms
+
+| Platform | Tested | Notes |
+|----------|--------|-------|
+| Ubuntu/Debian | ✅ | Full support |
+| CentOS/RHEL/Rocky | ✅ | Full support |
+| Alpine Linux | ✅ | Minimal footprint, perfect for containers |
+| macOS | ✅ | Full support |
+| Raspberry Pi OS | ✅ | Full support |
+| FreeBSD/OpenBSD | ✅ | Full support |
+| iSH (iOS) | ✅ | Cron-based execution |
+| Docker/Containers | ✅ | Alpine-based recommended |
+
+### Requirements (Unix)
+
+- **POSIX-compliant shell** (`sh`, `bash`, `ash`, `dash`)
+- **ping** (usually pre-installed)
+- **awk**, **sed** (standard POSIX tools)
+- **curl** (optional, required for HEC output)
+
+### Quick Start (Unix)
+
+```bash
+# Clone or download
+git clone https://github.com/LeiterConsulting/ping_tool_for_splunk.git
+cd ping_tool_for_splunk
+
+# Make executable
+chmod +x ping_monitor.sh
+
+# Edit endpoints
+nano endpoints.csv
+
+# Edit config (optional)
+nano config.conf
+
+# Test run
+./ping_monitor.sh --once
+
+# Run continuously
+./ping_monitor.sh
+```
+
+### Installation (Unix)
+
+**Quick install (as root):**
+```bash
+chmod +x install_unix.sh
+sudo ./install_unix.sh
+```
+
+**Manual install:**
+```bash
+# Create directory
+sudo mkdir -p /opt/ping_monitor
+sudo cp ping_monitor.sh config.conf endpoints.csv /opt/ping_monitor/
+sudo chmod +x /opt/ping_monitor/ping_monitor.sh
+
+# Test
+cd /opt/ping_monitor
+./ping_monitor.sh --once
+```
+
+### Running as a Service (Unix)
+
+The installer auto-detects your init system:
+
+| Init System | Platforms | Commands |
+|-------------|-----------|----------|
+| **systemd** | Ubuntu, Debian, CentOS, Fedora | `systemctl start ping_monitor` |
+| **launchd** | macOS | `launchctl load /Library/LaunchDaemons/com.splunk.ping_monitor.plist` |
+| **OpenRC** | Alpine, Gentoo | `rc-service ping_monitor start` |
+| **cron** | iSH, minimal systems | Runs automatically every minute |
+
+### Unix Command-Line Options
+
+```
+Usage: ./ping_monitor.sh [OPTIONS]
+
+Options:
+  -c, --config FILE      Path to config file (default: ./config.conf)
+  -e, --endpoints FILE   Path to endpoints CSV (default: ./endpoints.csv)
+  -o, --once             Run single cycle and exit
+  -v, --verbose          Enable verbose/debug output
+  -h, --help             Show help message
+
+Environment Variables (override config):
+  PINGS_PER_CYCLE=4
+  CYCLE_INTERVAL=60
+  PING_TIMEOUT=2
+  OUTPUT_MODE=file
+  LOG_PATH=./logs/ping_results.log
+  HEC_URL=https://splunk:8088/services/collector/event
+  HEC_TOKEN=your-token
+```
+
+### Unix Configuration (config.conf)
+
+```bash
+# Ping settings
+PINGS_PER_CYCLE=4
+CYCLE_INTERVAL=60
+PING_TIMEOUT=2
+
+# Output settings
+OUTPUT_MODE="file"  # file, hec, or both
+LOG_PATH="./logs/ping_results.log"
+LOG_ROTATION_SIZE_MB=50
+
+# Splunk HEC (optional)
+HEC_URL="https://splunk.example.com:8088/services/collector/event"
+HEC_TOKEN="your-token-here"
+HEC_INDEX="main"
+HEC_SOURCETYPE="ping_monitor"
+HEC_VERIFY_SSL="true"
+```
+
+### iSH (iOS) Special Instructions
+
+iSH is an iOS app that provides an Alpine Linux environment:
+
+1. Install iSH from the App Store
+2. Install dependencies:
+   ```bash
+   apk add curl iputils
+   ```
+3. Copy files to iSH (via Files app or `wget`)
+4. Run the installer or manually set up cron:
+   ```bash
+   # Edit crontab
+   crontab -e
+   # Add: * * * * * /opt/ping_monitor/ping_monitor.sh --once
+   ```
+
+---
+
+## 🪟 Windows Edition
+
+---
+
+## 🪟 Windows Edition
+
+### Requirements (Windows)
 
 - **PowerShell 7.4 or higher** (required for parallel execution features)
 - **Windows Server** (or Windows 10/11 for testing)
@@ -24,7 +175,7 @@ A PowerShell 7.4+ based network monitoring tool that pings endpoints and sends r
 
 > **Note**: This script has no external module dependencies and is fully airgap-compatible.
 
-## Quick Start
+### Quick Start (Windows)
 
 ### 1. Install PowerShell 7.4+
 
@@ -309,15 +460,19 @@ Reduce `parallel_threads` in config.yaml if monitoring many endpoints.
 
 ```
 Ping Tool for Splunk/
-├── PingMonitor.ps1          # Main monitoring script
-├── config.psd1              # Configuration file (PowerShell data file - fully commented)
+├── PingMonitor.ps1          # Windows PowerShell monitoring script
+├── ping_monitor.sh          # Unix/Linux/macOS shell script
+├── config.psd1              # Windows configuration (PowerShell data file)
+├── config.conf              # Unix configuration (shell variables)
 ├── endpoints.csv            # Target endpoints (full example)
 ├── endpoints_minimal.csv    # Minimal CSV example
+├── endpoints_unix.csv       # Unix example endpoints
 ├── logs/
 │   └── ping_results.log     # Output logs (created automatically)
 ├── splunk/
 │   └── ping_dashboard.xml   # Splunk dashboard
-├── Install-Service.ps1      # Windows service installer
+├── Install-Service.ps1      # Windows service installer (NSSM)
+├── install_unix.sh          # Unix/Linux service installer
 └── README.md                # This documentation
 ```
 

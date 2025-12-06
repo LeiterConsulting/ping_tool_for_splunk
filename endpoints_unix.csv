@@ -1,0 +1,5 @@
+ip,hostname,group,description
+8.8.8.8,google-dns-primary,dns,Google Public DNS Primary
+8.8.4.4,google-dns-secondary,dns,Google Public DNS Secondary
+1.1.1.1,cloudflare-dns,dns,Cloudflare DNS
+1.0.0.1,cloudflare-dns-secondary,dns,Cloudflare DNS Secondary
