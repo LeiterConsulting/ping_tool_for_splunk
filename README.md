@@ -348,6 +348,54 @@ KV_MODE = json
 }
 ```
 
+### Option C: Splunk Cloud HEC Integration
+
+Splunk Cloud uses different HEC URL formats depending on your deployment:
+
+| Deployment | URL Format |
+|------------|------------|
+| **AWS** | `https://http-inputs-<instance>.splunkcloud.com:443/services/collector/event` |
+| **GCP / Azure** | `https://http-inputs.<instance>.splunkcloud.com:443/services/collector/event` |
+| **FedRAMP (GovCloud)** | `https://http-inputs.<instance>.splunkcloudgc.com:443/services/collector/event` |
+
+> **Note**: Replace `<instance>` with your Splunk Cloud instance name (the subdomain from your Splunk Cloud URL).
+
+**Windows (`config.psd1`) - Splunk Cloud Example:**
+```powershell
+@{
+    output_mode = "hec"
+    
+    hec = @{
+        enabled = $true
+        # AWS Splunk Cloud example:
+        url = "https://http-inputs-mycompany.splunkcloud.com:443/services/collector/event"
+        token = "your-hec-token-here"
+        index = "network_monitoring"
+        sourcetype = "ping_monitor"
+        verify_ssl = $true
+        ssl_protocol = "Tls12"
+    }
+}
+```
+
+**Unix (`config.conf`) - Splunk Cloud Example:**
+```bash
+OUTPUT_MODE="hec"
+# GCP/Azure Splunk Cloud example:
+HEC_URL="https://http-inputs.mycompany.splunkcloud.com:443/services/collector/event"
+HEC_TOKEN="your-hec-token-here"
+HEC_INDEX="network_monitoring"
+HEC_SOURCETYPE="ping_monitor"
+HEC_VERIFY_SSL="true"
+HEC_TLS_VERSION="1.2"
+```
+
+**FedRAMP (GovCloud) Example:**
+```bash
+# FedRAMP Splunk Cloud
+HEC_URL="https://http-inputs.mycompany.splunkcloudgc.com:443/services/collector/event"
+```
+
 ### Installing the Dashboard
 
 1. Open Splunk Web

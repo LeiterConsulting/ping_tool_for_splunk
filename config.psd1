@@ -70,10 +70,17 @@
         
         # Full URL to your Splunk HEC endpoint
         # Format: https://<splunk-server>:<port>/services/collector/event
-        # Default HEC port is 8088
-        # Examples:
+        # Default HEC port is 8088 (free trials) or 443 (Splunk Cloud)
+        #
+        # On-Premises Examples:
         #   "https://splunk.mycompany.com:8088/services/collector/event"
         #   "https://10.0.0.50:8088/services/collector/event"
+        #
+        # Splunk Cloud Examples:
+        #   AWS:      "https://http-inputs-myinstance.splunkcloud.com:443/services/collector/event"
+        #   GCP/Azure: "https://http-inputs.myinstance.splunkcloud.com:443/services/collector/event"
+        #   FedRAMP:  "https://http-inputs.myinstance.splunkcloudgc.com:443/services/collector/event"
+        #
         url = ""
         
         # HEC authentication token (generated in Splunk)
