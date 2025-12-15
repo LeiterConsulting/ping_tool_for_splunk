@@ -84,6 +84,7 @@ function Get-Configuration {
             index = "main"
             sourcetype = "ping_monitor"
             verify_ssl = $true
+            ssl_protocol = "Default"
         }
     }
     
@@ -461,6 +462,11 @@ function Send-ToSplunkHEC {
             
             if (-not $HecConfig.verify_ssl) {
                 $splatParams['SkipCertificateCheck'] = $true
+            }
+            
+            # Set SSL/TLS protocol if specified
+            if ($HecConfig.ssl_protocol -and $HecConfig.ssl_protocol -ne 'Default') {
+                $splatParams['SslProtocol'] = $HecConfig.ssl_protocol
             }
             
             $response = Invoke-RestMethod @splatParams

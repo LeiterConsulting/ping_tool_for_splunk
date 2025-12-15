@@ -420,6 +420,7 @@ See `Install-Service.ps1` for manual NSSM configuration steps.
 | `hec.index` | main | Target Splunk index |
 | `hec.sourcetype` | ping_monitor | Event sourcetype |
 | `hec.verify_ssl` | true | Verify SSL certificates |
+| `hec.ssl_protocol` | Default | TLS version: `Default`, `Tls12`, `Tls13` |
 
 ### endpoints.csv Columns
 

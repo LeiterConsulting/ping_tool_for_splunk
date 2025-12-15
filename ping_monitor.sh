@@ -28,6 +28,7 @@ HEC_TOKEN="${HEC_TOKEN:-}"
 HEC_INDEX="${HEC_INDEX:-main}"
 HEC_SOURCETYPE="${HEC_SOURCETYPE:-ping_monitor}"
 HEC_VERIFY_SSL="${HEC_VERIFY_SSL:-true}"
+HEC_TLS_VERSION="${HEC_TLS_VERSION:-default}"
 RUN_ONCE="${RUN_ONCE:-false}"
 VERBOSE="${VERBOSE:-false}"
 
@@ -438,11 +439,19 @@ send_to_hec() {
     hec_payload="{\"index\":\"$HEC_INDEX\",\"sourcetype\":\"$HEC_SOURCETYPE\",\"event\":$json_data}"
     
     # Determine curl SSL options
+    ssl_opt=""
     if [ "$HEC_VERIFY_SSL" = "false" ]; then
-        ssl_opt="-k"
-    else
-        ssl_opt=""
+        ssl_opt="$ssl_opt -k"
     fi
+    
+    # Add TLS version option if specified
+    case "$HEC_TLS_VERSION" in
+        1.0) ssl_opt="$ssl_opt --tlsv1.0" ;;
+        1.1) ssl_opt="$ssl_opt --tlsv1.1" ;;
+        1.2) ssl_opt="$ssl_opt --tlsv1.2" ;;
+        1.3) ssl_opt="$ssl_opt --tlsv1.3" ;;
+        default|*) ;; # Let curl negotiate
+    esac
     
     # Send to HEC
     # shellcheck disable=SC2086

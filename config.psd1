@@ -95,5 +95,12 @@
         # Set to $false if using self-signed certificates (not recommended for production)
         # Set to $true for production environments with valid certificates
         verify_ssl = $true
+        
+        # SSL/TLS protocol version to use for HEC connections
+        # Options: "Default", "Tls12", "Tls13", "Tls11", "Tls"
+        # Use "Tls12" if your Splunk server requires TLS 1.2 specifically
+        # Use "Default" to let the system negotiate the best available protocol
+        # Most Splunk servers work best with "Tls12"
+        ssl_protocol = "Default"
     }
 }
