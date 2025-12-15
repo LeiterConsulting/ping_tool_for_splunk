@@ -138,6 +138,7 @@ HEC_TOKEN="your-token-here"
 HEC_INDEX="main"
 HEC_SOURCETYPE="ping_monitor"
 HEC_VERIFY_SSL="true"
+HEC_TLS_VERSION="1.2"  # Use "1.2" for TLS 1.2, "default" to auto-negotiate
 ```
 
 ### iSH (iOS) Special Instructions
@@ -156,10 +157,6 @@ iSH is an iOS app that provides an Alpine Linux environment:
    crontab -e
    # Add: * * * * * /opt/ping_monitor/ping_monitor.sh --once
    ```
-
----
-
-## 🪟 Windows Edition
 
 ---
 
@@ -240,6 +237,7 @@ Edit `config.psd1` to customize behavior. The file is fully commented with instr
         index = "main"
         sourcetype = "ping_monitor"
         verify_ssl = $true
+        ssl_protocol = "Tls12"  # Use "Tls12" for TLS 1.2, "Default" to auto-negotiate
     }
 }
 ```
@@ -449,10 +447,34 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
 
 ### HEC Connection Failed
-- Verify the HEC URL is correct
+- Verify the HEC URL is correct (include `/services/collector/event` path)
 - Check the HEC token is valid and enabled
-- For self-signed certificates, set `verify_ssl: false`
+- For self-signed certificates, set `verify_ssl = $false` (Windows) or `HEC_VERIFY_SSL="false"` (Unix)
 - Ensure the HEC token has access to the target index
+
+### HEC TLS/SSL Errors
+If you see SSL/TLS handshake errors or connection failures:
+
+**Windows (PowerShell)** - Edit `config.psd1`:
+```powershell
+hec = @{
+    # ... other settings ...
+    ssl_protocol = "Tls12"   # Force TLS 1.2
+}
+```
+
+**Unix/Linux** - Edit `config.conf`:
+```bash
+HEC_TLS_VERSION="1.2"   # Force TLS 1.2
+```
+
+**Available TLS options:**
+| Windows (`ssl_protocol`) | Unix (`HEC_TLS_VERSION`) | Description |
+|--------------------------|--------------------------|-------------|
+| `Default` | `default` | Auto-negotiate (system default) |
+| `Tls12` | `1.2` | Force TLS 1.2 (most common) |
+| `Tls13` | `1.3` | Force TLS 1.3 (newer servers) |
+| `Tls11` | `1.1` | Force TLS 1.1 (legacy) |
 
 ### High Memory Usage
 Reduce `parallel_threads` in config.yaml if monitoring many endpoints.
