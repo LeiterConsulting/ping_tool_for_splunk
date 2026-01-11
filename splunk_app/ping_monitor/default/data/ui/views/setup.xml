@@ -101,11 +101,20 @@
     <panel>
       <title>Current Saved Settings (from KV Store)</title>
       <table>
-        <search base="load_existing_config">
-          <query>| eval status=if(is_configured=="yes", "✅ Configured", "⚠️ Using Defaults")
+        <search>
+          <query>| inputlookup ping_monitor_settings_lookup 
+| search _key="global" 
+| head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
+| head 1
+| eval status=if(configured=="true", "✅ Configured", "⚠️ Using Defaults")
 | eval last_updated_display=coalesce(last_updated, "Never")
 | table status, index, sourcetype, metrics_index, last_updated_display
 | rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated_display as "Last Updated"</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+          <refresh>5s</refresh>
+          <refreshType>delay</refreshType>
         </search>
         <option name="drilldown">none</option>
         <option name="count">1</option>
@@ -269,22 +278,6 @@
               </td>
             </tr>
           </table>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <!-- Quick Reference -->
-  <row>
-    <panel>
-      <title>📖 Quick Reference: Using Health Data in Your Searches</title>
-      <html>
-        <div style="padding: 15px; background: #1a1a2e; border-radius: 5px; border: 1px solid #5cc05c;">
-          <p style="color: #5cc05c; margin: 0 0 10px 0; font-weight: bold;">Enrich any search with ping health status:</p>
-          <pre style="background: #0d1520; padding: 15px; border-radius: 5px; color: #f8f8f2; margin: 0; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5;"><span style="color: #6db7c6;">index</span>=your_index 
-| <span style="color: #f8be34;">lookup</span> ping_health_lookup hostname <span style="color: #f8be34;">OUTPUT</span> health_status, packet_loss_pct, avg_latency_ms
-| <span style="color: #f8be34;">where</span> health_status!=<span style="color: #a6e22e;">"Healthy"</span></pre>
-          <p style="color: #888; margin: 10px 0 0 0; font-size: 12px;">💡 The health lookup is populated by a scheduled search, or you can run it manually from Settings → Saved Searches.</p>
         </div>
       </html>
     </panel>
