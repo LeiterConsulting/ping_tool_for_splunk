@@ -67,7 +67,7 @@
       <search>
         <query>| makeresults | eval source="init" 
 | append [| search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | stats count by group | fields group]
-| append [| mstats count WHERE index="$pm_metrics_index$" BY group | fields group]
+| append [| mstats count(_value) WHERE index="$pm_metrics_index$" metric_name="ping.*" BY group | fields group]
 | stats count by group | fields group | sort group</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -75,7 +75,7 @@
       <change>
         <condition value="*">
           <set token="selected_groups">*</set>
-          <set token="selected_groups_metrics">*</set>
+          <set token="selected_groups_metrics"></set>
         </condition>
         <condition>
           <set token="selected_groups">$selected_groups_raw$</set>
@@ -95,7 +95,7 @@
       <search>
         <query>| makeresults | eval source="init"
 | append [| search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | stats count by hostname | fields hostname]
-| append [| mstats count WHERE index="$pm_metrics_index$" BY hostname | fields hostname]
+| append [| mstats count(_value) WHERE index="$pm_metrics_index$" metric_name="ping.*" BY hostname | fields hostname]
 | stats count by hostname | fields hostname | sort hostname</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -103,7 +103,7 @@
       <change>
         <condition value="*">
           <set token="selected_hosts">*</set>
-          <set token="selected_hosts_metrics">*</set>
+          <set token="selected_hosts_metrics"></set>
         </condition>
         <condition>
           <set token="selected_hosts">$selected_hosts_raw$</set>
@@ -214,7 +214,7 @@
       <single>
         <title>Total Endpoints (Metrics)</title>
         <search>
-          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname | stats dc(hostname) as total_endpoints</query>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname | stats dc(hostname) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -229,7 +229,7 @@
       <single>
         <title>Overall Availability (Metrics)</title>
         <search>
-          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
           <earliest>$time_range.earliest$</earliest>
@@ -248,7 +248,7 @@
       <single>
         <title>Average Latency (Metrics)</title>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -266,7 +266,7 @@
       <single>
         <title>Hosts with Issues (Metrics)</title>
         <search>
-          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
 | where packet_loss &gt; 0
 | stats count as hosts_with_issues</query>
           <earliest>$time_range.earliest$</earliest>
@@ -310,7 +310,7 @@
       <title>Availability Over Time by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY group span=5m
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY group span=5m
 | eval availability=100-packet_loss
 | timechart span=5m values(availability) as availability by group</query>
           <earliest>$time_range.earliest$</earliest>
@@ -374,7 +374,7 @@
       <title>Average Latency Over Time (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) span=5m</query>
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ span=5m</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -391,7 +391,7 @@
       <title>Latency by Host - Top 20 (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
 | sort -avg_latency
 | head 20</query>
           <earliest>$time_range.earliest$</earliest>
@@ -456,7 +456,7 @@
       <title>Packet Loss Over Time (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname span=5m</query>
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname span=5m</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -473,7 +473,7 @@
       <title>Packet Loss Distribution (Metrics)</title>
       <chart>
         <search>
-            <query>| mstats avg("ping.packet_loss_pct") as packet_loss_pct WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+            <query>| mstats avg("ping.packet_loss_pct") as packet_loss_pct WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
 | eval loss_bucket=case(
     packet_loss_pct==0, "0% (No Loss)",
     packet_loss_pct&gt;0 AND packet_loss_pct&lt;=25, "1-25%",
@@ -549,16 +549,15 @@
       <title>Current Host Status (Metrics)</title>
       <table>
         <search>
-            <query>| mstats latest(_time) as last_check_epoch,
-        latest("ping.packet_loss_pct") as packet_loss,
+            <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
         latest("ping.avg_latency_ms") as avg_latency,
         latest("ping.min_latency_ms") as min_latency,
         latest("ping.max_latency_ms") as max_latency,
         latest("ping.pings_successful") as last_success,
         latest("ping.pings_sent") as last_sent
-        WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+        WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
         BY hostname, target_ip, group
-| eval last_check=strftime(last_check_epoch, "%Y-%m-%d %H:%M:%S")
+| eval last_check=strftime(_time, "%Y-%m-%d %H:%M:%S")
 | eval status=case(
     packet_loss==0, "Healthy",
     packet_loss&gt;0 AND packet_loss&lt;50, "Degraded",
@@ -654,7 +653,7 @@
       <title>Availability by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY group
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY group
 | eval availability=round((success/total)*100, 2)
 | fields group, availability
 | sort -availability</query>
@@ -673,7 +672,7 @@
       <title>Host Count by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname, group | stats dc(hostname) as host_count by group
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, group | stats dc(hostname) as host_count by group
 | sort -host_count</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -718,14 +717,13 @@
       <title>Hosts with Recent Issues - Packet Loss &gt; 0% (Metrics)</title>
       <table>
         <search>
-            <query>| mstats count as total_checks,
+            <query>| mstats count("ping.packet_loss_pct") as total_checks,
         avg("ping.packet_loss_pct") as avg_loss,
-        max("ping.packet_loss_pct") as max_loss,
-        latest(_time) as last_issue_epoch
-        WHERE index="$pm_metrics_index$" "ping.packet_loss_pct"&gt;0 ($selected_groups_metrics$) ($selected_hosts_metrics$)
+        max("ping.packet_loss_pct") as max_loss
+        WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
         BY hostname, target_ip, group
 | where max_loss &gt; 0
-| eval last_issue=strftime(last_issue_epoch, "%Y-%m-%d %H:%M:%S")
+| eval last_issue=strftime(_time, "%Y-%m-%d %H:%M:%S")
 | eval avg_loss=round(avg_loss, 2)."%"
 | eval max_loss=max_loss."%"
 | sort -total_checks
