@@ -215,182 +215,13 @@
     </panel>
   </row>
 
-  <!-- ==================== SECTION 4: Test Configuration ==================== -->
+  <!-- ==================== SECTION 3: Next Steps ==================== -->
   <row>
     <panel>
       <html>
         <div class="section-header">
-          <h2>🔍 Step 3: Verify Data</h2>
-          <p>Check that Splunk can find ping data in your configured indexes. Uses the <strong>currently saved</strong> settings.</p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <row>
-    <panel>
-      <single>
-        <title>Events Data (Last 24h)</title>
-        <search>
-          <query>index=ping sourcetype=ping_monitor
-| stats count
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
-        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
-        <option name="rangeValues">[0]</option>
-        <option name="useColors">1</option>
-      </single>
-    </panel>
-    <panel>
-      <single>
-        <title>Summary Records (Last 24h)</title>
-        <search>
-          <query>index=ping sourcetype=ping_monitor record_type=summary
-| stats count
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
-        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
-        <option name="rangeValues">[0]</option>
-        <option name="useColors">1</option>
-      </single>
-    </panel>
-    <panel>
-      <single>
-        <title>Metrics Data (Last 24h)</title>
-        <search>
-          <query>| mstats count(_value) as count WHERE index="ping_metrics" metric_name="ping.*"
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
-        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
-        <option name="rangeValues">[0]</option>
-        <option name="useColors">1</option>
-      </single>
-    </panel>
-    <panel>
-      <single>
-        <title>Unique Hosts Monitored</title>
-        <search>
-          <query>index=ping sourcetype=ping_monitor record_type=summary
-| stats dc(hostname) as count
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
-        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
-        <option name="rangeValues">[0]</option>
-        <option name="useColors">1</option>
-      </single>
-    </panel>
-  </row>
-
-  <!-- Data Sample -->
-  <row>
-    <panel>
-      <title>Recent Events Sample</title>
-      <table>
-        <search>
-          <query>index=ping sourcetype=ping_monitor record_type=summary
-| head 5
-| eval _time_str=strftime(_time, "%Y-%m-%d %H:%M:%S")
-| table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms
-| rename _time_str as "Time", packet_loss_pct as "Packet Loss %", avg_latency_ms as "Avg Latency (ms)"</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">5</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- ==================== SECTION 5: Health Lookup ==================== -->
-  <row>
-    <panel>
-      <html>
-        <div class="section-header">
-          <h2>🏥 Step 4: Health Lookup Table</h2>
-          <p>The health lookup allows you to correlate ping status with other Splunk data. Click the button to update it.</p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <row>
-    <panel>
-      <title>Health Lookup Status</title>
-      <table>
-        <search>
-          <query>| inputlookup ping_health_lookup.csv 
-| stats count as records, max(_time) as last_updated
-| eval status=if(records>0, "✅ Populated", "⚠️ Empty")
-| eval last_updated=if(isnotnull(last_updated), strftime(last_updated, "%Y-%m-%d %H:%M:%S"), "Never")
-| table status, records, last_updated
-| rename status as "Status", records as "Records", last_updated as "Last Updated"
-| append [| makeresults | eval Status="⚠️ Not Yet Created", Records=0, "Last Updated"="Never"]
-| head 1</query>
-          <earliest>-1m</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">1</option>
-      </table>
-    </panel>
-    <panel>
-      <title>Update Health Lookup</title>
-      <input type="dropdown" token="update_health" searchWhenChanged="true">
-        <label>Action</label>
-        <choice value="view">View Status</choice>
-        <choice value="update">Update Now</choice>
-        <default>view</default>
-        <change>
-          <condition value="update">
-            <set token="do_update">true</set>
-          </condition>
-          <condition>
-            <unset token="do_update"/>
-          </condition>
-        </change>
-      </input>
-      <table depends="$do_update$">
-        <search>
-          <query>index=ping sourcetype=ping_monitor record_type=summary
-| stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname
-| eval health_status=case(packet_loss_pct==0, "Healthy", packet_loss_pct&gt;0 AND packet_loss_pct&lt;50, "Degraded", packet_loss_pct&gt;=50 AND packet_loss_pct&lt;100, "Critical", packet_loss_pct==100, "Down", true(), "Unknown")
-| outputlookup ping_health_lookup.csv
-| stats count as updated_records
-| eval result=if(updated_records&gt;0, "✅ Updated ".updated_records." records", "⚠️ No data found")
-| table result
-| rename result as "Result"</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">1</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- ==================== SECTION 6: Next Steps ==================== -->
-  <row>
-    <panel>
-      <html>
-        <div class="section-header">
-          <h2>✅ Setup Complete - Next Steps</h2>
-          <p>Your Ping Monitor is now configured. Here is what to do next:</p>
+          <h2>✅ Step 3: Setup Complete - Next Steps</h2>
+          <p>Your Ping Monitor is configured. Visit the Overview dashboard to verify your data is displaying correctly.</p>
         </div>
       </html>
     </panel>
@@ -453,7 +284,7 @@
           <pre style="background: #0d1520; padding: 15px; border-radius: 5px; color: #f8f8f2; margin: 0; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5;"><span style="color: #6db7c6;">index</span>=your_index 
 | <span style="color: #f8be34;">lookup</span> ping_health_lookup hostname <span style="color: #f8be34;">OUTPUT</span> health_status, packet_loss_pct, avg_latency_ms
 | <span style="color: #f8be34;">where</span> health_status!=<span style="color: #a6e22e;">"Healthy"</span></pre>
-          <p style="color: #888; margin: 10px 0 0 0; font-size: 12px;">💡 Make sure to update the Health Lookup table in Step 4 above, or enable the scheduled search for automatic updates.</p>
+          <p style="color: #888; margin: 10px 0 0 0; font-size: 12px;">💡 The health lookup is populated by a scheduled search, or you can run it manually from Settings → Saved Searches.</p>
         </div>
       </html>
     </panel>
