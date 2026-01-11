@@ -105,12 +105,14 @@
           <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
 | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
+| eval found=1
+| append [| makeresults | eval found=0, index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
+| sort - found
 | head 1
 | eval status=if(configured=="true", "✅ Configured", "⚠️ Using Defaults")
-| eval last_updated_display=coalesce(last_updated, "Never")
-| table status, index, sourcetype, metrics_index, last_updated_display
-| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated_display as "Last Updated"</query>
+| eval last_updated=if(isnull(last_updated) OR last_updated="", "Never", last_updated)
+| table status, index, sourcetype, metrics_index, last_updated
+| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated as "Last Updated"</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
           <refresh>5s</refresh>
