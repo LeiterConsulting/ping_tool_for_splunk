@@ -1,0 +1,200 @@
+<dashboard version="1.1" theme="dark">
+  <label>Ping Monitor Setup</label>
+  <description>Configure Ping Monitor settings - run this once after installation</description>
+  
+  <row>
+    <panel>
+      <html>
+        <style>
+          .setup-container { 
+            max-width: 600px; 
+            margin: 20px auto; 
+            padding: 30px;
+            background: #1a1a1a;
+            border-radius: 8px;
+          }
+          .setup-header {
+            text-align: center;
+            margin-bottom: 30px;
+          }
+          .setup-header h1 {
+            color: #5cc05c;
+            font-size: 28px;
+            margin-bottom: 10px;
+          }
+          .setup-header p {
+            color: #999;
+            font-size: 14px;
+          }
+          .form-group {
+            margin-bottom: 20px;
+          }
+          .form-group label {
+            display: block;
+            color: #ccc;
+            margin-bottom: 8px;
+            font-weight: bold;
+          }
+          .form-group .help-text {
+            color: #777;
+            font-size: 12px;
+            margin-top: 5px;
+          }
+          .status-message {
+            padding: 15px;
+            border-radius: 5px;
+            margin-top: 20px;
+            text-align: center;
+          }
+          .status-success {
+            background: #1e3a1e;
+            color: #5cc05c;
+            border: 1px solid #5cc05c;
+          }
+          .status-info {
+            background: #1a2a3a;
+            color: #6db7c6;
+            border: 1px solid #6db7c6;
+          }
+        </style>
+        <div class="setup-container">
+          <div class="setup-header">
+            <h1>🎯 Ping Monitor Setup</h1>
+            <p>Configure your Splunk index and sourcetype settings below, then click Save Configuration.</p>
+          </div>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Current Configuration Status -->
+  <row>
+    <panel>
+      <title>Current Configuration</title>
+      <table>
+        <search>
+          <query>| inputlookup ping_monitor_settings_lookup
+| where _key="global"
+| eval status=if(configured="true", "✅ Configured", "⚠️ Not Configured")
+| table status, index, sourcetype, metrics_index
+| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index"
+| append [| makeresults | eval Status="⚠️ Not Configured", "Events Index"="(not set)", "Sourcetype"="(not set)", "Metrics Index"="(not set)" | where NOT [| inputlookup ping_monitor_settings_lookup | where _key="global" | return $configured]]</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">1</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Configuration Form -->
+  <row>
+    <panel>
+      <title>Configuration Settings</title>
+      <html>
+        <div style="padding: 20px; background: #1a1a1a; border-radius: 5px;">
+          <p style="color: #ccc; margin-bottom: 15px;">Enter the index and sourcetype where your ping monitor data is being sent via HEC:</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <input type="text" token="config_index" searchWhenChanged="false">
+        <label>Events Index</label>
+        <default>ping</default>
+      </input>
+      <input type="text" token="config_sourcetype" searchWhenChanged="false">
+        <label>Sourcetype</label>
+        <default>ping_monitor</default>
+      </input>
+      <input type="text" token="config_metrics_index" searchWhenChanged="false">
+        <label>Metrics Index (leave blank if not using metrics mode)</label>
+        <default>ping_metrics</default>
+      </input>
+      <html>
+        <div style="padding: 20px;">
+          <p style="color: #777; font-size: 12px;">
+            <strong>Events Index:</strong> The Splunk index where ping event data is stored<br/>
+            <strong>Sourcetype:</strong> Usually "ping_monitor" unless you customized it<br/>
+            <strong>Metrics Index:</strong> Only needed if you enabled metrics mode in your config
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Save Button (uses search to write to KV store) -->
+  <row>
+    <panel>
+      <title>Save Configuration</title>
+      <html>
+        <p style="color: #ccc; padding: 10px;">Click the search button below to save your configuration:</p>
+      </html>
+      <table>
+        <search>
+          <query>| makeresults 
+| eval _key="global", 
+       index="$config_index$", 
+       sourcetype="$config_sourcetype$", 
+       metrics_index="$config_metrics_index$",
+       configured="true"
+| outputlookup ping_monitor_settings_lookup append=false key_field=_key
+| eval result="✅ Configuration saved successfully! Navigate to Ping Monitor Overview to view your data."
+| table result
+| rename result as "Status"</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">1</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Test Configuration -->
+  <row>
+    <panel>
+      <title>Test Configuration</title>
+      <html>
+        <p style="color: #ccc; padding: 10px;">After saving, this panel shows if data exists in your configured index:</p>
+      </html>
+      <single>
+        <title>Events Found in Last 24 Hours</title>
+        <search>
+          <query>| inputlookup ping_monitor_settings_lookup 
+| where _key="global"
+| map search="index=$index$ sourcetype=$sourcetype$ | stats count" maxsearches=1
+| eval count=if(isnull(count), 0, count)</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Next Steps -->
+  <row>
+    <panel>
+      <html>
+        <div style="padding: 20px; background: #1a2a3a; border-radius: 5px; border: 1px solid #6db7c6;">
+          <h3 style="color: #6db7c6; margin-top: 0;">📋 Next Steps</h3>
+          <ol style="color: #ccc; line-height: 2;">
+            <li>Make sure your ping monitor script is running and sending data to Splunk HEC</li>
+            <li>Save your configuration above</li>
+            <li>Navigate to <strong>Ping Monitor Overview</strong> to view your monitoring dashboard</li>
+            <li>Optionally enable the scheduled saved search "Update Health Lookup" for correlation features</li>
+          </ol>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+</dashboard>

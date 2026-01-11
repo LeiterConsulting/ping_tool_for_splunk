@@ -4,50 +4,72 @@ Enterprise network availability monitoring with intelligent asset correlation.
 
 ## Version 2.0.0
 
-### Features
+## Quick Start
 
+1. **Install the App**: Upload `ping_monitor-2.0.0.tar.gz` via Splunk Web → Manage Apps → Install from File
+2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your index/sourcetype
+3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
+
+## Features
+
+- **Zero-Config Dashboard**: Dashboards read settings from KV store - no XML editing required
+- **First-Run Setup Wizard**: Configure index/sourcetype via UI on first launch
 - **Real-time Ping Monitoring**: Track endpoint availability and latency
-- **Dual-Mode Support**: Works with both events and metrics data
 - **Asset Discovery**: Automatically discover related data sources in Splunk
 - **Health Correlation**: Enrich your data with ping health status
-- **Service Health Analysis**: View health by entity type, group, and vendor
-- **Alerting**: Built-in alerts for down endpoints, packet loss, and high latency
+- **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency
 
-### Dashboards
+## Dashboards
 
 1. **Ping Monitor Overview** - Main dashboard with availability, latency, and status
 2. **Asset Discovery** - Find indexes/sourcetypes containing your monitored assets
 3. **Asset Health Correlation** - Enrich other data sources with ping health
+4. **Setup** - First-run configuration wizard
 
-### Configuration
+## Configuration
 
-After installation, navigate to Ping Monitor > Ping Overview and set:
-- **Events Index**: Your ping events index (default: main)
-- **Sourcetype**: Your ping sourcetype (default: ping_monitor)
-- **Metrics Index**: Your metrics index if using metrics mode (default: ping_metrics)
+Settings are stored in KV Store (`ping_monitor_settings` collection):
 
-### Saved Searches & Alerts
+| Setting | Description | Default |
+|---------|-------------|---------|
+| `index` | Events index | `ping` |
+| `sourcetype` | Ping monitor sourcetype | `ping_monitor` |
+| `metrics_index` | Metrics index (if using metrics mode) | `ping_metrics` |
 
-- **Update Health Lookup** - Runs every 5 minutes to maintain correlation lookup
-- **Endpoint Down Alert** - Triggers when endpoints are unreachable
-- **High Packet Loss Alert** - Triggers on >25% packet loss
-- **High Latency Alert** - Triggers on >200ms latency
-- **Daily Availability Report** - Daily summary
-- **Weekly Trend Report** - Weekly analysis
+### Change Settings
 
-### Macros
+1. Navigate to **Ping Monitor → Setup**
+2. Enter your index, sourcetype, and metrics index
+3. Click the search button to save
 
-The app includes macros for flexible queries:
-- `ping_data_union(events_index, sourcetype, metrics_index, span)` - Union of events + metrics
-- `ping_summaries` / `ping_summaries(index, sourcetype)` - Summary records
-- `ping_metrics` / `ping_metrics(metrics_index, span)` - Metrics data
-- `ping_asset_inventory` - Asset inventory with health status
+Or directly via search:
+```spl
+| makeresults 
+| eval _key="global", index="your_index", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="true"
+| outputlookup ping_monitor_settings_lookup append=false key_field=_key
+```
 
-### Requirements
+## Saved Searches & Alerts
+
+All saved searches automatically read configuration from KV store.
+
+| Search | Schedule | Description |
+|--------|----------|-------------|
+| Update Health Lookup | Every 5 min | Maintains lookup for correlation |
+| Endpoint Down Alert | Every 5 min | 100% packet loss |
+| High Packet Loss Alert | Every 5 min | >25% packet loss |
+| High Latency Alert | Every 5 min | >200ms latency |
+| Daily Availability Report | 8 AM daily | Daily summary |
+| Weekly Trend Report | 9 AM Monday | Weekly analysis |
+
+**Note**: Alerts are disabled by default. Enable them in Settings → Saved Searches.
+
+## Requirements
 
 - Splunk Enterprise 8.0+ or Splunk Cloud
 - Ping Monitor script sending data via HEC
+- KV Store enabled (default in Splunk)
 
-### Support
+## Support
 
-GitHub: https://github.com/YourOrg/ping-tool-for-splunk
+GitHub: https://github.com/LeiterConsulting/ping_tool_for_splunk

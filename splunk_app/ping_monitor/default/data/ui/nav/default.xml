@@ -2,11 +2,12 @@
   <view name="ping_overview" default="true"/>
   <view name="asset_discovery"/>
   <view name="asset_correlation"/>
-  <collection label="Configuration">
-    <a href="/manager/ping_monitor/data/transforms/lookups">Manage Lookups</a>
-    <a href="/app/ping_monitor/search?q=%7C%20inputlookup%20ping_health_lookup">View Health Lookup</a>
+  <view name="setup"/>
+  <collection label="Reports">
+    <saved source="unclassified" match="Ping Monitor"/>
   </collection>
-  <collection label="Documentation">
-    <a href="https://github.com/YourOrg/ping-tool-for-splunk" target="_blank">GitHub Repository</a>
+  <collection label="Help">
+    <a href="/app/ping_monitor/setup">Run Setup Wizard</a>
+    <a href="https://github.com/LeiterConsulting/ping_tool_for_splunk" target="_blank">GitHub Repository</a>
   </collection>
 </nav>

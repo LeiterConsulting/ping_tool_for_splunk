@@ -281,11 +281,40 @@ HEC_URL="https://http-inputs.mycompany.splunkcloudgc.com:443/services/collector/
 
 ### Dashboard Installation
 
-1. Copy `splunk/ping_dashboard.xml` to Splunk
-2. Replace `YOUR_INDEX`, `YOUR_SOURCETYPE`, `YOUR_METRICS_INDEX` placeholders
-3. Install `splunk/macros.conf` for dual-mode queries (see below)
+#### Option A: Splunk App (Recommended)
 
-### Macros Installation (Required for Dual-Mode Dashboard)
+The included Splunk app provides a complete, zero-configuration experience:
+
+1. **Install the app**:
+   ```
+   Upload ping_monitor-2.0.0.tar.gz via Splunk Web → Manage Apps → Install from File
+   ```
+
+2. **Run Setup**:
+   - Navigate to **Ping Monitor → Setup**
+   - Enter your index, sourcetype, and metrics index
+   - Click the search button to save
+
+3. **View Data**:
+   - Navigate to **Ping Monitor → Ping Monitor Overview**
+   - Data will display automatically using your saved configuration
+
+The app includes:
+- **Ping Monitor Overview** - Main availability/latency dashboard
+- **Asset Discovery** - Find related data sources in Splunk
+- **Asset Health Correlation** - Enrich other data with ping health
+- **Setup Wizard** - First-run configuration (no XML editing required)
+- **Pre-built Alerts** - Down, packet loss, latency alerts (disabled by default)
+
+#### Option B: Standalone Dashboard (Manual)
+
+For environments where you can't install apps:
+
+1. Copy `splunk/ping_dashboard.xml` to your Splunk dashboards
+2. Enter your index and sourcetype in the dashboard inputs
+3. Optionally install `splunk/macros.conf` for advanced queries
+
+### Macros Installation (Optional - for Standalone Dashboard)
 
 The macros enable seamless queries across both event and metrics data. **This is required if you're using the dual-mode dashboard or transitioning from events to metrics.**
 
