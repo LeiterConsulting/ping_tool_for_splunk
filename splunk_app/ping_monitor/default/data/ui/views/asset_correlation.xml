@@ -5,7 +5,7 @@
   <!-- Load configuration from KV Store -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
-| where _key="global" 
+| search _key="global" 
 | head 1
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
     <earliest>-1m</earliest>
@@ -17,25 +17,38 @@
     </done>
   </search>
   
-  <!-- Check if health lookup exists -->
-  <search id="check_lookup">
-    <query>| inputlookup ping_health_lookup.csv | stats count as lookup_count</query>
-    <earliest>-1m</earliest>
-    <latest>now</latest>
-    <done>
-      <condition match="'result.lookup_count' > 0">
-        <set token="lookup_exists">true</set>
-      </condition>
-    </done>
-  </search>
-  
   <init>
     <set token="pm_index">ping</set>
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
+    <set token="show_events">true</set>
   </init>
   
   <fieldset submitButton="false" autoRun="true">
+    <input type="dropdown" token="data_source" searchWhenChanged="true">
+      <label>Data Source</label>
+      <choice value="events">Events</choice>
+      <choice value="metrics">Metrics</choice>
+      <choice value="combined">Combined</choice>
+      <default>events</default>
+      <change>
+        <condition value="events">
+          <set token="show_events">true</set>
+          <unset token="show_metrics"></unset>
+          <unset token="show_combined"></unset>
+        </condition>
+        <condition value="metrics">
+          <unset token="show_events"></unset>
+          <set token="show_metrics">true</set>
+          <unset token="show_combined"></unset>
+        </condition>
+        <condition value="combined">
+          <set token="show_events">true</set>
+          <set token="show_metrics">true</set>
+          <set token="show_combined">true</set>
+        </condition>
+      </change>
+    </input>
     <input type="time" token="time_range" searchWhenChanged="true">
       <label>Time Range</label>
       <default>
@@ -45,10 +58,26 @@
     </input>
   </fieldset>
 
-  <!-- Row 1: Health Status Summary -->
+  <!-- Data Source Indicator -->
   <row>
     <panel>
-      <title>Current Asset Health Status</title>
+      <html>
+        <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
+          <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
+          <span style="color: #fff; margin-left: 10px;">$data_source|s$</span>
+          <span style="color: #888; margin-left: 20px;">
+            Events Index: <strong>$pm_index$</strong> | 
+            Metrics Index: <strong>$pm_metrics_index$</strong>
+          </span>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Row 1: Health Status Summary - EVENTS -->
+  <row depends="$show_events$">
+    <panel>
+      <title>Current Asset Health Status (Events)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -89,10 +118,48 @@
     </panel>
   </row>
 
-  <!-- Row 2: Health Distribution -->
-  <row>
+  <!-- Row 1: Health Status Summary - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
     <panel>
-      <title>Health Distribution</title>
+      <title>Current Asset Health Status (Metrics)</title>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.avg_latency_ms") as latency
+        WHERE index="$pm_metrics_index$"
+        BY hostname, target_ip, group
+| eval health_status = case(
+    packet_loss == 0, "Healthy",
+    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
+    packet_loss == 100, "Down",
+    true(), "Unknown"
+)
+| eval health_icon = case(
+    health_status == "Healthy", "✅",
+    health_status == "Degraded", "⚠️",
+    health_status == "Critical", "🔶",
+    health_status == "Down", "❌",
+    true(), "❓"
+)
+| eval last_check_human = strftime(_time, "%Y-%m-%d %H:%M:%S")
+| eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
+| table health_icon, hostname, target_ip, health_status, packet_loss, latency_display, group, last_check_human
+| rename health_icon as " ", target_ip as "IP Address", packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
+| sort health_status, hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 2: Health Distribution - EVENTS -->
+  <row depends="$show_events$">
+    <panel>
+      <title>Health Distribution (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -113,7 +180,7 @@
       </chart>
     </panel>
     <panel>
-      <title>Health Trend Over Time</title>
+      <title>Health Trend Over Time (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -136,10 +203,56 @@
     </panel>
   </row>
 
-  <!-- Row 3: Unhealthy Assets -->
-  <row>
+  <!-- Row 2: Health Distribution - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
     <panel>
-      <title>Unhealthy Assets - Potential Service Impact</title>
+      <title>Health Distribution (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname
+| eval health_status = case(
+    packet_loss == 0, "Healthy",
+    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
+    packet_loss == 100, "Down",
+    true(), "Unknown"
+)
+| stats count by health_status</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Health Trend Over Time (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname span=1h
+| eval health_status = case(
+    packet_loss == 0, "Healthy",
+    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
+    packet_loss == 100, "Down",
+    true(), "Unknown"
+)
+| timechart span=1h count by health_status</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.stackMode">stacked</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 3: Unhealthy Assets - EVENTS -->
+  <row depends="$show_events$">
+    <panel>
+      <title>Unhealthy Assets - Potential Service Impact (Events)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct>0
@@ -167,10 +280,38 @@
     </panel>
   </row>
 
-  <!-- Row 4: Service Impact Analysis -->
-  <row>
+  <!-- Row 3: Unhealthy Assets - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
     <panel>
-      <title>Service Health by Entity Type</title>
+      <title>Unhealthy Assets - Potential Service Impact (Metrics)</title>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.avg_latency_ms") as latency
+        WHERE index="$pm_metrics_index$" BY hostname, target_ip, group
+| where packet_loss > 0
+| eval health_status = case(
+    packet_loss > 0 AND packet_loss &lt; 50, "⚠️ Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "🔶 Critical",
+    packet_loss == 100, "❌ Down"
+)
+| eval latency = round(latency, 2)
+| table health_status, hostname, target_ip, packet_loss, latency, group
+| rename health_status as "Status", target_ip as "IP", packet_loss as "Loss %", latency as "Latency ms"
+| sort -packet_loss</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 4: Service Impact Analysis -->
+  <row depends="$show_events$">
+    <panel>
+      <title>Service Health by Entity Type (Events)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -196,11 +337,41 @@
       </table>
     </panel>
     <panel>
-      <title>Service Health by Group</title>
+      <title>Service Health by Group (Events)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats latest(packet_loss_pct) as packet_loss, dc(hostname) as asset_count by group
+| eval healthy = if(packet_loss == 0, 1, 0)
+| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
+| eval health_pct = round((healthy_count / total) * 100, 1)
+| eval status = case(
+    health_pct >= 99, "✅ Excellent",
+    health_pct >= 90, "🟢 Good",
+    health_pct >= 75, "⚠️ Degraded",
+    health_pct >= 50, "🔶 Impaired",
+    true(), "❌ Critical"
+)
+| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
+| sort -health_pct
+| rename group as "Group", assets as "Assets", health_pct as "Health %", status as "Status"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 4: Service Impact Analysis - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
+    <panel>
+      <title>Service Health by Group (Metrics)</title>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname, group
+| stats first(packet_loss) as packet_loss, dc(hostname) as asset_count by group
 | eval healthy = if(packet_loss == 0, 1, 0)
 | eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
 | eval health_pct = round((healthy_count / total) * 100, 1)

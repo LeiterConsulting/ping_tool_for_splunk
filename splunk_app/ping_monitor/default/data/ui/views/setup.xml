@@ -1,8 +1,8 @@
 <dashboard version="1.1" theme="dark">
   <label>Ping Monitor Setup</label>
-  <description>Configure Ping Monitor settings - run this once after installation</description>
+  <description>Configure global settings for the Ping Monitor application</description>
   
-  <!-- Initialize defaults -->
+  <!-- Initialize with defaults -->
   <init>
     <set token="config_index">ping</set>
     <set token="config_sourcetype">ping_monitor</set>
@@ -12,10 +12,10 @@
     <set token="form.config_metrics_index">ping_metrics</set>
   </init>
 
-  <!-- Load existing config if available -->
+  <!-- Load existing configuration -->
   <search id="load_existing_config">
     <query>| inputlookup ping_monitor_settings_lookup 
-| where _key="global" 
+| search _key="global" 
 | head 1</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
@@ -31,58 +31,76 @@
       </condition>
     </done>
   </search>
-  
+
+  <!-- ==================== SECTION 1: Header & Overview ==================== -->
   <row>
     <panel>
       <html>
         <style>
-          .setup-container { 
-            max-width: 800px; 
-            margin: 20px auto; 
+          .setup-hero {
+            background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%);
             padding: 30px;
-            background: #1a1a1a;
-            border-radius: 8px;
-          }
-          .setup-header {
+            border-radius: 10px;
+            border: 1px solid #2a4a6a;
             text-align: center;
-            margin-bottom: 30px;
-          }
-          .setup-header h1 {
-            color: #5cc05c;
-            font-size: 28px;
             margin-bottom: 10px;
           }
-          .setup-header p {
-            color: #999;
-            font-size: 14px;
+          .setup-hero h1 { color: #5cc05c; font-size: 32px; margin: 0 0 10px 0; }
+          .setup-hero p { color: #99aabc; font-size: 16px; margin: 0; }
+          .section-header {
+            background: #1a1a2e;
+            padding: 15px 20px;
+            border-radius: 8px 8px 0 0;
+            border-bottom: 2px solid #5cc05c;
+            margin-bottom: -1px;
           }
+          .section-header h2 { color: #5cc05c; margin: 0; font-size: 18px; }
+          .section-header p { color: #888; margin: 5px 0 0 0; font-size: 13px; }
+          .info-box {
+            padding: 15px;
+            background: #1a2a3a;
+            border-radius: 5px;
+            border-left: 4px solid #6db7c6;
+          }
+          .info-box.success { border-left-color: #5cc05c; }
+          .info-box.warning { border-left-color: #f8be34; }
         </style>
-        <div class="setup-container">
-          <div class="setup-header">
-            <h1>🎯 Ping Monitor Setup</h1>
-            <p>Configure your Splunk index and sourcetype settings below.</p>
-          </div>
+        <div class="setup-hero">
+          <h1>🎯 Ping Monitor Setup</h1>
+          <p>Configure your Splunk index settings below. These settings are used by all dashboards and saved searches.</p>
         </div>
       </html>
     </panel>
   </row>
 
-  <!-- Current Configuration Status -->
+  <!-- ==================== SECTION 2: Current Configuration Status ==================== -->
   <row>
     <panel>
-      <title>Current Configuration</title>
+      <html>
+        <div class="section-header">
+          <h2>📋 Step 1: Review Current Configuration</h2>
+          <p>Check if your settings have been saved. If not configured, default values will be used.</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Current Saved Settings</title>
       <table>
         <search>
           <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global"
 | head 1
-| eval status=if(configured=="true", "✅ Configured", "⚠️ Not Configured")
-| eval index=coalesce(index, "(not set)")
-| eval sourcetype=coalesce(sourcetype, "(not set)")
-| eval metrics_index=coalesce(metrics_index, "(not set)")
-| table status, index, sourcetype, metrics_index
-| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index"
-| append [| makeresults | eval Status="⚠️ Not Configured - Please save configuration below", "Events Index"="(default: ping)", "Sourcetype"="(default: ping_monitor)", "Metrics Index"="(default: ping_metrics)" | head 1]
+| eval status=if(configured=="true", "✅ Configured", "⚠️ Using Defaults")
+| eval index=coalesce(index, "ping")
+| eval sourcetype=coalesce(sourcetype, "ping_monitor")
+| eval metrics_index=coalesce(metrics_index, "ping_metrics")
+| eval last_updated=coalesce(last_updated, "Never")
+| table status, index, sourcetype, metrics_index, last_updated
+| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated as "Last Updated"
+| append [| makeresults | eval Status="⚠️ Not Yet Configured", "Events Index"="ping (default)", "Sourcetype"="ping_monitor (default)", "Metrics Index"="ping_metrics (default)", "Last Updated"="Never" | head 1]
 | head 1</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
@@ -93,7 +111,18 @@
     </panel>
   </row>
 
-  <!-- Configuration Form with fieldset -->
+  <!-- ==================== SECTION 3: Configuration Form ==================== -->
+  <row>
+    <panel>
+      <html>
+        <div class="section-header">
+          <h2>⚙️ Step 2: Configure Index Settings</h2>
+          <p>Enter your Splunk index and sourcetype values, then click <strong>Submit</strong> to save.</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
   <fieldset submitButton="true" autoRun="false">
     <input type="text" token="config_index" searchWhenChanged="false">
       <label>Events Index</label>
@@ -109,22 +138,10 @@
     </input>
   </fieldset>
 
+  <!-- Save Configuration Panel -->
   <row>
     <panel>
-      <html>
-        <div style="padding: 15px; background: #1a2a3a; border-radius: 5px; border: 1px solid #6db7c6;">
-          <p style="color: #6db7c6; margin: 0;">
-            <strong>💡 Instructions:</strong> Enter your index and sourcetype values above, then click the <strong>Submit</strong> button at the top right of the form to save your configuration.
-          </p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <!-- Save Configuration - triggered on submit -->
-  <row>
-    <panel>
-      <title>Save Configuration</title>
+      <title>Save Result</title>
       <table>
         <search>
           <query>| makeresults 
@@ -135,9 +152,10 @@
        configured="true",
        last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
 | outputlookup ping_monitor_settings_lookup append=false key_field=_key
-| eval result="✅ Configuration saved! Index: $config_index$, Sourcetype: $config_sourcetype$, Metrics Index: $config_metrics_index$"
-| table result
-| rename result as "Status"</query>
+| eval result="✅ Configuration saved successfully!"
+| eval details="Events Index: " . "$config_index$" . " | Sourcetype: " . "$config_sourcetype$" . " | Metrics Index: " . "$config_metrics_index$"
+| table result, details
+| rename result as "Status", details as "Saved Settings"</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
         </search>
@@ -147,16 +165,27 @@
     </panel>
   </row>
 
-  <!-- Test Configuration - check for data -->
+  <!-- ==================== SECTION 4: Test Configuration ==================== -->
   <row>
     <panel>
-      <title>Test Configuration - Data Check</title>
+      <html>
+        <div class="section-header">
+          <h2>🔍 Step 3: Verify Data</h2>
+          <p>Check that Splunk can find ping data in your configured indexes.</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
       <single>
-        <title>Events Found in Last 24 Hours</title>
+        <title>Events Data (Last 24h)</title>
         <search>
           <query>index="$config_index$" sourcetype="$config_sourcetype$" 
 | stats count 
-| eval count=if(isnull(count), 0, count)</query>
+| eval count=if(isnull(count) OR count=0, 0, count)
+| eval status=if(count>0, "✅ ".count." events found", "⚠️ No events found")</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -168,12 +197,45 @@
       </single>
     </panel>
     <panel>
-      <title>Metrics Data Check</title>
       <single>
-        <title>Metrics Found in Last 24 Hours</title>
+        <title>Summary Records (Last 24h)</title>
         <search>
-          <query>| mstats count(_value) WHERE index="$config_metrics_index$" metric_name="ping.*"
-| eval count=if(isnull(count), 0, count)</query>
+          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
+| stats count 
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Metrics Data (Last 24h)</title>
+        <search>
+          <query>| mstats count(_value) as count WHERE index="$config_metrics_index$" metric_name="ping.*"
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Unique Hosts Monitored</title>
+        <search>
+          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
+| stats dc(hostname) as count
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -186,7 +248,38 @@
     </panel>
   </row>
 
-  <!-- Health Lookup Status -->
+  <!-- Data Sample -->
+  <row>
+    <panel>
+      <title>Recent Events Sample</title>
+      <table>
+        <search>
+          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
+| head 5
+| eval _time_str=strftime(_time, "%Y-%m-%d %H:%M:%S")
+| table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms
+| rename _time_str as "Time", packet_loss_pct as "Packet Loss %", avg_latency_ms as "Avg Latency (ms)"</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">5</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- ==================== SECTION 5: Health Lookup ==================== -->
+  <row>
+    <panel>
+      <html>
+        <div class="section-header">
+          <h2>🏥 Step 4: Health Lookup Table</h2>
+          <p>The health lookup allows you to correlate ping status with other Splunk data. It's automatically updated when you save settings.</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
   <row>
     <panel>
       <title>Health Lookup Status</title>
@@ -194,11 +287,11 @@
         <search>
           <query>| inputlookup ping_health_lookup.csv 
 | stats count as records, max(_time) as last_updated
-| eval status=if(records>0, "✅ Health lookup populated with ".records." records", "⚠️ Health lookup is empty - run the Update Health Lookup saved search")
+| eval status=if(records>0, "✅ Populated", "⚠️ Empty")
 | eval last_updated=if(isnotnull(last_updated), strftime(last_updated, "%Y-%m-%d %H:%M:%S"), "Never")
 | table status, records, last_updated
 | rename status as "Status", records as "Records", last_updated as "Last Updated"
-| append [| makeresults | eval Status="⚠️ Health lookup does not exist yet", Records=0, "Last Updated"="Never" | head 1]
+| append [| makeresults | eval Status="⚠️ Not Yet Created", Records=0, "Last Updated"="Never"]
 | head 1</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
@@ -207,15 +300,8 @@
         <option name="count">1</option>
       </table>
     </panel>
-  </row>
-
-  <!-- Populate Health Lookup Now -->
-  <row>
     <panel>
       <title>Populate Health Lookup Now</title>
-      <html>
-        <p style="color: #ccc; padding: 10px;">Click Submit above to also generate/refresh the health lookup table for asset correlation features.</p>
-      </html>
       <table>
         <search>
           <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
@@ -234,9 +320,9 @@
 )
 | outputlookup ping_health_lookup.csv
 | stats count as updated_records
-| eval result="✅ Health lookup updated with " . updated_records . " records"
+| eval result=if(updated_records>0, "✅ Updated ".updated_records." records", "⚠️ No data to update")
 | table result
-| rename result as "Status"</query>
+| rename result as "Result"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -246,18 +332,75 @@
     </panel>
   </row>
 
-  <!-- Next Steps -->
+  <!-- ==================== SECTION 6: Next Steps ==================== -->
   <row>
     <panel>
       <html>
-        <div style="padding: 20px; background: #1a2a3a; border-radius: 5px; border: 1px solid #6db7c6;">
-          <h3 style="color: #6db7c6; margin-top: 0;">📋 Next Steps</h3>
-          <ol style="color: #ccc; line-height: 2;">
-            <li>Make sure your ping monitor script is running and sending data to Splunk HEC</li>
-            <li>Click <strong>Submit</strong> above to save your configuration</li>
-            <li>Navigate to <strong>Ping Monitor Overview</strong> to view your monitoring dashboard</li>
-            <li>Optionally enable the scheduled saved search "Update Health Lookup" in Settings → Saved Searches</li>
-          </ol>
+        <div class="section-header">
+          <h2>✅ Setup Complete - Next Steps</h2>
+          <p>Your Ping Monitor is now configured. Here's what to do next:</p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <html>
+        <div style="padding: 25px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
+          <table style="width: 100%; border-collapse: separate; border-spacing: 0 15px;">
+            <tr>
+              <td style="width: 60px; vertical-align: top;">
+                <span style="font-size: 28px;">📊</span>
+              </td>
+              <td>
+                <strong style="color: #5cc05c; font-size: 16px;">View Your Dashboard</strong>
+                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Ping Monitor Overview</strong> to see availability, latency, and health status for all monitored endpoints. Choose between Events, Metrics, or Combined view.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="width: 60px; vertical-align: top;">
+                <span style="font-size: 28px;">🔍</span>
+              </td>
+              <td>
+                <strong style="color: #6db7c6; font-size: 16px;">Discover Related Assets</strong>
+                <p style="color: #aaa; margin: 5px 0 0 0;">Use <strong>Asset Discovery</strong> to find other Splunk indexes that contain data about your monitored IP addresses and hostnames.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="width: 60px; vertical-align: top;">
+                <span style="font-size: 28px;">🔗</span>
+              </td>
+              <td>
+                <strong style="color: #f8be34; font-size: 16px;">Correlate Health Data</strong>
+                <p style="color: #aaa; margin: 5px 0 0 0;">Visit <strong>Asset Health Correlation</strong> to analyze service impact and correlate ping health with other data sources using the lookup table.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="width: 60px; vertical-align: top;">
+                <span style="font-size: 28px;">⏰</span>
+              </td>
+              <td>
+                <strong style="color: #dc4e41; font-size: 16px;">Enable Scheduled Searches</strong>
+                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Settings → Saved Searches</strong> to enable alerts for endpoint down, high packet loss, and high latency conditions.</p>
+              </td>
+            </tr>
+          </table>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Quick Reference -->
+  <row>
+    <panel>
+      <title>📖 Quick Reference: Using Health Data in Your Searches</title>
+      <html>
+        <div style="padding: 15px; background: #2a2a2a; border-radius: 5px; font-family: monospace;">
+          <p style="color: #5cc05c; margin: 0 0 10px 0;">Enrich any search with ping health status:</p>
+          <pre style="color: #00ff00; margin: 0; overflow-x: auto;">index=your_index 
+| lookup ping_health_lookup.csv hostname OUTPUT health_status, packet_loss_pct, avg_latency_ms
+| where health_status!="Healthy"</pre>
         </div>
       </html>
     </panel>

@@ -5,7 +5,7 @@
   <!-- Load configuration from KV Store -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
-| where _key="global" 
+| search _key="global" 
 | head 1
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
     <earliest>-1m</earliest>
@@ -21,10 +21,35 @@
     <set token="pm_index">ping</set>
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
+    <set token="show_events">true</set>
     <set token="search_asset"></set>
   </init>
   
   <fieldset submitButton="false" autoRun="true">
+    <input type="dropdown" token="data_source" searchWhenChanged="true">
+      <label>Data Source</label>
+      <choice value="events">Events</choice>
+      <choice value="metrics">Metrics</choice>
+      <choice value="combined">Combined</choice>
+      <default>events</default>
+      <change>
+        <condition value="events">
+          <set token="show_events">true</set>
+          <unset token="show_metrics"></unset>
+          <unset token="show_combined"></unset>
+        </condition>
+        <condition value="metrics">
+          <unset token="show_events"></unset>
+          <set token="show_metrics">true</set>
+          <unset token="show_combined"></unset>
+        </condition>
+        <condition value="combined">
+          <set token="show_events">true</set>
+          <set token="show_metrics">true</set>
+          <set token="show_combined">true</set>
+        </condition>
+      </change>
+    </input>
     <input type="time" token="time_range" searchWhenChanged="true">
       <label>Discovery Time Range</label>
       <default>
@@ -34,11 +59,27 @@
     </input>
   </fieldset>
 
-  <!-- Row 1: Summary Statistics -->
+  <!-- Data Source Indicator -->
   <row>
     <panel>
+      <html>
+        <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
+          <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
+          <span style="color: #fff; margin-left: 10px;">$data_source|s$</span>
+          <span style="color: #888; margin-left: 20px;">
+            Events Index: <strong>$pm_index$</strong> | 
+            Metrics Index: <strong>$pm_metrics_index$</strong>
+          </span>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Row 1: Summary Statistics - EVENTS -->
+  <row depends="$show_events$">
+    <panel>
       <single>
-        <title>Total Monitored Assets</title>
+        <title>Total Monitored Assets (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats dc(hostname) as asset_count</query>
@@ -54,7 +95,7 @@
     </panel>
     <panel>
       <single>
-        <title>Unique IP Addresses</title>
+        <title>Unique IP Addresses (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats dc(target_ip) as ip_count</query>
@@ -70,7 +111,7 @@
     </panel>
     <panel>
       <single>
-        <title>Unique Groups</title>
+        <title>Unique Groups (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats dc(group) as group_count</query>
@@ -86,7 +127,7 @@
     </panel>
     <panel>
       <single>
-        <title>Entity Types</title>
+        <title>Entity Types (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats dc(entitytype) as type_count</query>
@@ -102,10 +143,77 @@
     </panel>
   </row>
 
-  <!-- Row 2: Asset Inventory from Ping Data -->
-  <row>
+  <!-- Row 1: Summary Statistics - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
     <panel>
-      <title>Monitored Assets from Ping Data</title>
+      <single>
+        <title>Total Monitored Assets (Metrics)</title>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" BY hostname
+| stats dc(hostname) as asset_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x6db7c6","0x6db7c6"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Unique IP Addresses (Metrics)</title>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" BY target_ip
+| stats dc(target_ip) as ip_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x6db7c6","0x6db7c6"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Unique Groups (Metrics)</title>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" BY group
+| stats dc(group) as group_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x6db7c6","0x6db7c6"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Metric Data Points</title>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x6db7c6","0x6db7c6"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Row 2: Asset Inventory - EVENTS -->
+  <row depends="$show_events$">
+    <panel>
+      <title>Monitored Assets from Ping Data (Events)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -127,8 +235,27 @@
     </panel>
   </row>
 
+  <!-- Row 2: Asset Inventory - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
+    <panel>
+      <title>Monitored Assets from Ping Data (Metrics)</title>
+      <table>
+        <search>
+          <query>| mstats count("ping.pings_sent") as pings WHERE index="$pm_metrics_index$" BY hostname, target_ip, group
+| stats first(target_ip) as ip_address, first(group) as group, sum(pings) as total_pings by hostname
+| table hostname, ip_address, group, total_pings
+| sort hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
   <!-- Row 3: Discover Indexes with Matching IPs -->
-  <row>
+  <row depends="$show_events$">
     <panel>
       <title>Indexes Containing Your Monitored IP Addresses</title>
       <html>
@@ -157,7 +284,7 @@
   </row>
 
   <!-- Row 4: Discover Indexes with Matching Hostnames -->
-  <row>
+  <row depends="$show_events$">
     <panel>
       <title>Indexes Containing Your Monitored Hostnames</title>
       <html>
@@ -218,10 +345,10 @@
     </panel>
   </row>
 
-  <!-- Row 6: Assets by Group -->
-  <row>
+  <!-- Row 6: Assets by Group - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Assets by Group</title>
+      <title>Assets by Group (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -235,12 +362,43 @@
       </chart>
     </panel>
     <panel>
-      <title>Assets by Entity Type</title>
+      <title>Assets by Entity Type (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats dc(hostname) as host_count by entitytype
 | sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 6: Assets by Group - METRICS -->
+  <row depends="$show_metrics$" rejects="$show_combined$">
+    <panel>
+      <title>Assets by Group (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" BY hostname, group
+| stats dc(hostname) as host_count by group
+| sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Data Points by Group (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats count("ping.pings_sent") as data_points WHERE index="$pm_metrics_index$" BY group
+| sort -data_points</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
