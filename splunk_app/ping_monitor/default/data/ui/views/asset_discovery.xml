@@ -287,14 +287,6 @@
     </panel>
     <panel>
       <title>Your Monitored Hostnames</title>
-      <html>
-        <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; margin-bottom: 10px;">
-          <p style="color: #6db7c6; margin: 0;">
-            <strong>💡 Tip:</strong> These hostnames can be used with the lookup table to enrich other Splunk data.
-            Use <code style="background: #0d1520; padding: 2px 6px; border-radius: 3px; color: #f8f8f2;">| lookup ping_health_lookup hostname</code> in your searches.
-          </p>
-        </div>
-      </html>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -372,43 +364,6 @@
         <option name="charting.chart">pie</option>
         <option name="charting.drilldown">none</option>
       </chart>
-    </panel>
-  </row>
-
-  <!-- Row 6: Usage Instructions -->
-  <row>
-    <panel>
-      <html>
-        <div style="padding: 20px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
-          <h3 style="color: #5cc05c; margin: 0 0 15px 0;">📖 How to Use This Data</h3>
-          <table style="width: 100%;">
-            <tr>
-              <td style="width: 40px; vertical-align: top; color: #5cc05c; font-size: 18px;">1.</td>
-              <td style="color: #aaa; padding-bottom: 10px;">
-                <strong style="color: #fff;">Review Your Assets</strong> - The tables above show all monitored IP addresses and hostnames from your ping data.
-              </td>
-            </tr>
-            <tr>
-              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">2.</td>
-              <td style="color: #aaa; padding-bottom: 10px;">
-                <strong style="color: #fff;">Copy Asset Info</strong> - Copy IP addresses or hostnames to use in Splunk searches to find matching data in other indexes.
-              </td>
-            </tr>
-            <tr>
-              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">3.</td>
-              <td style="color: #aaa; padding-bottom: 10px;">
-                <strong style="color: #fff;">Enrich with Lookup</strong> - Use <code style="background: #0d1520; padding: 2px 6px; border-radius: 3px; color: #f8f8f2;">| lookup ping_health_lookup hostname</code> in any search to add ping health data.
-              </td>
-            </tr>
-            <tr>
-              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">4.</td>
-              <td style="color: #aaa;">
-                <strong style="color: #fff;">Build Correlations</strong> - Visit <strong>Asset Health Correlation</strong> to see how ping health relates to your service groups and entity types.
-              </td>
-            </tr>
-          </table>
-        </div>
-      </html>
     </panel>
   </row>
 

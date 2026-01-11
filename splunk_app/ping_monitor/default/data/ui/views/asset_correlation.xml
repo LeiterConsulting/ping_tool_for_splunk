@@ -399,47 +399,5 @@
     </panel>
   </row>
 
-  <!-- Row 5: Health Lookup Info -->
-  <row>
-    <panel>
-      <title>Health Lookup Table</title>
-      <html>
-        <div style="padding:15px;background:#1a2a3a;border-radius:5px;border:1px solid #6db7c6;">
-          <h4 style="color:#6db7c6;margin-top:0;">💡 Using Health Data in Other Searches</h4>
-          <p style="color:#ccc;">You can enrich any Splunk search with ping health data using the lookup table. Example:</p>
-          <pre style="background:#0d1520;padding:15px;border-radius:5px;color:#f8f8f2;overflow-x:auto;margin:10px 0;font-family:'Consolas','Monaco',monospace;font-size:13px;line-height:1.5;"><span style="color:#6db7c6;">index</span>=your_index 
-| <span style="color:#f8be34;">lookup</span> ping_health_lookup hostname <span style="color:#f8be34;">OUTPUT</span> health_status, packet_loss_pct, avg_latency_ms</pre>
-          <p style="color:#999;font-size:12px;">The health lookup is populated when you click "Update Now" on the Setup page. You can also enable the "Ping Monitor - Update Health Lookup" saved search for automatic updates.</p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <!-- Row 6: Current Lookup Contents -->
-  <row>
-    <panel>
-      <title>Current Health Lookup Contents</title>
-      <table>
-        <search>
-          <query>| inputlookup ping_health_lookup.csv
-| eval health_icon = case(
-    health_status == "Healthy", "✅",
-    health_status == "Degraded", "⚠️",
-    health_status == "Critical", "🔶",
-    health_status == "Down", "❌",
-    true(), "❓"
-)
-| table health_icon, hostname, target_ip, group, entitytype, health_status, packet_loss_pct, avg_latency_ms
-| rename health_icon as " ", packet_loss_pct as "Loss %", avg_latency_ms as "Latency ms"
-| sort health_status, hostname</query>
-          <earliest>-24h</earliest>
-          <latest>now</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
-      </table>
-    </panel>
-  </row>
-
 </dashboard>
 

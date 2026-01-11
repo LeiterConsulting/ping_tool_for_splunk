@@ -232,11 +232,9 @@
       <single>
         <title>Events Data (Last 24h)</title>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
-| head 1
-| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" | stats count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
+          <query>index=ping sourcetype=ping_monitor
+| stats count
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -251,11 +249,9 @@
       <single>
         <title>Summary Records (Last 24h)</title>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
-| head 1
-| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
+          <query>index=ping sourcetype=ping_monitor record_type=summary
+| stats count
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -270,11 +266,8 @@
       <single>
         <title>Metrics Data (Last 24h)</title>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval metrics_index="ping_metrics"]
-| head 1
-| eval midx=coalesce(metrics_index,"ping_metrics")
-| map maxsearches=1 search="| mstats count(_value) as count WHERE index=\"$midx$\" metric_name=\"ping.*\" | eval count=if(isnull(count) OR count=0, 0, count)"</query>
+          <query>| mstats count(_value) as count WHERE index="ping_metrics" metric_name="ping.*"
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -289,11 +282,9 @@
       <single>
         <title>Unique Hosts Monitored</title>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
-| head 1
-| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats dc(hostname) as count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
+          <query>index=ping sourcetype=ping_monitor record_type=summary
+| stats dc(hostname) as count
+| eval count=if(isnull(count) OR count=0, 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -309,14 +300,13 @@
   <!-- Data Sample -->
   <row>
     <panel>
-      <title>Recent Events Sample (from saved settings)</title>
+      <title>Recent Events Sample</title>
       <table>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
-| head 1
-| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | head 5 | eval _time_str=strftime(_time, \"%Y-%m-%d %H:%M:%S\") | table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms"
+          <query>index=ping sourcetype=ping_monitor record_type=summary
+| head 5
+| eval _time_str=strftime(_time, "%Y-%m-%d %H:%M:%S")
+| table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms
 | rename _time_str as "Time", packet_loss_pct as "Packet Loss %", avg_latency_ms as "Avg Latency (ms)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
@@ -366,14 +356,22 @@
         <choice value="view">View Status</choice>
         <choice value="update">Update Now</choice>
         <default>view</default>
+        <change>
+          <condition value="update">
+            <set token="do_update">true</set>
+          </condition>
+          <condition>
+            <unset token="do_update"/>
+          </condition>
+        </change>
       </input>
-      <table depends="$update_health$">
+      <table depends="$do_update$">
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
-| head 1
-| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor"), action="$update_health$"
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname | eval health_status=case(packet_loss_pct==0, \"Healthy\", packet_loss_pct&gt;0 AND packet_loss_pct&lt;50, \"Degraded\", packet_loss_pct&gt;=50 AND packet_loss_pct&lt;100, \"Critical\", packet_loss_pct==100, \"Down\", true(), \"Unknown\") | outputlookup ping_health_lookup.csv | stats count as updated_records"
+          <query>index=ping sourcetype=ping_monitor record_type=summary
+| stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname
+| eval health_status=case(packet_loss_pct==0, "Healthy", packet_loss_pct&gt;0 AND packet_loss_pct&lt;50, "Degraded", packet_loss_pct&gt;=50 AND packet_loss_pct&lt;100, "Critical", packet_loss_pct==100, "Down", true(), "Unknown")
+| outputlookup ping_health_lookup.csv
+| stats count as updated_records
 | eval result=if(updated_records&gt;0, "✅ Updated ".updated_records." records", "⚠️ No data found")
 | table result
 | rename result as "Result"</query>
