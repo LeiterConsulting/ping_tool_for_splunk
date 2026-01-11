@@ -334,8 +334,8 @@
         <search>
           <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
 | eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor"), action="$update_health$"
-| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname | eval health_status=case(packet_loss_pct==0, \"Healthy\", packet_loss_pct>0 AND packet_loss_pct<50, \"Degraded\", packet_loss_pct>=50 AND packet_loss_pct<100, \"Critical\", packet_loss_pct==100, \"Down\", true(), \"Unknown\") | outputlookup ping_health_lookup.csv | stats count as updated_records"
-| eval result=if(updated_records>0, "✅ Updated ".updated_records." records", "⚠️ No data found")
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname | eval health_status=case(packet_loss_pct==0, \"Healthy\", packet_loss_pct&gt;0 AND packet_loss_pct&lt;50, \"Degraded\", packet_loss_pct&gt;=50 AND packet_loss_pct&lt;100, \"Critical\", packet_loss_pct==100, \"Down\", true(), \"Unknown\") | outputlookup ping_health_lookup.csv | stats count as updated_records"
+| eval result=if(updated_records&gt;0, "✅ Updated ".updated_records." records", "⚠️ No data found")
 | table result
 | rename result as "Result"</query>
           <earliest>-24h</earliest>

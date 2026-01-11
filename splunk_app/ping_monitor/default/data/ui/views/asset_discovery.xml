@@ -328,7 +328,7 @@
         <label>IP or Hostname (press Enter to search)</label>
         <default></default>
         <change>
-          <condition match="len('$value$') > 2">
+          <condition match="len('$value$') &gt; 2">
             <set token="search_asset">$value$</set>
           </condition>
           <condition>
