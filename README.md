@@ -283,7 +283,91 @@ HEC_URL="https://http-inputs.mycompany.splunkcloudgc.com:443/services/collector/
 
 1. Copy `splunk/ping_dashboard.xml` to Splunk
 2. Replace `YOUR_INDEX`, `YOUR_SOURCETYPE`, `YOUR_METRICS_INDEX` placeholders
-3. (Optional) Install `splunk/macros.conf` for dual-mode queries
+3. Install `splunk/macros.conf` for dual-mode queries (see below)
+
+### Macros Installation (Required for Dual-Mode Dashboard)
+
+The macros enable seamless queries across both event and metrics data. **This is required if you're using the dual-mode dashboard or transitioning from events to metrics.**
+
+#### Option 1: Add to Search App (Quick)
+
+```bash
+# Linux/macOS
+sudo cp splunk/macros.conf $SPLUNK_HOME/etc/apps/search/local/macros.conf
+
+# Windows (PowerShell as Admin)
+Copy-Item splunk\macros.conf "$env:SPLUNK_HOME\etc\apps\search\local\macros.conf"
+```
+
+#### Option 2: Create Dedicated App (Recommended)
+
+```bash
+# Create app directory structure
+mkdir -p $SPLUNK_HOME/etc/apps/ping_monitor/local
+mkdir -p $SPLUNK_HOME/etc/apps/ping_monitor/default
+mkdir -p $SPLUNK_HOME/etc/apps/ping_monitor/metadata
+
+# Copy macros
+cp splunk/macros.conf $SPLUNK_HOME/etc/apps/ping_monitor/local/
+
+# Create app.conf
+cat > $SPLUNK_HOME/etc/apps/ping_monitor/default/app.conf << 'EOF'
+[install]
+is_configured = 0
+
+[ui]
+is_visible = 1
+label = Ping Monitor
+
+[launcher]
+author = Your Organization
+description = Network availability monitoring with dual-mode support
+version = 2.0.0
+EOF
+
+# Set permissions
+cat > $SPLUNK_HOME/etc/apps/ping_monitor/metadata/local.meta << 'EOF'
+[]
+export = system
+EOF
+```
+
+#### Customize Default Index/Sourcetype
+
+Edit the macros to match your environment. The no-argument versions use these defaults:
+
+```properties
+# In macros.conf, update these lines:
+[ping_summary_events]
+definition = `ping_summary_events(your_index, your_sourcetype)`
+
+[ping_summary_metrics]
+definition = `ping_summary_metrics(your_metrics_index, 1m)`
+
+[ping_data_union]
+definition = `ping_data_union(your_index, your_sourcetype, your_metrics_index, 1m)`
+```
+
+#### Verify Installation
+
+After restarting Splunk (or running `| rest /services/admin/macros`), test:
+
+```spl
+| `ping_summary_events`
+| `ping_data_union`
+```
+
+#### Available Macros
+
+| Macro | Arguments | Description |
+|-------|-----------|-------------|
+| `ping_summary_events` | (index, sourcetype) | Query event-based summaries |
+| `ping_summary_metrics` | (metrics_index, span) | Query metrics with mstats |
+| `ping_data_union` | (index, sourcetype, metrics_index, span) | Union of events + metrics |
+| `ping_latest_status` | — | Latest status per endpoint |
+| `ping_loss_trend` | (span) | Packet loss over time |
+| `ping_latency_by_group` | — | Average latency by group |
+| `ping_endpoints_with_issues` | — | Endpoints with >0% loss (last hour) |
 
 ---
 
