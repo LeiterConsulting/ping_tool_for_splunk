@@ -21,133 +21,20 @@
     <set token="pm_index">ping</set>
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
+    <set token="search_asset"></set>
   </init>
   
-  <fieldset submitButton="true" autoRun="false">
-    <input type="time" token="time_range" searchWhenChanged="false">
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
       <label>Discovery Time Range</label>
       <default>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </default>
     </input>
-    <input type="dropdown" token="search_scope" searchWhenChanged="false">
-      <label>Search Scope</label>
-      <choice value="*">All Indexes</choice>
-      <choice value="main">Main Index Only</choice>
-      <default>*</default>
-    </input>
   </fieldset>
 
-  <!-- Row 1: Asset Inventory from Ping Data -->
-  <row>
-    <panel>
-      <title>Monitored Assets from Ping Data</title>
-      <table>
-        <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats dc(target_ip) as unique_ips,
-        values(hostname) as hostnames,
-        values(target_ip) as ips,
-        values(group) as groups,
-        values(entitytype) as entity_types,
-        values(device) as devices,
-        values(vendor) as vendors
-        by hostname
-| mvexpand hostnames
-| dedup hostnames
-| rename hostnames as asset_name, ips as ip_addresses
-| table asset_name, ip_addresses, groups, entity_types, devices, vendors
-| sort asset_name</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 2: Discover Indexes with Matching IPs -->
-  <row>
-    <panel>
-      <title>Indexes Containing Matching IP Addresses</title>
-      <html>
-        <p style="color:#999;margin-bottom:10px;">Searches for indexes where your monitored IP addresses appear in common IP fields</p>
-      </html>
-      <table>
-        <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| dedup target_ip
-| head 50
-| map maxsearches=50 search="| tstats count WHERE index=$search_scope$ (src_ip=$target_ip$ OR dest_ip=$target_ip$ OR ip=$target_ip$) BY index, sourcetype"
-| stats sum(count) as matched_events by index, sourcetype
-| where matched_events &gt; 0
-| sort -matched_events
-| head 20
-| rename matched_events as "Events with Matching IPs"</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 3: Discover Indexes with Matching Hostnames -->
-  <row>
-    <panel>
-      <title>Indexes Containing Matching Hostnames</title>
-      <html>
-        <p style="color:#999;margin-bottom:10px;">Searches for indexes where your monitored hostnames appear in common host fields</p>
-      </html>
-      <table>
-        <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| dedup hostname
-| head 50
-| map maxsearches=50 search="| tstats count WHERE index=$search_scope$ host=\"*$hostname$*\" BY index, sourcetype"
-| stats sum(count) as matched_events by index, sourcetype
-| where matched_events &gt; 0
-| sort -matched_events
-| head 20
-| rename matched_events as "Events with Matching Hosts"</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 4: Quick Discovery Search -->
-  <row>
-    <panel>
-      <title>Quick Asset Search</title>
-      <html>
-        <p style="color:#999;margin-bottom:10px;">Enter an IP address or hostname to find all indexes/sourcetypes containing that asset</p>
-      </html>
-      <input type="text" token="search_asset" searchWhenChanged="false">
-        <label>IP or Hostname</label>
-        <default></default>
-      </input>
-      <table>
-        <search>
-          <query>| tstats count WHERE index=$search_scope$ "$search_asset$" BY index, sourcetype
-| sort -count
-| rename count as "Matching Events"</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 5: Summary Statistics -->
+  <!-- Row 1: Summary Statistics -->
   <row>
     <panel>
       <single>
@@ -212,6 +99,154 @@
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
       </single>
+    </panel>
+  </row>
+
+  <!-- Row 2: Asset Inventory from Ping Data -->
+  <row>
+    <panel>
+      <title>Monitored Assets from Ping Data</title>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats latest(target_ip) as ip_address,
+        latest(group) as group,
+        latest(entitytype) as entity_type,
+        latest(device) as device,
+        latest(vendor) as vendor,
+        latest(description) as description
+        by hostname
+| table hostname, ip_address, group, entity_type, device, vendor, description
+| sort hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 3: Discover Indexes with Matching IPs -->
+  <row>
+    <panel>
+      <title>Indexes Containing Your Monitored IP Addresses</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Shows indexes where your monitored IP addresses appear in src_ip, dest_ip, src, dest, or ip fields</p>
+      </html>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats values(target_ip) as monitored_ips
+| mvexpand monitored_ips
+| head 20
+| rename monitored_ips as search_ip
+| map maxsearches=20 search="search index=* (src_ip=\"$search_ip$\" OR dest_ip=\"$search_ip$\" OR src=\"$search_ip$\" OR dest=\"$search_ip$\" OR ip=\"$search_ip$\") | stats count by index, sourcetype | eval matched_ip=\"$search_ip$\""
+| stats sum(count) as matched_events, values(matched_ip) as matched_ips by index, sourcetype
+| where matched_events > 0
+| sort -matched_events
+| head 20
+| rename matched_events as "Events", matched_ips as "Matched IPs"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 4: Discover Indexes with Matching Hostnames -->
+  <row>
+    <panel>
+      <title>Indexes Containing Your Monitored Hostnames</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Shows indexes where your monitored hostnames appear in the host field or event data</p>
+      </html>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats values(hostname) as monitored_hosts
+| mvexpand monitored_hosts
+| head 20
+| rename monitored_hosts as search_host
+| map maxsearches=20 search="search index=* host=\"$search_host$\" | stats count by index, sourcetype | eval matched_host=\"$search_host$\""
+| stats sum(count) as matched_events, values(matched_host) as matched_hosts by index, sourcetype
+| where matched_events > 0
+| sort -matched_events
+| head 20
+| rename matched_events as "Events", matched_hosts as "Matched Hosts"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 5: Quick Discovery Search -->
+  <row>
+    <panel>
+      <title>Quick Asset Search</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Enter an IP address or hostname to find all indexes/sourcetypes containing that asset, then press Enter</p>
+      </html>
+      <input type="text" token="search_asset" searchWhenChanged="true">
+        <label>IP or Hostname</label>
+        <default></default>
+      </input>
+    </panel>
+  </row>
+  
+  <row depends="$search_asset$">
+    <panel>
+      <title>Search Results for: $search_asset$</title>
+      <table>
+        <search>
+          <query>search index=* ("$search_asset$" OR host="*$search_asset$*" OR src_ip="$search_asset$" OR dest_ip="$search_asset$")
+| stats count by index, sourcetype
+| sort -count
+| head 20
+| rename count as "Matching Events"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 6: Assets by Group -->
+  <row>
+    <panel>
+      <title>Assets by Group</title>
+      <chart>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats dc(hostname) as host_count by group
+| sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Assets by Entity Type</title>
+      <chart>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats dc(hostname) as host_count by entitytype
+| sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
     </panel>
   </row>
 

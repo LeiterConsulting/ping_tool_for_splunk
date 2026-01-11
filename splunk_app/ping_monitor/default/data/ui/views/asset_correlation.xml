@@ -1,6 +1,6 @@
 <dashboard version="1.1" theme="dark">
   <label>Asset Health Correlation</label>
-  <description>Enrich your data with ping health status - correlate endpoint availability with other Splunk data sources</description>
+  <description>Correlate endpoint availability with other Splunk data sources</description>
   
   <!-- Load configuration from KV Store -->
   <search id="load_config">
@@ -17,32 +17,25 @@
     </done>
   </search>
   
+  <!-- Check if health lookup exists -->
+  <search id="check_lookup">
+    <query>| inputlookup ping_health_lookup.csv | stats count as lookup_count</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <condition match="'result.lookup_count' > 0">
+        <set token="lookup_exists">true</set>
+      </condition>
+    </done>
+  </search>
+  
   <init>
     <set token="pm_index">ping</set>
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
   </init>
   
-  <fieldset submitButton="true" autoRun="true">
-    <input type="text" token="correlation_index" searchWhenChanged="false">
-      <label>Correlation Index</label>
-      <default>*</default>
-    </input>
-    <input type="text" token="correlation_sourcetype" searchWhenChanged="false">
-      <label>Correlation Sourcetype</label>
-      <default>*</default>
-    </input>
-    <input type="dropdown" token="correlation_field" searchWhenChanged="false">
-      <label>Correlation Field</label>
-      <choice value="host">host</choice>
-      <choice value="src_ip">src_ip</choice>
-      <choice value="dest_ip">dest_ip</choice>
-      <choice value="src">src</choice>
-      <choice value="dest">dest</choice>
-      <choice value="dvc">dvc</choice>
-      <choice value="ip">ip</choice>
-      <default>host</default>
-    </input>
+  <fieldset submitButton="false" autoRun="true">
     <input type="time" token="time_range" searchWhenChanged="true">
       <label>Time Range</label>
       <default>
@@ -55,23 +48,23 @@
   <!-- Row 1: Health Status Summary -->
   <row>
     <panel>
-      <title>Current Asset Health Status (from Ping Monitor)</title>
+      <title>Current Asset Health Status</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats latest(_time) as last_check,
         latest(packet_loss_pct) as packet_loss,
         latest(avg_latency_ms) as latency,
-        values(target_ip) as ip_addresses,
-        values(group) as groups,
-        values(entitytype) as entitytype,
-        values(device) as device,
-        values(vendor) as vendor
+        latest(target_ip) as ip_address,
+        latest(group) as group,
+        latest(entitytype) as entitytype,
+        latest(device) as device,
+        latest(vendor) as vendor
         by hostname
 | eval health_status = case(
     packet_loss == 0, "Healthy",
-    packet_loss &gt; 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss &gt;= 50 AND packet_loss &lt; 100, "Critical",
+    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
     packet_loss == 100, "Down",
     true(), "Unknown"
 )
@@ -83,8 +76,8 @@
     true(), "❓"
 )
 | eval last_check_human = strftime(last_check, "%Y-%m-%d %H:%M:%S")
-| eval latency_display = if(latency &gt; 0, round(latency, 2)." ms", "N/A")
-| table health_icon, hostname, ip_addresses, health_status, packet_loss, latency_display, groups, entitytype, device, vendor, last_check_human
+| eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
+| table health_icon, hostname, ip_address, health_status, packet_loss, latency_display, group, entitytype, device, vendor, last_check_human
 | rename health_icon as " ", packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
 | sort health_status, hostname</query>
           <earliest>$time_range.earliest$</earliest>
@@ -99,15 +92,15 @@
   <!-- Row 2: Health Distribution -->
   <row>
     <panel>
-      <title>Health Distribution of Monitored Assets</title>
+      <title>Health Distribution</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | eval health_status = case(
     packet_loss == 0, "Healthy",
-    packet_loss &gt; 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss &gt;= 50 AND packet_loss &lt; 100, "Critical",
+    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
     packet_loss == 100, "Down",
     true(), "Unknown"
 )
@@ -126,8 +119,8 @@
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | eval health_status = case(
     packet_loss_pct == 0, "Healthy",
-    packet_loss_pct &gt; 0 AND packet_loss_pct &lt; 50, "Degraded",
-    packet_loss_pct &gt;= 50 AND packet_loss_pct &lt; 100, "Critical",
+    packet_loss_pct > 0 AND packet_loss_pct &lt; 50, "Degraded",
+    packet_loss_pct >= 50 AND packet_loss_pct &lt; 100, "Critical",
     packet_loss_pct == 100, "Down",
     true(), "Unknown"
 )
@@ -147,30 +140,23 @@
   <row>
     <panel>
       <title>Unhealthy Assets - Potential Service Impact</title>
-      <html>
-        <p style="color:#999;margin-bottom:10px;">Assets currently experiencing issues that may affect related services</p>
-      </html>
       <table>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct>0
 | stats latest(packet_loss_pct) as packet_loss, 
         latest(avg_latency_ms) as latency, 
-        values(target_ip) as ips,
-        values(group) as groups,
-        values(entitytype) as entitytype
+        latest(target_ip) as ip,
+        latest(group) as group,
+        latest(entitytype) as entitytype
         by hostname
 | eval health_status = case(
-    packet_loss &gt; 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss &gt;= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down"
+    packet_loss > 0 AND packet_loss &lt; 50, "⚠️ Degraded",
+    packet_loss >= 50 AND packet_loss &lt; 100, "🔶 Critical",
+    packet_loss == 100, "❌ Down"
 )
-| eval health_icon = case(
-    health_status == "Degraded", "⚠️",
-    health_status == "Critical", "🔶",
-    health_status == "Down", "❌"
-)
-| table health_icon, hostname, ips, health_status, packet_loss, latency, groups, entitytype
-| rename health_icon as " ", packet_loss as "Loss %", latency as "Latency ms"
+| eval latency = round(latency, 2)
+| table health_status, hostname, ip, packet_loss, latency, group, entitytype
+| rename health_status as "Status", packet_loss as "Loss %", latency as "Latency ms"
 | sort -packet_loss</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -184,36 +170,50 @@
   <!-- Row 4: Service Impact Analysis -->
   <row>
     <panel>
-      <title>Service Impact Analysis by Entity Type</title>
-      <html>
-        <p style="color:#999;margin-bottom:10px;">Groups assets by entity type and shows overall service health</p>
-      </html>
+      <title>Service Health by Entity Type</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats latest(packet_loss_pct) as packet_loss,
-        dc(hostname) as total_assets,
-        values(hostname) as assets
-        by entitytype, group
+| stats latest(packet_loss_pct) as packet_loss, dc(hostname) as asset_count by entitytype
 | eval healthy = if(packet_loss == 0, 1, 0)
-| eventstats sum(healthy) as healthy_assets, count as total by entitytype
-| eval service_health_pct = round((healthy_assets / total) * 100, 1)
-| eval service_status = case(
-    service_health_pct &gt;= 99, "✅ Excellent",
-    service_health_pct &gt;= 90, "🟢 Good",
-    service_health_pct &gt;= 75, "⚠️ Degraded",
-    service_health_pct &gt;= 50, "🔶 Impaired",
+| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by entitytype
+| eval health_pct = round((healthy_count / total) * 100, 1)
+| eval status = case(
+    health_pct >= 99, "✅ Excellent",
+    health_pct >= 90, "🟢 Good",
+    health_pct >= 75, "⚠️ Degraded",
+    health_pct >= 50, "🔶 Impaired",
     true(), "❌ Critical"
 )
-| stats values(group) as groups,
-        sum(total_assets) as total_assets,
-        avg(service_health_pct) as avg_health,
-        values(service_status) as status
-        by entitytype
-| eval avg_health = round(avg_health, 1)."%"
-| table entitytype, groups, total_assets, avg_health, status
-| rename entitytype as "Entity Type", groups as "Groups", total_assets as "Total Assets", avg_health as "Health %", status as "Service Status"
-| sort -avg_health</query>
+| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by entitytype
+| sort -health_pct
+| rename entitytype as "Entity Type", assets as "Assets", health_pct as "Health %", status as "Status"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+    <panel>
+      <title>Service Health by Group</title>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats latest(packet_loss_pct) as packet_loss, dc(hostname) as asset_count by group
+| eval healthy = if(packet_loss == 0, 1, 0)
+| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
+| eval health_pct = round((healthy_count / total) * 100, 1)
+| eval status = case(
+    health_pct >= 99, "✅ Excellent",
+    health_pct >= 90, "🟢 Good",
+    health_pct >= 75, "⚠️ Degraded",
+    health_pct >= 50, "🔶 Impaired",
+    true(), "❌ Critical"
+)
+| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
+| sort -health_pct
+| rename group as "Group", assets as "Assets", health_pct as "Health %", status as "Status"</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -223,31 +223,45 @@
     </panel>
   </row>
 
-  <!-- Row 5: Lookup Generation Helper -->
+  <!-- Row 5: Health Lookup Info -->
   <row>
     <panel>
-      <title>Generate Health Lookup Table</title>
+      <title>Health Lookup Table</title>
       <html>
-        <div style="padding:10px;background:#1a1a1a;border-radius:5px;">
-          <p style="color:#ccc;margin-bottom:15px;">To enable real-time health enrichment across all your searches, run the following search to generate a lookup table:</p>
-          <pre style="background:#2a2a2a;padding:15px;border-radius:5px;color:#00ff00;overflow-x:auto;">index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats latest(packet_loss_pct) as packet_loss_pct, 
-        latest(avg_latency_ms) as avg_latency_ms,
-        values(target_ip) as target_ip,
-        values(group) as group,
-        values(entitytype) as entitytype
-        by hostname
-| eval health_status = case(
-    packet_loss_pct == 0, "Healthy",
-    packet_loss_pct &gt; 0 AND packet_loss_pct &lt; 50, "Degraded",
-    packet_loss_pct &gt;= 50 AND packet_loss_pct &lt; 100, "Critical",
-    packet_loss_pct == 100, "Down",
-    true(), "Unknown"
-)
-| outputlookup ping_health_lookup.csv</pre>
-          <p style="color:#999;margin-top:15px;font-size:12px;">The saved search "Ping Monitor - Update Health Lookup" does this automatically every 5 minutes. Enable it in Settings &gt; Saved Searches.</p>
+        <div style="padding:15px;background:#1a2a3a;border-radius:5px;border:1px solid #6db7c6;">
+          <h4 style="color:#6db7c6;margin-top:0;">💡 Using Health Data in Other Searches</h4>
+          <p style="color:#ccc;">You can enrich any Splunk search with ping health data using the lookup table. Example:</p>
+          <pre style="background:#2a2a2a;padding:15px;border-radius:5px;color:#00ff00;overflow-x:auto;margin:10px 0;">index=your_index 
+| lookup ping_health_lookup.csv hostname OUTPUT health_status, packet_loss_pct, avg_latency_ms</pre>
+          <p style="color:#999;font-size:12px;">The health lookup is automatically populated when you run Setup. You can also enable the "Ping Monitor - Update Health Lookup" saved search for automatic updates every 5 minutes.</p>
         </div>
       </html>
+    </panel>
+  </row>
+
+  <!-- Row 6: Current Lookup Contents -->
+  <row>
+    <panel>
+      <title>Current Health Lookup Contents</title>
+      <table>
+        <search>
+          <query>| inputlookup ping_health_lookup.csv
+| eval health_icon = case(
+    health_status == "Healthy", "✅",
+    health_status == "Degraded", "⚠️",
+    health_status == "Critical", "🔶",
+    health_status == "Down", "❌",
+    true(), "❓"
+)
+| table health_icon, hostname, target_ip, group, entitytype, health_status, packet_loss_pct, avg_latency_ms
+| rename health_icon as " ", packet_loss_pct as "Loss %", avg_latency_ms as "Latency ms"
+| sort health_status, hostname</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
     </panel>
   </row>
 

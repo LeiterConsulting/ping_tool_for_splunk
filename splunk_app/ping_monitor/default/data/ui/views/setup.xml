@@ -2,12 +2,42 @@
   <label>Ping Monitor Setup</label>
   <description>Configure Ping Monitor settings - run this once after installation</description>
   
+  <!-- Initialize defaults -->
+  <init>
+    <set token="config_index">ping</set>
+    <set token="config_sourcetype">ping_monitor</set>
+    <set token="config_metrics_index">ping_metrics</set>
+    <set token="form.config_index">ping</set>
+    <set token="form.config_sourcetype">ping_monitor</set>
+    <set token="form.config_metrics_index">ping_metrics</set>
+  </init>
+
+  <!-- Load existing config if available -->
+  <search id="load_existing_config">
+    <query>| inputlookup ping_monitor_settings_lookup 
+| where _key="global" 
+| head 1</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <condition match="isnotnull('result.index')">
+        <set token="config_index">$result.index$</set>
+        <set token="config_sourcetype">$result.sourcetype$</set>
+        <set token="config_metrics_index">$result.metrics_index$</set>
+        <set token="form.config_index">$result.index$</set>
+        <set token="form.config_sourcetype">$result.sourcetype$</set>
+        <set token="form.config_metrics_index">$result.metrics_index$</set>
+        <set token="is_configured">true</set>
+      </condition>
+    </done>
+  </search>
+  
   <row>
     <panel>
       <html>
         <style>
           .setup-container { 
-            max-width: 600px; 
+            max-width: 800px; 
             margin: 20px auto; 
             padding: 30px;
             background: #1a1a1a;
@@ -26,41 +56,11 @@
             color: #999;
             font-size: 14px;
           }
-          .form-group {
-            margin-bottom: 20px;
-          }
-          .form-group label {
-            display: block;
-            color: #ccc;
-            margin-bottom: 8px;
-            font-weight: bold;
-          }
-          .form-group .help-text {
-            color: #777;
-            font-size: 12px;
-            margin-top: 5px;
-          }
-          .status-message {
-            padding: 15px;
-            border-radius: 5px;
-            margin-top: 20px;
-            text-align: center;
-          }
-          .status-success {
-            background: #1e3a1e;
-            color: #5cc05c;
-            border: 1px solid #5cc05c;
-          }
-          .status-info {
-            background: #1a2a3a;
-            color: #6db7c6;
-            border: 1px solid #6db7c6;
-          }
         </style>
         <div class="setup-container">
           <div class="setup-header">
             <h1>🎯 Ping Monitor Setup</h1>
-            <p>Configure your Splunk index and sourcetype settings below, then click Save Configuration.</p>
+            <p>Configure your Splunk index and sourcetype settings below.</p>
           </div>
         </div>
       </html>
@@ -73,12 +73,17 @@
       <title>Current Configuration</title>
       <table>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup
-| where _key="global"
-| eval status=if(configured="true", "✅ Configured", "⚠️ Not Configured")
+          <query>| inputlookup ping_monitor_settings_lookup 
+| search _key="global"
+| head 1
+| eval status=if(configured=="true", "✅ Configured", "⚠️ Not Configured")
+| eval index=coalesce(index, "(not set)")
+| eval sourcetype=coalesce(sourcetype, "(not set)")
+| eval metrics_index=coalesce(metrics_index, "(not set)")
 | table status, index, sourcetype, metrics_index
 | rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index"
-| append [| makeresults | eval Status="⚠️ Not Configured", "Events Index"="(not set)", "Sourcetype"="(not set)", "Metrics Index"="(not set)" | where NOT [| inputlookup ping_monitor_settings_lookup | where _key="global" | return $configured]]</query>
+| append [| makeresults | eval Status="⚠️ Not Configured - Please save configuration below", "Events Index"="(default: ping)", "Sourcetype"="(default: ping_monitor)", "Metrics Index"="(default: ping_metrics)" | head 1]
+| head 1</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
         </search>
@@ -88,51 +93,38 @@
     </panel>
   </row>
 
-  <!-- Configuration Form -->
-  <row>
-    <panel>
-      <title>Configuration Settings</title>
-      <html>
-        <div style="padding: 20px; background: #1a1a1a; border-radius: 5px;">
-          <p style="color: #ccc; margin-bottom: 15px;">Enter the index and sourcetype where your ping monitor data is being sent via HEC:</p>
-        </div>
-      </html>
-    </panel>
-  </row>
+  <!-- Configuration Form with fieldset -->
+  <fieldset submitButton="true" autoRun="false">
+    <input type="text" token="config_index" searchWhenChanged="false">
+      <label>Events Index</label>
+      <default>ping</default>
+    </input>
+    <input type="text" token="config_sourcetype" searchWhenChanged="false">
+      <label>Sourcetype</label>
+      <default>ping_monitor</default>
+    </input>
+    <input type="text" token="config_metrics_index" searchWhenChanged="false">
+      <label>Metrics Index</label>
+      <default>ping_metrics</default>
+    </input>
+  </fieldset>
 
   <row>
     <panel>
-      <input type="text" token="config_index" searchWhenChanged="false">
-        <label>Events Index</label>
-        <default>ping</default>
-      </input>
-      <input type="text" token="config_sourcetype" searchWhenChanged="false">
-        <label>Sourcetype</label>
-        <default>ping_monitor</default>
-      </input>
-      <input type="text" token="config_metrics_index" searchWhenChanged="false">
-        <label>Metrics Index (leave blank if not using metrics mode)</label>
-        <default>ping_metrics</default>
-      </input>
       <html>
-        <div style="padding: 20px;">
-          <p style="color: #777; font-size: 12px;">
-            <strong>Events Index:</strong> The Splunk index where ping event data is stored<br/>
-            <strong>Sourcetype:</strong> Usually "ping_monitor" unless you customized it<br/>
-            <strong>Metrics Index:</strong> Only needed if you enabled metrics mode in your config
+        <div style="padding: 15px; background: #1a2a3a; border-radius: 5px; border: 1px solid #6db7c6;">
+          <p style="color: #6db7c6; margin: 0;">
+            <strong>💡 Instructions:</strong> Enter your index and sourcetype values above, then click the <strong>Submit</strong> button at the top right of the form to save your configuration.
           </p>
         </div>
       </html>
     </panel>
   </row>
 
-  <!-- Save Button (uses search to write to KV store) -->
+  <!-- Save Configuration - triggered on submit -->
   <row>
     <panel>
       <title>Save Configuration</title>
-      <html>
-        <p style="color: #ccc; padding: 10px;">Click the search button below to save your configuration:</p>
-      </html>
       <table>
         <search>
           <query>| makeresults 
@@ -140,9 +132,10 @@
        index="$config_index$", 
        sourcetype="$config_sourcetype$", 
        metrics_index="$config_metrics_index$",
-       configured="true"
+       configured="true",
+       last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
 | outputlookup ping_monitor_settings_lookup append=false key_field=_key
-| eval result="✅ Configuration saved successfully! Navigate to Ping Monitor Overview to view your data."
+| eval result="✅ Configuration saved! Index: $config_index$, Sourcetype: $config_sourcetype$, Metrics Index: $config_metrics_index$"
 | table result
 | rename result as "Status"</query>
           <earliest>-1m</earliest>
@@ -154,19 +147,32 @@
     </panel>
   </row>
 
-  <!-- Test Configuration -->
+  <!-- Test Configuration - check for data -->
   <row>
     <panel>
-      <title>Test Configuration</title>
-      <html>
-        <p style="color: #ccc; padding: 10px;">After saving, this panel shows if data exists in your configured index:</p>
-      </html>
+      <title>Test Configuration - Data Check</title>
       <single>
         <title>Events Found in Last 24 Hours</title>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup 
-| where _key="global"
-| map search="index=$index$ sourcetype=$sourcetype$ | stats count" maxsearches=1
+          <query>index="$config_index$" sourcetype="$config_sourcetype$" 
+| stats count 
+| eval count=if(isnull(count), 0, count)</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <title>Metrics Data Check</title>
+      <single>
+        <title>Metrics Found in Last 24 Hours</title>
+        <search>
+          <query>| mstats count(_value) WHERE index="$config_metrics_index$" metric_name="ping.*"
 | eval count=if(isnull(count), 0, count)</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
@@ -180,6 +186,66 @@
     </panel>
   </row>
 
+  <!-- Health Lookup Status -->
+  <row>
+    <panel>
+      <title>Health Lookup Status</title>
+      <table>
+        <search>
+          <query>| inputlookup ping_health_lookup.csv 
+| stats count as records, max(_time) as last_updated
+| eval status=if(records>0, "✅ Health lookup populated with ".records." records", "⚠️ Health lookup is empty - run the Update Health Lookup saved search")
+| eval last_updated=if(isnotnull(last_updated), strftime(last_updated, "%Y-%m-%d %H:%M:%S"), "Never")
+| table status, records, last_updated
+| rename status as "Status", records as "Records", last_updated as "Last Updated"
+| append [| makeresults | eval Status="⚠️ Health lookup does not exist yet", Records=0, "Last Updated"="Never" | head 1]
+| head 1</query>
+          <earliest>-1m</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">1</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Populate Health Lookup Now -->
+  <row>
+    <panel>
+      <title>Populate Health Lookup Now</title>
+      <html>
+        <p style="color: #ccc; padding: 10px;">Click Submit above to also generate/refresh the health lookup table for asset correlation features.</p>
+      </html>
+      <table>
+        <search>
+          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
+| stats latest(packet_loss_pct) as packet_loss_pct, 
+        latest(avg_latency_ms) as avg_latency_ms,
+        latest(target_ip) as target_ip,
+        latest(group) as group,
+        latest(entitytype) as entitytype
+        by hostname
+| eval health_status = case(
+    packet_loss_pct == 0, "Healthy",
+    packet_loss_pct > 0 AND packet_loss_pct &lt; 50, "Degraded",
+    packet_loss_pct >= 50 AND packet_loss_pct &lt; 100, "Critical",
+    packet_loss_pct == 100, "Down",
+    true(), "Unknown"
+)
+| outputlookup ping_health_lookup.csv
+| stats count as updated_records
+| eval result="✅ Health lookup updated with " . updated_records . " records"
+| table result
+| rename result as "Status"</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">1</option>
+      </table>
+    </panel>
+  </row>
+
   <!-- Next Steps -->
   <row>
     <panel>
@@ -188,9 +254,9 @@
           <h3 style="color: #6db7c6; margin-top: 0;">📋 Next Steps</h3>
           <ol style="color: #ccc; line-height: 2;">
             <li>Make sure your ping monitor script is running and sending data to Splunk HEC</li>
-            <li>Save your configuration above</li>
+            <li>Click <strong>Submit</strong> above to save your configuration</li>
             <li>Navigate to <strong>Ping Monitor Overview</strong> to view your monitoring dashboard</li>
-            <li>Optionally enable the scheduled saved search "Update Health Lookup" for correlation features</li>
+            <li>Optionally enable the scheduled saved search "Update Health Lookup" in Settings → Saved Searches</li>
           </ol>
         </div>
       </html>
