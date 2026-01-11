@@ -77,12 +77,22 @@ function Get-Configuration {
         output_mode = "file"
         log_path = Join-Path $ScriptDir "logs\ping_results.log"
         log_rotation_size_mb = 50
+        emit_individual_pings = $true
         hec = @{
             enabled = $false
             url = ""
             token = ""
             index = "main"
             sourcetype = "ping_monitor"
+            verify_ssl = $true
+            ssl_protocol = "Default"
+        }
+        metrics = @{
+            enabled = $false
+            mode = "dual"
+            index = ""
+            hec_url = ""
+            token = ""
             verify_ssl = $true
             ssl_protocol = "Default"
         }
@@ -105,6 +115,18 @@ function Get-Configuration {
     }
     else {
         $config['hec'] = $defaults.hec
+    }
+    
+    # Ensure metrics sub-properties have defaults
+    if ($config.ContainsKey('metrics') -and $null -ne $config.metrics) {
+        foreach ($metricsKey in $defaults.metrics.Keys) {
+            if (-not $config.metrics.ContainsKey($metricsKey)) {
+                $config.metrics[$metricsKey] = $defaults.metrics[$metricsKey]
+            }
+        }
+    }
+    else {
+        $config['metrics'] = $defaults.metrics
     }
     
     # Validate and sanitize numeric values
@@ -159,10 +181,14 @@ function Get-Endpoints {
         }
         
         $endpoint = [PSCustomObject]@{
-            ip          = $row.ip.Trim()
-            hostname    = $row.hostname.Trim()
-            group       = if ($row.PSObject.Properties['group'] -and $row.group) { $row.group.Trim() } else { "default" }
-            description = if ($row.PSObject.Properties['description'] -and $row.description) { $row.description.Trim() } else { "" }
+            ip               = $row.ip.Trim()
+            hostname         = $row.hostname.Trim()
+            group            = if ($row.PSObject.Properties['group'] -and $row.group) { $row.group.Trim() } else { "default" }
+            description      = if ($row.PSObject.Properties['description'] -and $row.description) { $row.description.Trim() } else { "" }
+            entitytype       = if ($row.PSObject.Properties['entitytype'] -and $row.entitytype) { $row.entitytype.Trim() } else { "" }
+            device           = if ($row.PSObject.Properties['device'] -and $row.device) { $row.device.Trim() } else { "" }
+            vendor           = if ($row.PSObject.Properties['vendor'] -and $row.vendor) { $row.vendor.Trim() } else { "" }
+            additional_notes = if ($row.PSObject.Properties['additional_notes'] -and $row.additional_notes) { $row.additional_notes.Trim() } else { "" }
         }
         
         $endpoints += $endpoint
@@ -319,6 +345,10 @@ function Invoke-ParallelPing {
                     hostname        = $endpoint.hostname
                     group           = $endpoint.group
                     description     = $endpoint.description
+                    entitytype      = $endpoint.entitytype
+                    device          = $endpoint.device
+                    vendor          = $endpoint.vendor
+                    additional_notes= $endpoint.additional_notes
                     status          = "success"
                     latency_ms      = $latency
                     ttl             = $ttl
@@ -334,6 +364,10 @@ function Invoke-ParallelPing {
                     hostname        = $endpoint.hostname
                     group           = $endpoint.group
                     description     = $endpoint.description
+                    entitytype      = $endpoint.entitytype
+                    device          = $endpoint.device
+                    vendor          = $endpoint.vendor
+                    additional_notes= $endpoint.additional_notes
                     status          = "failed"
                     latency_ms      = -1
                     ttl             = -1
@@ -356,6 +390,10 @@ function Invoke-ParallelPing {
             hostname            = $endpoint.hostname
             group               = $endpoint.group
             description         = $endpoint.description
+            entitytype          = $endpoint.entitytype
+            device              = $endpoint.device
+            vendor              = $endpoint.vendor
+            additional_notes    = $endpoint.additional_notes
             record_type         = "summary"
             pings_sent          = $count
             pings_successful    = $successCount
@@ -427,7 +465,7 @@ function Send-ToSplunkHEC {
     $currentBatch = @()
     
     foreach ($result in $Results) {
-        $event = @{
+        $hecEvent = @{
             time       = [DateTimeOffset]::Parse($result.timestamp).ToUnixTimeSeconds()
             host       = $env:COMPUTERNAME
             source     = "ping_monitor"
@@ -436,7 +474,7 @@ function Send-ToSplunkHEC {
             event      = $result
         }
         
-        $currentBatch += ($event | ConvertTo-Json -Compress)
+        $currentBatch += ($hecEvent | ConvertTo-Json -Compress)
         
         if ($currentBatch.Count -ge $batchSize) {
             $batches += ,($currentBatch -join "`n")
@@ -457,6 +495,7 @@ function Send-ToSplunkHEC {
                 Method      = "POST"
                 Headers     = $headers
                 Body        = $batch
+                TimeoutSec  = 5
                 ErrorAction = "Stop"
             }
             
@@ -469,7 +508,7 @@ function Send-ToSplunkHEC {
                 $splatParams['SslProtocol'] = $HecConfig.ssl_protocol
             }
             
-            $response = Invoke-RestMethod @splatParams
+            Invoke-RestMethod @splatParams | Out-Null
             $successCount++
         }
         catch {
@@ -480,6 +519,108 @@ function Send-ToSplunkHEC {
     
     Write-Host "HEC: Sent $successCount batches successfully, $failCount failed" -ForegroundColor $(if ($failCount -eq 0) { "Green" } else { "Yellow" })
     return ($failCount -eq 0)
+}
+
+function Send-ToSplunkMetrics {
+    <#
+    .SYNOPSIS
+        Send summary data to Splunk as metrics via HEC metrics endpoint.
+    .DESCRIPTION
+        Converts summary records to Splunk metrics format and sends to the HEC metrics endpoint.
+        Metrics are more efficient for numeric time-series data and support mstats queries.
+    .PARAMETER Summaries
+        Array of summary records (record_type=summary) to convert to metrics.
+    .PARAMETER MetricsConfig
+        Metrics configuration block from config.psd1.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]
+        [array]$Summaries,
+        
+        [Parameter(Mandatory = $true)]
+        [hashtable]$MetricsConfig
+    )
+    
+    if (-not $MetricsConfig.enabled) {
+        return $true
+    }
+    
+    if ([string]::IsNullOrWhiteSpace($MetricsConfig.hec_url) -or [string]::IsNullOrWhiteSpace($MetricsConfig.token)) {
+        Write-Warning "Metrics HEC URL or token not configured. Skipping metrics."
+        return $false
+    }
+
+    if ([string]::IsNullOrWhiteSpace($MetricsConfig.index)) {
+        Write-Warning "Metrics index not configured (metrics.index is empty). Splunk may route to the token default index, but for best results set metrics.index to a metrics-type index."
+    }
+    
+    $headers = @{
+        "Authorization" = "Splunk $($MetricsConfig.token)"
+        "Content-Type"  = "application/json"
+    }
+    
+    $metricsPayload = @()
+    
+    foreach ($summary in $Summaries) {
+        # Build the metrics event with all numeric fields
+        $metricsEvent = @{
+            time   = [DateTimeOffset]::Parse($summary.timestamp).ToUnixTimeSeconds()
+            host   = $env:COMPUTERNAME
+            source = "ping_monitor"
+            index  = $MetricsConfig.index
+            event  = "metric"
+            fields = @{
+                # Metric names with values
+                "metric_name:ping.avg_latency_ms"   = [double]($summary.avg_latency_ms)
+                "metric_name:ping.min_latency_ms"   = [double]($summary.min_latency_ms)
+                "metric_name:ping.max_latency_ms"   = [double]($summary.max_latency_ms)
+                "metric_name:ping.packet_loss_pct"  = [double]($summary.packet_loss_pct)
+                "metric_name:ping.pings_sent"       = [int]($summary.pings_sent)
+                "metric_name:ping.pings_successful" = [int]($summary.pings_successful)
+                
+                # Dimensions
+                hostname         = $summary.hostname
+                target_ip        = $summary.target_ip
+                group            = $summary.group
+                description      = $summary.description
+                entitytype       = $summary.entitytype
+                device           = $summary.device
+                vendor           = $summary.vendor
+                additional_notes = $summary.additional_notes
+            }
+        }
+        
+        $metricsPayload += ($metricsEvent | ConvertTo-Json -Depth 5 -Compress)
+    }
+    
+    $body = $metricsPayload -join "`n"
+    
+    try {
+        $splatParams = @{
+            Uri         = $MetricsConfig.hec_url
+            Method      = "POST"
+            Headers     = $headers
+            Body        = $body
+            TimeoutSec  = 5
+            ErrorAction = "Stop"
+        }
+        
+        if (-not $MetricsConfig.verify_ssl) {
+            $splatParams['SkipCertificateCheck'] = $true
+        }
+        
+        if ($MetricsConfig.ssl_protocol -and $MetricsConfig.ssl_protocol -ne 'Default') {
+            $splatParams['SslProtocol'] = $MetricsConfig.ssl_protocol
+        }
+        
+        Invoke-RestMethod @splatParams | Out-Null
+        Write-Host "Metrics: Sent $($Summaries.Count) metric points successfully" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Warning "Failed to send metrics to HEC: $($_.Exception.Message)"
+        return $false
+    }
 }
 
 function Invoke-LogRotation {
@@ -530,6 +671,8 @@ function Start-PingMonitor {
     Write-Host "Pings per cycle: $($Config.pings_per_cycle)" -ForegroundColor White
     Write-Host "Cycle interval: $($Config.cycle_interval_seconds) seconds" -ForegroundColor White
     Write-Host "Output mode: $($Config.output_mode)" -ForegroundColor White
+    Write-Host "Individual pings: $(if ($Config.emit_individual_pings) { 'enabled' } else { 'disabled (summary only)' })" -ForegroundColor White
+    Write-Host "Metrics: $(if ($Config.metrics.enabled) { $Config.metrics.mode } else { 'disabled' })" -ForegroundColor White
     Write-Host "----------------------------------------" -ForegroundColor Gray
     
     $cycleCount = 0
@@ -546,29 +689,62 @@ function Start-PingMonitor {
                                        -TimeoutMs $Config.timeout_ms `
                                        -ParallelThreads $Config.parallel_threads
         
-        # Combine all results for output
-        $allResults = $results.individual + $results.summaries
+        # Determine what events to emit based on configuration
+        # Phase B: emit_individual_pings controls whether ping events are included
+        # Phase C: metrics.mode = "metrics_only" suppresses event summaries
+        $emitEventSummaries = $true
+        if ($Config.metrics.enabled -and $Config.metrics.mode -eq "metrics_only") {
+            $emitEventSummaries = $false
+        }
         
-        # Output based on configuration
-        switch ($Config.output_mode.ToLower()) {
-            "file" {
-                Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
-                Write-ToLogFile -Results $allResults -LogPath $Config.log_path
-                Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
+        # Build the event results array based on settings
+        if ($Config.emit_individual_pings -and $emitEventSummaries) {
+            # Full output: individual pings + summaries
+            $allResults = $results.individual + $results.summaries
+        }
+        elseif ($Config.emit_individual_pings -and -not $emitEventSummaries) {
+            # Individual pings only (unusual but supported)
+            $allResults = $results.individual
+        }
+        elseif (-not $Config.emit_individual_pings -and $emitEventSummaries) {
+            # Summary only (Phase B savings mode)
+            $allResults = $results.summaries
+        }
+        else {
+            # No events (metrics_only mode with no individual pings)
+            $allResults = @()
+        }
+        
+        # Send metrics if enabled (Phase C)
+        if ($Config.metrics.enabled) {
+            Send-ToSplunkMetrics -Summaries $results.summaries -MetricsConfig $Config.metrics
+        }
+        
+        # Output events based on configuration (skip if no events to send)
+        if ($allResults.Count -gt 0) {
+            switch ($Config.output_mode.ToLower()) {
+                "file" {
+                    Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
+                    Write-ToLogFile -Results $allResults -LogPath $Config.log_path
+                    Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
+                }
+                "hec" {
+                    Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
+                }
+                "both" {
+                    Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
+                    Write-ToLogFile -Results $allResults -LogPath $Config.log_path
+                    Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
+                    Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
+                }
+                default {
+                    Write-Warning "Unknown output mode: $($Config.output_mode). Defaulting to file."
+                    Write-ToLogFile -Results $allResults -LogPath $Config.log_path
+                }
             }
-            "hec" {
-                Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
-            }
-            "both" {
-                Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
-                Write-ToLogFile -Results $allResults -LogPath $Config.log_path
-                Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
-                Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
-            }
-            default {
-                Write-Warning "Unknown output mode: $($Config.output_mode). Defaulting to file."
-                Write-ToLogFile -Results $allResults -LogPath $Config.log_path
-            }
+        }
+        elseif ($Config.metrics.enabled -and $Config.metrics.mode -eq "metrics_only") {
+            Write-Host "Metrics-only mode: Events skipped" -ForegroundColor Gray
         }
         
         # Display summary

@@ -1,4 +1,4 @@
-ip,hostname,group,description
+ip,hostname,group,description,entitytype,device,vendor,additional_notes
 8.8.8.8,google-dns-1,dns,Google Public DNS Primary
 8.8.4.4,google-dns-2,dns,Google Public DNS Secondary
 1.1.1.1,cloudflare-dns-1,dns,Cloudflare DNS Primary

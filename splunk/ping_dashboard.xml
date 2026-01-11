@@ -1,6 +1,6 @@
 <dashboard version="1.1" theme="dark">
   <label>Ping Monitor Dashboard</label>
-  <description>Network endpoint availability and latency monitoring. Replace YOUR_INDEX and YOUR_SOURCETYPE with your actual values.</description>
+  <description>Network endpoint availability and latency monitoring. Replace YOUR_INDEX and YOUR_SOURCETYPE with your actual values. If using metrics mode, also replace YOUR_METRICS_INDEX (default macro expects ping_metrics).</description>
   
   <!-- 
     SETUP INSTRUCTIONS:
@@ -26,7 +26,7 @@
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
-        <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary | dedup group | table group</query>
+        <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` | dedup group | table group</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
@@ -40,7 +40,7 @@
       <fieldForLabel>hostname</fieldForLabel>
       <fieldForValue>hostname</fieldForValue>
       <search>
-        <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary | dedup hostname | table hostname</query>
+        <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` | dedup hostname | table hostname</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
@@ -53,7 +53,7 @@
       <single>
         <title>Total Endpoints Monitored</title>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | stats dc(target_ip) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -69,7 +69,7 @@
       <single>
         <title>Overall Availability (%)</title>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
@@ -89,7 +89,7 @@
       <single>
         <title>Average Latency (ms)</title>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
 | stats avg(avg_latency_ms) as avg_latency
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
@@ -108,7 +108,7 @@
       <single>
         <title>Hosts with Issues</title>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss > 0
 | stats count as hosts_with_issues</query>
@@ -130,7 +130,7 @@
       <title>Availability Over Time by Group</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | timechart span=5m avg(eval(100-packet_loss_pct)) as availability by group</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -153,7 +153,7 @@
       <title>Average Latency Over Time</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
 | timechart span=5m avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -171,7 +171,7 @@
       <title>Latency by Host</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms>0
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
 | stats avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency by hostname
 | sort -avg_latency
 | head 20</query>
@@ -193,7 +193,7 @@
       <title>Packet Loss Over Time</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | timechart span=5m avg(packet_loss_pct) as avg_packet_loss by hostname</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -211,7 +211,7 @@
       <title>Packet Loss Distribution</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+            <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | eval loss_bucket=case(
     packet_loss_pct==0, "0% (No Loss)",
     packet_loss_pct>0 AND packet_loss_pct&lt;=25, "1-25%",
@@ -237,8 +237,8 @@
       <title>Current Host Status</title>
       <table>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
-| stats latest(timestamp) as last_check, 
+            <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
+      | stats latest(_time) as last_check_epoch,
         latest(packet_loss_pct) as packet_loss,
         latest(avg_latency_ms) as avg_latency,
         latest(min_latency_ms) as min_latency,
@@ -248,6 +248,7 @@
         values(group) as group,
         values(description) as description
         by hostname, target_ip
+      | eval last_check=strftime(last_check_epoch, "%Y-%m-%d %H:%M:%S")
 | eval status=case(
     packet_loss==0, "✅ Healthy",
     packet_loss>0 AND packet_loss&lt;50, "⚠️ Degraded",
@@ -303,7 +304,7 @@
       <title>Availability by Group</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | stats sum(pings_successful) as success, sum(pings_sent) as total by group
 | eval availability=round((success/total)*100, 2)
 | fields group, availability
@@ -323,7 +324,7 @@
       <title>Host Count by Group</title>
       <chart>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` ($selected_groups$) ($selected_hosts$)
 | stats dc(hostname) as host_count by group
 | sort -host_count</query>
           <earliest>$time_range.earliest$</earliest>
@@ -341,7 +342,7 @@
       <title>Hosts with Recent Issues (Packet Loss > 0%)</title>
       <table>
         <search>
-          <query>index=YOUR_INDEX sourcetype=YOUR_SOURCETYPE record_type=summary packet_loss_pct>0 ($selected_groups$) ($selected_hosts$)
+            <query>`ping_data_union(YOUR_INDEX, YOUR_SOURCETYPE, YOUR_METRICS_INDEX, 5m)` packet_loss_pct&gt;0 ($selected_groups$) ($selected_hosts$)
 | stats count as issue_count, 
         avg(packet_loss_pct) as avg_loss,
         max(packet_loss_pct) as max_loss,

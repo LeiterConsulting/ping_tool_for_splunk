@@ -32,3 +32,9 @@ nssm.exe
 # Development tools (not part of the main app)
 DiscoverEndpoints.ps1
 discovered_endpoints.csv
+
+# Internal development documentation (not shipped)
+documentation/
+
+# Test suite and artifacts (not shipped)
+tests/

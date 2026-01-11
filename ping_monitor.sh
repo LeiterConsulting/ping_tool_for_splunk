@@ -32,6 +32,16 @@ HEC_TLS_VERSION="${HEC_TLS_VERSION:-default}"
 RUN_ONCE="${RUN_ONCE:-false}"
 VERBOSE="${VERBOSE:-false}"
 
+# Metrics settings (Phase C)
+EMIT_INDIVIDUAL_PINGS="${EMIT_INDIVIDUAL_PINGS:-true}"
+METRICS_ENABLED="${METRICS_ENABLED:-false}"
+METRICS_MODE="${METRICS_MODE:-dual}"
+METRICS_INDEX="${METRICS_INDEX:-}"
+METRICS_HEC_URL="${METRICS_HEC_URL:-}"
+METRICS_HEC_TOKEN="${METRICS_HEC_TOKEN:-}"
+METRICS_VERIFY_SSL="${METRICS_VERIFY_SSL:-true}"
+METRICS_TLS_VERSION="${METRICS_TLS_VERSION:-default}"
+
 # ANSI color codes (disabled if not a terminal)
 if [ -t 1 ]; then
     RED='\033[0;31m'
@@ -196,51 +206,80 @@ load_endpoints() {
         exit 1
     fi
     
-    # Read CSV, skip header, handle optional columns
-    # Format: ip,hostname[,group][,description]
-    ENDPOINTS=""
-    line_num=0
-    
-    while IFS= read -r line || [ -n "$line" ]; do
-        line_num=$((line_num + 1))
-        
-        # Skip header line
-        if [ $line_num -eq 1 ]; then
-            continue
-        fi
-        
-        # Skip empty lines and comments
-        case "$line" in
-            ''|\#*) continue ;;
-        esac
-        
-        # Parse CSV (simple parsing - handles basic cases)
-        # Remove quotes and parse fields
-        clean_line=$(echo "$line" | sed 's/"//g' | tr -d '\r')
-        
-        ip=$(echo "$clean_line" | cut -d',' -f1 | xargs)
-        hostname=$(echo "$clean_line" | cut -d',' -f2 | xargs)
-        group=$(echo "$clean_line" | cut -d',' -f3 | xargs)
-        description=$(echo "$clean_line" | cut -d',' -f4- | xargs)
-        
-        # Skip if missing required fields
-        if [ -z "$ip" ] || [ -z "$hostname" ]; then
-            log_warning "Skipping line $line_num: missing ip or hostname"
-            continue
-        fi
-        
-        # Apply defaults for optional fields
-        [ -z "$group" ] && group="default"
-        [ -z "$description" ] && description=""
-        
-        # Store as pipe-delimited (safer than comma for internal use)
-        if [ -z "$ENDPOINTS" ]; then
-            ENDPOINTS="${ip}|${hostname}|${group}|${description}"
-        else
-            ENDPOINTS="${ENDPOINTS}
-${ip}|${hostname}|${group}|${description}"
-        fi
-    done < "$endpoints_path"
+    # Read CSV and support optional columns by header name.
+    # Required columns: ip,hostname
+    # Optional columns (old): group,description
+    # Optional columns (new): entitytype,device,vendor,additional_notes
+    #
+    # We rely on awk/sed (already required) and handle quoted commas.
+    ENDPOINTS=$(awk '
+        function trim(s) { sub(/^[ \t\r\n]+/, "", s); sub(/[ \t\r\n]+$/, "", s); return s }
+
+        # Parse one CSV line into array f[1..n], respecting double-quotes.
+        function csv_split(line, f,    i, c, n, inq, field) {
+            n = 0; inq = 0; field = ""
+            for (i = 1; i <= length(line); i++) {
+                c = substr(line, i, 1)
+                if (c == "\"") {
+                    # Toggle quote state unless this is an escaped quote ("")
+                    if (inq && substr(line, i + 1, 1) == "\"") { field = field "\""; i++ }
+                    else { inq = !inq }
+                }
+                else if (c == "," && !inq) {
+                    n++; f[n] = field; field = ""
+                }
+                else {
+                    field = field c
+                }
+            }
+            n++; f[n] = field
+            return n
+        }
+
+        function col_index(name,    n) {
+            name = tolower(trim(name))
+            if (name in headerIndex) return headerIndex[name]
+            return 0
+        }
+
+        function get_field(f, idx, defaultValue,    v) {
+            if (idx <= 0) return defaultValue
+            v = trim(f[idx])
+            return (v == "" ? defaultValue : v)
+        }
+
+        BEGIN { headerRead = 0 }
+
+        {
+            gsub(/\r$/, "")
+            if ($0 ~ /^\s*$/) next
+            if ($0 ~ /^\s*#/) next
+
+            n = csv_split($0, f)
+            if (!headerRead) {
+                for (i = 1; i <= n; i++) {
+                    key = tolower(trim(f[i]))
+                    if (key != "") headerIndex[key] = i
+                }
+                headerRead = 1
+                next
+            }
+
+            ip = get_field(f, col_index("ip"), "", "")
+            hostname = get_field(f, col_index("hostname"), "", "")
+            if (ip == "" || hostname == "") next
+
+            group = get_field(f, col_index("group"), "default")
+            description = get_field(f, col_index("description"), "")
+            entitytype = get_field(f, col_index("entitytype"), "")
+            device = get_field(f, col_index("device"), "")
+            vendor = get_field(f, col_index("vendor"), "")
+            additional_notes = get_field(f, col_index("additional_notes"), "")
+
+            # Output as pipe-delimited for shell-safe processing
+            print ip "|" hostname "|" group "|" description "|" entitytype "|" device "|" vendor "|" additional_notes
+        }
+    ' "$endpoints_path")
     
     ENDPOINT_COUNT=$(echo "$ENDPOINTS" | grep -c '^' || echo "0")
     log_debug "Loaded $ENDPOINT_COUNT endpoints"
@@ -316,7 +355,11 @@ ping_endpoint() {
     hostname="$2"
     group="$3"
     description="$4"
-    count="$5"
+    entitytype="$5"
+    device="$6"
+    vendor="$7"
+    additional_notes="$8"
+    count="$9"
     
     success_count=0
     total_latency=0
@@ -367,12 +410,17 @@ ping_endpoint() {
     # Generate summary JSON
     summary_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
     
-    # Escape description for JSON
+    # Escape strings for JSON
     desc_escaped=$(printf '%s' "$description" | sed 's/"/\\"/g')
+    entitytype_escaped=$(printf '%s' "$entitytype" | sed 's/"/\\"/g')
+    device_escaped=$(printf '%s' "$device" | sed 's/"/\\"/g')
+    vendor_escaped=$(printf '%s' "$vendor" | sed 's/"/\\"/g')
+    notes_escaped=$(printf '%s' "$additional_notes" | sed 's/"/\\"/g')
     
     # Output JSON (using printf to avoid heredoc line ending issues)
-    printf '{"timestamp":"%s","target_ip":"%s","hostname":"%s","group":"%s","description":"%s","record_type":"summary","pings_sent":%d,"pings_successful":%d,"pings_failed":%d,"packet_loss_pct":%s,"avg_latency_ms":%d,"min_latency_ms":%d,"max_latency_ms":%d}\n' \
+    printf '{"timestamp":"%s","target_ip":"%s","hostname":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s","record_type":"summary","pings_sent":%d,"pings_successful":%d,"pings_failed":%d,"packet_loss_pct":%s,"avg_latency_ms":%d,"min_latency_ms":%d,"max_latency_ms":%d}\n' \
         "$summary_timestamp" "$ip" "$hostname" "$group" "$desc_escaped" \
+        "$entitytype_escaped" "$device_escaped" "$vendor_escaped" "$notes_escaped" \
         "$count" "$success_count" "$failed_count" "$packet_loss" \
         "$avg_latency" "$min_latency" "$max_latency"
     
@@ -472,6 +520,87 @@ send_to_hec() {
     fi
 }
 
+send_metrics_to_hec() {
+    # Send summary data to Splunk as metrics (Phase C)
+    # Arguments: timestamp, ip, hostname, group, description, entitytype, device, vendor, notes,
+    #            pings_sent, pings_successful, pings_failed, packet_loss, avg_lat, min_lat, max_lat
+    
+    timestamp="$1"
+    ip="$2"
+    hostname="$3"
+    group="$4"
+    description="$5"
+    entitytype="$6"
+    device="$7"
+    vendor="$8"
+    additional_notes="$9"
+    shift 9
+    pings_sent="$1"
+    pings_successful="$2"
+    pings_failed="$3"
+    packet_loss="$4"
+    avg_latency="$5"
+    min_latency="$6"
+    max_latency="$7"
+    
+    if [ "$METRICS_ENABLED" != "true" ]; then
+        return 0
+    fi
+    
+    if [ -z "$METRICS_HEC_URL" ] || [ -z "$METRICS_HEC_TOKEN" ]; then
+        log_warning "Metrics HEC URL or token not configured"
+        return 1
+    fi
+    
+    # Build metrics payload (HEC metrics format)
+    # Escape strings for JSON
+    desc_escaped=$(printf '%s' "$description" | sed 's/"/\\"/g')
+    entitytype_escaped=$(printf '%s' "$entitytype" | sed 's/"/\\"/g')
+    device_escaped=$(printf '%s' "$device" | sed 's/"/\\"/g')
+    vendor_escaped=$(printf '%s' "$vendor" | sed 's/"/\\"/g')
+    notes_escaped=$(printf '%s' "$additional_notes" | sed 's/"/\\"/g')
+    
+    # Convert ISO timestamp to epoch
+    epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${timestamp%.000Z}" +%s 2>/dev/null || date +%s)
+    
+    metrics_payload=$(printf '{"time":%s,"host":"%s","source":"ping_monitor","index":"%s","event":"metric","fields":{"metric_name:ping.avg_latency_ms":%s,"metric_name:ping.min_latency_ms":%s,"metric_name:ping.max_latency_ms":%s,"metric_name:ping.packet_loss_pct":%s,"metric_name:ping.pings_sent":%s,"metric_name:ping.pings_successful":%s,"hostname":"%s","target_ip":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s"}}' \
+        "$epoch" "$(hostname)" "$METRICS_INDEX" \
+        "$avg_latency" "$min_latency" "$max_latency" "$packet_loss" "$pings_sent" "$pings_successful" \
+        "$hostname" "$ip" "$group" "$desc_escaped" \
+        "$entitytype_escaped" "$device_escaped" "$vendor_escaped" "$notes_escaped")
+    
+    # Determine curl SSL options
+    ssl_opt=""
+    if [ "$METRICS_VERIFY_SSL" = "false" ]; then
+        ssl_opt="$ssl_opt -k"
+    fi
+    
+    case "$METRICS_TLS_VERSION" in
+        1.0) ssl_opt="$ssl_opt --tlsv1.0" ;;
+        1.1) ssl_opt="$ssl_opt --tlsv1.1" ;;
+        1.2) ssl_opt="$ssl_opt --tlsv1.2" ;;
+        1.3) ssl_opt="$ssl_opt --tlsv1.3" ;;
+        default|*) ;;
+    esac
+    
+    # shellcheck disable=SC2086
+    response=$(curl -s -w "\n%{http_code}" $ssl_opt \
+        -X POST "$METRICS_HEC_URL" \
+        -H "Authorization: Splunk $METRICS_HEC_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$metrics_payload" 2>/dev/null) || true
+    
+    http_code=$(echo "$response" | tail -1)
+    
+    if [ "$http_code" = "200" ]; then
+        log_debug "Metrics HEC send successful"
+        return 0
+    else
+        log_warning "Metrics HEC send failed (HTTP $http_code)"
+        return 1
+    fi
+}
+
 # ============================================================================
 # Main Execution
 # ============================================================================
@@ -539,6 +668,11 @@ main() {
     printf "Pings per cycle: %s\n" "$PINGS_PER_CYCLE"
     printf "Cycle interval: %s seconds\n" "$CYCLE_INTERVAL"
     printf "Output mode: %s\n" "$OUTPUT_MODE"
+    if [ "$METRICS_ENABLED" = "true" ]; then
+        printf "Metrics: %s\n" "$METRICS_MODE"
+    else
+        printf "Metrics: disabled\n"
+    fi
     printf "${GRAY}----------------------------------------${NC}\n"
     
     cycle_count=0
@@ -559,16 +693,22 @@ main() {
         fi
         
         # Process each endpoint
-        echo "$ENDPOINTS" | while IFS='|' read -r ip hostname group description; do
+        echo "$ENDPOINTS" | while IFS='|' read -r ip hostname group description entitytype device vendor additional_notes; do
             [ -z "$ip" ] && continue
             
             log_debug "Pinging $hostname ($ip)..."
             
             # Ping and capture result
-            result=$(ping_endpoint "$ip" "$hostname" "$group" "$description" "$PINGS_PER_CYCLE" 2>&1)
+            result=$(ping_endpoint "$ip" "$hostname" "$group" "$description" "$entitytype" "$device" "$vendor" "$additional_notes" "$PINGS_PER_CYCLE" 2>&1)
             
-            # Output based on mode
-            if [ -n "$result" ]; then
+            # Determine if we should emit events based on metrics mode
+            emit_events="true"
+            if [ "$METRICS_ENABLED" = "true" ] && [ "$METRICS_MODE" = "metrics_only" ]; then
+                emit_events="false"
+            fi
+            
+            # Output events based on mode
+            if [ -n "$result" ] && [ "$emit_events" = "true" ]; then
                 case "$OUTPUT_MODE" in
                     file)
                         write_to_log "$result"
@@ -581,6 +721,25 @@ main() {
                         send_to_hec "$result" || true
                         ;;
                 esac
+            fi
+            
+            # Send metrics if enabled (Phase C)
+            if [ "$METRICS_ENABLED" = "true" ] && [ -n "$result" ]; then
+                # Extract values from JSON result for metrics
+                # Using simple grep/sed since jq may not be available
+                timestamp=$(echo "$result" | grep -o '"timestamp":"[^"]*"' | head -1 | cut -d'"' -f4)
+                pings_sent=$(echo "$result" | grep -o '"pings_sent":[0-9]*' | cut -d':' -f2)
+                pings_successful=$(echo "$result" | grep -o '"pings_successful":[0-9]*' | cut -d':' -f2)
+                pings_failed=$(echo "$result" | grep -o '"pings_failed":[0-9]*' | cut -d':' -f2)
+                packet_loss=$(echo "$result" | grep -o '"packet_loss_pct":[0-9.]*' | cut -d':' -f2)
+                avg_latency=$(echo "$result" | grep -o '"avg_latency_ms":[0-9-]*' | cut -d':' -f2)
+                min_latency=$(echo "$result" | grep -o '"min_latency_ms":[0-9-]*' | cut -d':' -f2)
+                max_latency=$(echo "$result" | grep -o '"max_latency_ms":[0-9-]*' | cut -d':' -f2)
+                
+                send_metrics_to_hec "$timestamp" "$ip" "$hostname" "$group" "$description" \
+                    "$entitytype" "$device" "$vendor" "$additional_notes" \
+                    "$pings_sent" "$pings_successful" "$pings_failed" "$packet_loss" \
+                    "$avg_latency" "$min_latency" "$max_latency" || true
             fi
         done
         

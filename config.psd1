@@ -31,6 +31,16 @@
     parallel_threads = 10
     
     # ----------------------------------------
+    # EVENT SETTINGS
+    # ----------------------------------------
+    
+    # Whether to emit individual ping events (record_type=ping) in addition to summary events
+    # Set to $true to emit both ping + summary (original behavior, more detailed)
+    # Set to $false to emit summary events only (reduces event volume by ~80%)
+    # Summary events (record_type=summary) are always emitted regardless of this setting
+    emit_individual_pings = $true
+    
+    # ----------------------------------------
     # OUTPUT SETTINGS
     # ----------------------------------------
     
@@ -108,6 +118,40 @@
         # Use "Tls12" if your Splunk server requires TLS 1.2 specifically
         # Use "Default" to let the system negotiate the best available protocol
         # Most Splunk servers work best with "Tls12"
+        ssl_protocol = "Default"
+    }
+    
+    # ----------------------------------------
+    # METRICS (Optional - for Splunk Metrics Index)
+    # ----------------------------------------
+    # Send numeric data as Splunk metrics for better performance on large datasets.
+    # Metrics use the HEC metrics endpoint and support faster aggregation queries.
+    # Events remain the default; enable metrics for high-volume or long-term storage.
+    #
+    metrics = @{
+        # Set to $true to enable metrics emission
+        enabled = $false
+        
+        # Metrics output mode:
+        #   "dual"         - Emit both events AND metrics (for transition period)
+        #   "metrics_only" - Emit metrics only, no summary events (maximum savings)
+        mode = "dual"
+        
+        # Splunk metrics index (must be a metrics-type index)
+        # Create in Splunk: Settings > Indexes > New Index > Data Type: Metrics
+        index = ""
+        
+        # HEC URL for metrics endpoint (note: uses /services/collector not /services/collector/event)
+        # Format: https://<splunk-server>:<port>/services/collector
+        hec_url = ""
+        
+        # HEC token (can be same as event token if allowed, or separate)
+        token = ""
+        
+        # SSL verification for metrics HEC
+        verify_ssl = $true
+        
+        # SSL protocol for metrics HEC
         ssl_protocol = "Default"
     }
 }
