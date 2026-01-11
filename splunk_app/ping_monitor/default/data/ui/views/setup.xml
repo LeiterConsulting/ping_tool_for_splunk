@@ -2,32 +2,36 @@
   <label>Ping Monitor Setup</label>
   <description>Configure global settings for the Ping Monitor application</description>
   
-  <!-- Initialize with defaults -->
+  <!-- Initialize defaults - but NOT the form tokens that trigger save -->
   <init>
-    <set token="config_index">ping</set>
-    <set token="config_sourcetype">ping_monitor</set>
-    <set token="config_metrics_index">ping_metrics</set>
-    <set token="form.config_index">ping</set>
-    <set token="form.config_sourcetype">ping_monitor</set>
-    <set token="form.config_metrics_index">ping_metrics</set>
+    <set token="default_index">ping</set>
+    <set token="default_sourcetype">ping_monitor</set>
+    <set token="default_metrics_index">ping_metrics</set>
   </init>
 
-  <!-- Load existing configuration -->
+  <!-- Load existing configuration into display tokens (not form tokens) -->
   <search id="load_existing_config">
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
-| head 1</query>
+| head 1
+| eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")
+| eval is_configured=if(configured=="true", "yes", "no")</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
-      <condition match="isnotnull('result.index')">
-        <set token="config_index">$result.index$</set>
-        <set token="config_sourcetype">$result.sourcetype$</set>
-        <set token="config_metrics_index">$result.metrics_index$</set>
-        <set token="form.config_index">$result.index$</set>
-        <set token="form.config_sourcetype">$result.sourcetype$</set>
-        <set token="form.config_metrics_index">$result.metrics_index$</set>
+      <condition match="'result.is_configured'==&quot;yes&quot;">
+        <set token="current_index">$result.index$</set>
+        <set token="current_sourcetype">$result.sourcetype$</set>
+        <set token="current_metrics_index">$result.metrics_index$</set>
+        <set token="current_last_updated">$result.last_updated$</set>
         <set token="is_configured">true</set>
+      </condition>
+      <condition>
+        <set token="current_index">ping</set>
+        <set token="current_sourcetype">ping_monitor</set>
+        <set token="current_metrics_index">ping_metrics</set>
+        <set token="current_last_updated">Never</set>
+        <unset token="is_configured"/>
       </condition>
     </done>
   </search>
@@ -87,23 +91,13 @@
 
   <row>
     <panel>
-      <title>Current Saved Settings</title>
+      <title>Current Saved Settings (from KV Store)</title>
       <table>
-        <search>
-          <query>| inputlookup ping_monitor_settings_lookup 
-| search _key="global"
-| head 1
-| eval status=if(configured=="true", "✅ Configured", "⚠️ Using Defaults")
-| eval index=coalesce(index, "ping")
-| eval sourcetype=coalesce(sourcetype, "ping_monitor")
-| eval metrics_index=coalesce(metrics_index, "ping_metrics")
-| eval last_updated=coalesce(last_updated, "Never")
-| table status, index, sourcetype, metrics_index, last_updated
-| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated as "Last Updated"
-| append [| makeresults | eval Status="⚠️ Not Yet Configured", "Events Index"="ping (default)", "Sourcetype"="ping_monitor (default)", "Metrics Index"="ping_metrics (default)", "Last Updated"="Never" | head 1]
-| head 1</query>
-          <earliest>-1m</earliest>
-          <latest>now</latest>
+        <search base="load_existing_config">
+          <query>| eval status=if(is_configured=="yes", "✅ Configured", "⚠️ Using Defaults")
+| eval last_updated_display=coalesce(last_updated, "Never")
+| table status, index, sourcetype, metrics_index, last_updated_display
+| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated_display as "Last Updated"</query>
         </search>
         <option name="drilldown">none</option>
         <option name="count">1</option>
@@ -117,43 +111,58 @@
       <html>
         <div class="section-header">
           <h2>⚙️ Step 2: Configure Index Settings</h2>
-          <p>Enter your Splunk index and sourcetype values, then click <strong>Submit</strong> to save.</p>
+          <p>Enter your Splunk index and sourcetype values, then click <strong>Save Configuration</strong> to save.</p>
         </div>
       </html>
     </panel>
   </row>
 
+  <row>
+    <panel>
+      <html>
+        <div class="info-box">
+          <p style="color: #6db7c6; margin: 0;">
+            <strong>💡 Instructions:</strong> Enter your settings below and click "Save Configuration". 
+            The settings will be stored in the KV Store and used by all Ping Monitor dashboards.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Form inputs using fieldset with submit button -->
   <fieldset submitButton="true" autoRun="false">
-    <input type="text" token="config_index" searchWhenChanged="false">
+    <input type="text" token="save_index" searchWhenChanged="false">
       <label>Events Index</label>
-      <default>ping</default>
+      <default>$current_index$</default>
     </input>
-    <input type="text" token="config_sourcetype" searchWhenChanged="false">
+    <input type="text" token="save_sourcetype" searchWhenChanged="false">
       <label>Sourcetype</label>
-      <default>ping_monitor</default>
+      <default>$current_sourcetype$</default>
     </input>
-    <input type="text" token="config_metrics_index" searchWhenChanged="false">
+    <input type="text" token="save_metrics_index" searchWhenChanged="false">
       <label>Metrics Index</label>
-      <default>ping_metrics</default>
+      <default>$current_metrics_index$</default>
     </input>
   </fieldset>
 
-  <!-- Save Configuration Panel -->
+  <!-- Save Configuration - This only runs when the submit button sets the tokens -->
   <row>
     <panel>
-      <title>Save Result</title>
+      <title>💾 Save Result</title>
       <table>
         <search>
           <query>| makeresults 
 | eval _key="global", 
-       index="$config_index$", 
-       sourcetype="$config_sourcetype$", 
-       metrics_index="$config_metrics_index$",
+       index=if("$save_index$"!="" AND "$save_index$"!="$"."current_index"."$", "$save_index$", coalesce("$current_index$", "ping")), 
+       sourcetype=if("$save_sourcetype$"!="" AND "$save_sourcetype$"!="$"."current_sourcetype"."$", "$save_sourcetype$", coalesce("$current_sourcetype$", "ping_monitor")), 
+       metrics_index=if("$save_metrics_index$"!="" AND "$save_metrics_index$"!="$"."current_metrics_index"."$", "$save_metrics_index$", coalesce("$current_metrics_index$", "ping_metrics")),
        configured="true",
        last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
-| outputlookup ping_monitor_settings_lookup append=false key_field=_key
-| eval result="✅ Configuration saved successfully!"
-| eval details="Events Index: " . "$config_index$" . " | Sourcetype: " . "$config_sourcetype$" . " | Metrics Index: " . "$config_metrics_index$"
+| table _key, index, sourcetype, metrics_index, configured, last_updated
+| outputlookup ping_monitor_settings_lookup key_field=_key
+| eval result="✅ Configuration saved successfully at " . last_updated
+| eval details="Events Index: " . index . " | Sourcetype: " . sourcetype . " | Metrics Index: " . metrics_index
 | table result, details
 | rename result as "Status", details as "Saved Settings"</query>
           <earliest>-1m</earliest>
@@ -165,13 +174,27 @@
     </panel>
   </row>
 
+  <!-- Refresh instructions -->
+  <row>
+    <panel>
+      <html>
+        <div class="info-box warning" style="border-left-color: #f8be34;">
+          <p style="color: #f8be34; margin: 0;">
+            <strong>⚠️ After Saving:</strong> Refresh this page to see the updated "Current Saved Settings" above.
+            Other dashboards will automatically use the new settings on their next page load.
+          </p>
+        </div>
+      </html>
+    </panel>
+  </row>
+
   <!-- ==================== SECTION 4: Test Configuration ==================== -->
   <row>
     <panel>
       <html>
         <div class="section-header">
           <h2>🔍 Step 3: Verify Data</h2>
-          <p>Check that Splunk can find ping data in your configured indexes.</p>
+          <p>Check that Splunk can find ping data in your configured indexes. Uses the <strong>currently saved</strong> settings.</p>
         </div>
       </html>
     </panel>
@@ -182,10 +205,9 @@
       <single>
         <title>Events Data (Last 24h)</title>
         <search>
-          <query>index="$config_index$" sourcetype="$config_sourcetype$" 
-| stats count 
-| eval count=if(isnull(count) OR count=0, 0, count)
-| eval status=if(count>0, "✅ ".count." events found", "⚠️ No events found")</query>
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" | stats count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -200,9 +222,9 @@
       <single>
         <title>Summary Records (Last 24h)</title>
         <search>
-          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
-| stats count 
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -217,8 +239,9 @@
       <single>
         <title>Metrics Data (Last 24h)</title>
         <search>
-          <query>| mstats count(_value) as count WHERE index="$config_metrics_index$" metric_name="ping.*"
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval midx=coalesce(metrics_index,"ping_metrics")
+| map maxsearches=1 search="| mstats count(_value) as count WHERE index=\"$midx$\" metric_name=\"ping.*\" | eval count=if(isnull(count) OR count=0, 0, count)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -233,9 +256,9 @@
       <single>
         <title>Unique Hosts Monitored</title>
         <search>
-          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
-| stats dc(hostname) as count
-| eval count=if(isnull(count) OR count=0, 0, count)</query>
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats dc(hostname) as count | eval count=if(isnull(count) OR count=0, 0, count)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
         </search>
@@ -251,13 +274,12 @@
   <!-- Data Sample -->
   <row>
     <panel>
-      <title>Recent Events Sample</title>
+      <title>Recent Events Sample (from saved settings)</title>
       <table>
         <search>
-          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
-| head 5
-| eval _time_str=strftime(_time, "%Y-%m-%d %H:%M:%S")
-| table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor")
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | head 5 | eval _time_str=strftime(_time, \"%Y-%m-%d %H:%M:%S\") | table _time_str, hostname, target_ip, group, packet_loss_pct, avg_latency_ms"
 | rename _time_str as "Time", packet_loss_pct as "Packet Loss %", avg_latency_ms as "Avg Latency (ms)"</query>
           <earliest>-24h</earliest>
           <latest>now</latest>
@@ -274,7 +296,7 @@
       <html>
         <div class="section-header">
           <h2>🏥 Step 4: Health Lookup Table</h2>
-          <p>The health lookup allows you to correlate ping status with other Splunk data. It's automatically updated when you save settings.</p>
+          <p>The health lookup allows you to correlate ping status with other Splunk data. Click the button to update it.</p>
         </div>
       </html>
     </panel>
@@ -301,26 +323,19 @@
       </table>
     </panel>
     <panel>
-      <title>Populate Health Lookup Now</title>
-      <table>
+      <title>Update Health Lookup</title>
+      <input type="dropdown" token="update_health" searchWhenChanged="true">
+        <label>Action</label>
+        <choice value="view">View Status</choice>
+        <choice value="update">Update Now</choice>
+        <default>view</default>
+      </input>
+      <table depends="$update_health$">
         <search>
-          <query>index="$config_index$" sourcetype="$config_sourcetype$" record_type=summary
-| stats latest(packet_loss_pct) as packet_loss_pct, 
-        latest(avg_latency_ms) as avg_latency_ms,
-        latest(target_ip) as target_ip,
-        latest(group) as group,
-        latest(entitytype) as entitytype
-        by hostname
-| eval health_status = case(
-    packet_loss_pct == 0, "Healthy",
-    packet_loss_pct > 0 AND packet_loss_pct &lt; 50, "Degraded",
-    packet_loss_pct >= 50 AND packet_loss_pct &lt; 100, "Critical",
-    packet_loss_pct == 100, "Down",
-    true(), "Unknown"
-)
-| outputlookup ping_health_lookup.csv
-| stats count as updated_records
-| eval result=if(updated_records>0, "✅ Updated ".updated_records." records", "⚠️ No data to update")
+          <query>| inputlookup ping_monitor_settings_lookup | search _key="global" | head 1
+| eval idx=coalesce(index,"ping"), st=coalesce(sourcetype,"ping_monitor"), action="$update_health$"
+| map maxsearches=1 search="search index=\"$idx$\" sourcetype=\"$st$\" record_type=summary | stats latest(packet_loss_pct) as packet_loss_pct, latest(avg_latency_ms) as avg_latency_ms, latest(target_ip) as target_ip, latest(group) as group, latest(entitytype) as entitytype by hostname | eval health_status=case(packet_loss_pct==0, \"Healthy\", packet_loss_pct>0 AND packet_loss_pct<50, \"Degraded\", packet_loss_pct>=50 AND packet_loss_pct<100, \"Critical\", packet_loss_pct==100, \"Down\", true(), \"Unknown\") | outputlookup ping_health_lookup.csv | stats count as updated_records"
+| eval result=if(updated_records>0, "✅ Updated ".updated_records." records", "⚠️ No data found")
 | table result
 | rename result as "Result"</query>
           <earliest>-24h</earliest>
@@ -338,7 +353,7 @@
       <html>
         <div class="section-header">
           <h2>✅ Setup Complete - Next Steps</h2>
-          <p>Your Ping Monitor is now configured. Here's what to do next:</p>
+          <p>Your Ping Monitor is now configured. Here is what to do next:</p>
         </div>
       </html>
     </panel>
@@ -382,7 +397,7 @@
               </td>
               <td>
                 <strong style="color: #dc4e41; font-size: 16px;">Enable Scheduled Searches</strong>
-                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Settings → Saved Searches</strong> to enable alerts for endpoint down, high packet loss, and high latency conditions.</p>
+                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Settings - Saved Searches</strong> to enable alerts for endpoint down, high packet loss, and high latency conditions.</p>
               </td>
             </tr>
           </table>

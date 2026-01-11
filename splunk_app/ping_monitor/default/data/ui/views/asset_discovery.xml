@@ -22,7 +22,6 @@
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
     <set token="show_events">true</set>
-    <set token="search_asset"></set>
   </init>
   
   <fieldset submitButton="false" autoRun="true">
@@ -254,88 +253,110 @@
     </panel>
   </row>
 
-  <!-- Row 3: Discover Indexes with Matching IPs -->
+  <!-- Row 3: Your Monitored IPs - Simple List -->
   <row depends="$show_events$">
     <panel>
-      <title>Indexes Containing Your Monitored IP Addresses</title>
+      <title>Your Monitored IP Addresses</title>
       <html>
-        <p style="color:#999;margin-bottom:10px;">Shows indexes where your monitored IP addresses appear in src_ip, dest_ip, src, dest, or ip fields</p>
+        <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; margin-bottom: 10px;">
+          <p style="color: #6db7c6; margin: 0;">
+            <strong>💡 Tip:</strong> Use the "Quick Asset Search" below to find which indexes contain data about a specific IP or hostname.
+            Copy an IP address from the table below and paste it into the search field.
+          </p>
+        </div>
       </html>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats values(target_ip) as monitored_ips
-| mvexpand monitored_ips
-| head 20
-| rename monitored_ips as search_ip
-| map maxsearches=20 search="search index=* (src_ip=\"$search_ip$\" OR dest_ip=\"$search_ip$\" OR src=\"$search_ip$\" OR dest=\"$search_ip$\" OR ip=\"$search_ip$\") | stats count by index, sourcetype | eval matched_ip=\"$search_ip$\""
-| stats sum(count) as matched_events, values(matched_ip) as matched_ips by index, sourcetype
-| where matched_events > 0
-| sort -matched_events
-| head 20
-| rename matched_events as "Events", matched_ips as "Matched IPs"</query>
+| stats count as ping_records, latest(hostname) as hostname, latest(group) as group by target_ip
+| sort -ping_records
+| head 50
+| table target_ip, hostname, group, ping_records
+| rename target_ip as "IP Address", hostname as "Hostname", group as "Group", ping_records as "Ping Records"</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
         <option name="drilldown">none</option>
-        <option name="count">20</option>
+        <option name="count">15</option>
       </table>
     </panel>
-  </row>
-
-  <!-- Row 4: Discover Indexes with Matching Hostnames -->
-  <row depends="$show_events$">
     <panel>
-      <title>Indexes Containing Your Monitored Hostnames</title>
+      <title>Your Monitored Hostnames</title>
       <html>
-        <p style="color:#999;margin-bottom:10px;">Shows indexes where your monitored hostnames appear in the host field or event data</p>
+        <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; margin-bottom: 10px;">
+          <p style="color: #6db7c6; margin: 0;">
+            <strong>💡 Tip:</strong> These hostnames can be used with the lookup table to enrich other Splunk data.
+            Use <code>| lookup ping_health_lookup.csv hostname</code> in your searches.
+          </p>
+        </div>
       </html>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats values(hostname) as monitored_hosts
-| mvexpand monitored_hosts
-| head 20
-| rename monitored_hosts as search_host
-| map maxsearches=20 search="search index=* host=\"$search_host$\" | stats count by index, sourcetype | eval matched_host=\"$search_host$\""
-| stats sum(count) as matched_events, values(matched_host) as matched_hosts by index, sourcetype
-| where matched_events > 0
-| sort -matched_events
-| head 20
-| rename matched_events as "Events", matched_hosts as "Matched Hosts"</query>
+| stats count as ping_records, latest(target_ip) as ip_address, latest(group) as group by hostname
+| sort -ping_records
+| head 50
+| table hostname, ip_address, group, ping_records
+| rename hostname as "Hostname", ip_address as "IP Address", group as "Group", ping_records as "Ping Records"</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
         <option name="drilldown">none</option>
-        <option name="count">20</option>
+        <option name="count">15</option>
       </table>
     </panel>
   </row>
 
-  <!-- Row 5: Quick Discovery Search -->
+  <!-- Row 4: Quick Discovery Search -->
   <row>
     <panel>
-      <title>Quick Asset Search</title>
       <html>
-        <p style="color:#999;margin-bottom:10px;">Enter an IP address or hostname to find all indexes/sourcetypes containing that asset, then press Enter</p>
+        <div style="padding: 15px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
+          <h3 style="color: #5cc05c; margin: 0 0 10px 0;">🔍 Quick Asset Search</h3>
+          <p style="color: #aaa; margin: 0;">
+            Enter an IP address or hostname to search across ALL your Splunk indexes. 
+            This helps you discover where your monitored assets appear in other data sources (firewalls, servers, applications, etc.)
+          </p>
+        </div>
       </html>
-      <input type="text" token="search_asset" searchWhenChanged="true">
-        <label>IP or Hostname</label>
+    </panel>
+  </row>
+  
+  <row>
+    <panel>
+      <input type="text" token="search_asset_input" searchWhenChanged="false">
+        <label>IP or Hostname (press Enter to search)</label>
         <default></default>
+        <change>
+          <condition match="len('$value$') > 2">
+            <set token="search_asset">$value$</set>
+          </condition>
+          <condition>
+            <unset token="search_asset"/>
+          </condition>
+        </change>
       </input>
     </panel>
   </row>
   
   <row depends="$search_asset$">
     <panel>
-      <title>Search Results for: $search_asset$</title>
+      <title>Indexes Containing: $search_asset$</title>
+      <html>
+        <div style="padding: 10px; background: #2a2a2a; border-radius: 5px; margin-bottom: 10px;">
+          <p style="color: #f8be34; margin: 0;">
+            <strong>⚠️ Note:</strong> This search scans all indexes. Results will appear as matching data is found.
+            Large environments may take longer to complete.
+          </p>
+        </div>
+      </html>
       <table>
         <search>
-          <query>search index=* ("$search_asset$" OR host="*$search_asset$*" OR src_ip="$search_asset$" OR dest_ip="$search_asset$")
-| stats count by index, sourcetype
+          <query>search index=* (host="$search_asset$" OR host="*$search_asset$*" OR src_ip="$search_asset$" OR dest_ip="$search_asset$" OR src="$search_asset$" OR dest="$search_asset$" OR "$search_asset$")
+| stats count by index, sourcetype, host
 | sort -count
-| head 20
-| rename count as "Matching Events"</query>
+| head 50
+| rename count as "Events", host as "Host"</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -345,7 +366,7 @@
     </panel>
   </row>
 
-  <!-- Row 6: Assets by Group - EVENTS -->
+  <!-- Row 5: Assets by Group - EVENTS -->
   <row depends="$show_events$">
     <panel>
       <title>Assets by Group (Events)</title>
@@ -377,7 +398,7 @@
     </panel>
   </row>
 
-  <!-- Row 6: Assets by Group - METRICS -->
+  <!-- Row 5: Assets by Group - METRICS -->
   <row depends="$show_metrics$" rejects="$show_combined$">
     <panel>
       <title>Assets by Group (Metrics)</title>
@@ -405,6 +426,43 @@
         <option name="charting.chart">pie</option>
         <option name="charting.drilldown">none</option>
       </chart>
+    </panel>
+  </row>
+
+  <!-- Row 6: Usage Instructions -->
+  <row>
+    <panel>
+      <html>
+        <div style="padding: 20px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
+          <h3 style="color: #5cc05c; margin: 0 0 15px 0;">📖 How to Use Asset Discovery</h3>
+          <table style="width: 100%;">
+            <tr>
+              <td style="width: 40px; vertical-align: top; color: #5cc05c; font-size: 18px;">1.</td>
+              <td style="color: #aaa; padding-bottom: 10px;">
+                <strong style="color: #fff;">Review Your Assets</strong> - The tables above show all monitored IP addresses and hostnames from your ping data.
+              </td>
+            </tr>
+            <tr>
+              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">2.</td>
+              <td style="color: #aaa; padding-bottom: 10px;">
+                <strong style="color: #fff;">Search for an Asset</strong> - Copy an IP or hostname and paste it into the Quick Asset Search to find where it appears in other Splunk data.
+              </td>
+            </tr>
+            <tr>
+              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">3.</td>
+              <td style="color: #aaa; padding-bottom: 10px;">
+                <strong style="color: #fff;">Correlate Data</strong> - Use the results to understand which indexes contain data about your monitored assets. This helps you build correlation searches.
+              </td>
+            </tr>
+            <tr>
+              <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">4.</td>
+              <td style="color: #aaa;">
+                <strong style="color: #fff;">Enrich with Lookup</strong> - Use <code style="background: #2a2a2a; padding: 2px 6px; border-radius: 3px;">| lookup ping_health_lookup.csv hostname</code> in any search to add ping health data.
+              </td>
+            </tr>
+          </table>
+        </div>
+      </html>
     </panel>
   </row>
 

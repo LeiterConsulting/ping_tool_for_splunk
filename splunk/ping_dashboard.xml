@@ -1012,7 +1012,7 @@
 | eval source="Events", index="$pm_index$", sourcetype="$pm_sourcetype$"
 | append [| makeresults | eval source="Metrics", index="$pm_metrics_index$", sourcetype="N/A (mstats)"]
 | join type=outer source [
-    index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary 
+    search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary 
     | stats count as event_count, dc(hostname) as hosts 
     | eval source="Events"]
 | join type=outer source [
