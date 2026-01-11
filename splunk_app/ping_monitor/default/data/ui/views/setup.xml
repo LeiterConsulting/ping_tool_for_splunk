@@ -25,6 +25,9 @@
         <set token="current_metrics_index">$result.metrics_index$</set>
         <set token="current_last_updated">$result.last_updated$</set>
         <set token="is_configured">true</set>
+        <set token="form.form_index">$result.index$</set>
+        <set token="form.form_sourcetype">$result.sourcetype$</set>
+        <set token="form.form_metrics_index">$result.metrics_index$</set>
       </condition>
       <condition>
         <set token="current_index">ping</set>
@@ -32,6 +35,9 @@
         <set token="current_metrics_index">ping_metrics</set>
         <set token="current_last_updated">Never</set>
         <unset token="is_configured"/>
+        <set token="form.form_index">ping</set>
+        <set token="form.form_sourcetype">ping_monitor</set>
+        <set token="form.form_metrics_index">ping_metrics</set>
       </condition>
     </done>
   </search>
@@ -130,33 +136,52 @@
     </panel>
   </row>
 
-  <!-- Form inputs using fieldset with submit button -->
-  <fieldset submitButton="true" autoRun="false">
-    <input type="text" token="save_index" searchWhenChanged="false">
+  <!-- Form inputs - Submit button triggers the save -->
+  <fieldset submitButton="false" autoRun="false">
+    <input type="text" token="form_index" searchWhenChanged="false">
       <label>Events Index</label>
-      <default>$current_index$</default>
+      <default>ping</default>
     </input>
-    <input type="text" token="save_sourcetype" searchWhenChanged="false">
+    <input type="text" token="form_sourcetype" searchWhenChanged="false">
       <label>Sourcetype</label>
-      <default>$current_sourcetype$</default>
+      <default>ping_monitor</default>
     </input>
-    <input type="text" token="save_metrics_index" searchWhenChanged="false">
+    <input type="text" token="form_metrics_index" searchWhenChanged="false">
       <label>Metrics Index</label>
-      <default>$current_metrics_index$</default>
+      <default>ping_metrics</default>
+    </input>
+    <input type="link" token="trigger_save">
+      <label></label>
+      <choice value="save">💾 Save Configuration</choice>
+      <change>
+        <condition value="save">
+          <set token="do_save">true</set>
+          <set token="save_time">$time$</set>
+        </condition>
+      </change>
+    </input>
+    <input type="link" token="trigger_reset">
+      <label></label>
+      <choice value="reset">🔄 Hide Save Result</choice>
+      <change>
+        <condition value="reset">
+          <unset token="do_save"/>
+        </condition>
+      </change>
     </input>
   </fieldset>
 
-  <!-- Save Configuration - This only runs when the submit button sets the tokens -->
-  <row>
+  <!-- Save Configuration - Only runs when do_save token is set by clicking Save button -->
+  <row depends="$do_save$">
     <panel>
       <title>💾 Save Result</title>
       <table>
         <search>
           <query>| makeresults 
 | eval _key="global", 
-       index=if("$save_index$"!="" AND "$save_index$"!="$"."current_index"."$", "$save_index$", coalesce("$current_index$", "ping")), 
-       sourcetype=if("$save_sourcetype$"!="" AND "$save_sourcetype$"!="$"."current_sourcetype"."$", "$save_sourcetype$", coalesce("$current_sourcetype$", "ping_monitor")), 
-       metrics_index=if("$save_metrics_index$"!="" AND "$save_metrics_index$"!="$"."current_metrics_index"."$", "$save_metrics_index$", coalesce("$current_metrics_index$", "ping_metrics")),
+       index="$form_index$", 
+       sourcetype="$form_sourcetype$", 
+       metrics_index="$form_metrics_index$",
        configured="true",
        last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
 | table _key, index, sourcetype, metrics_index, configured, last_updated
