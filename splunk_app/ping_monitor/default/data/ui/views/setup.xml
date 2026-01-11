@@ -14,6 +14,8 @@
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
 | head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
+| head 1
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")
 | eval is_configured=if(configured=="true", "yes", "no")</query>
     <earliest>-1m</earliest>

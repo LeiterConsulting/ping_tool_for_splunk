@@ -2,10 +2,17 @@
   <label>Asset Health Correlation</label>
   <description>Correlate endpoint availability with other Splunk data sources</description>
   
-  <!-- Load configuration from KV Store -->
+  <!-- Set defaults first -->
+  <init>
+    <set token="show_events">true</set>
+  </init>
+  
+  <!-- Load configuration from KV Store - uses append with makeresults to always return a row -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
+| head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false"]
 | head 1
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
     <earliest>-1m</earliest>
@@ -16,13 +23,6 @@
       <set token="pm_metrics_index">$result.metrics_index$</set>
     </done>
   </search>
-  
-  <init>
-    <set token="pm_index">ping</set>
-    <set token="pm_sourcetype">ping_monitor</set>
-    <set token="pm_metrics_index">ping_metrics</set>
-    <set token="show_events">true</set>
-  </init>
   
   <fieldset submitButton="false" autoRun="true">
     <input type="dropdown" token="data_source" searchWhenChanged="true">
