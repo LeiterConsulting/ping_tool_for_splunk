@@ -227,9 +227,47 @@ KV_MODE = json
 
 1. Create an HEC token in Splunk
 2. Set `output_mode = "hec"` and configure the `hec` block
-3. For Splunk Cloud:
-   - AWS: `https://http-inputs-<instance>.splunkcloud.com:443/services/collector/event`
-   - GCP/Azure: `https://http-inputs.<instance>.splunkcloud.com:443/services/collector/event`
+
+**Splunk Cloud URL Formats:**
+
+| Deployment | URL Format |
+|------------|------------|
+| **AWS** | `https://http-inputs-<instance>.splunkcloud.com:443/services/collector/event` |
+| **GCP / Azure** | `https://http-inputs.<instance>.splunkcloud.com:443/services/collector/event` |
+| **FedRAMP (GovCloud)** | `https://http-inputs.<instance>.splunkcloudgc.com:443/services/collector/event` |
+
+> Replace `<instance>` with your Splunk Cloud instance name (the subdomain from your Splunk Cloud URL).
+
+**Windows Example (config.psd1):**
+```powershell
+hec = @{
+    enabled = $true
+    # AWS Splunk Cloud:
+    url = "https://http-inputs-mycompany.splunkcloud.com:443/services/collector/event"
+    token = "your-hec-token"
+    index = "network_monitoring"
+    sourcetype = "ping_monitor"
+    verify_ssl = $true
+    ssl_protocol = "Tls12"
+}
+```
+
+**Unix Example (config.conf):**
+```bash
+# GCP/Azure Splunk Cloud:
+HEC_URL="https://http-inputs.mycompany.splunkcloud.com:443/services/collector/event"
+HEC_TOKEN="your-hec-token"
+HEC_INDEX="network_monitoring"
+HEC_SOURCETYPE="ping_monitor"
+HEC_VERIFY_SSL="true"
+HEC_TLS_VERSION="1.2"
+```
+
+**FedRAMP Example:**
+```bash
+# FedRAMP (GovCloud) Splunk Cloud:
+HEC_URL="https://http-inputs.mycompany.splunkcloudgc.com:443/services/collector/event"
+```
 
 ### Option C: Metrics Index
 
