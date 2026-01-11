@@ -33,13 +33,13 @@
         <latest>now</latest>
       </default>
     </input>
-    <input type="multiselect" token="selected_groups" searchWhenChanged="true">
+    <input type="multiselect" token="selected_groups_raw" searchWhenChanged="true">
       <label>Group</label>
       <choice value="*">All Groups</choice>
       <default>*</default>
-      <delimiter>,</delimiter>
-      <valuePrefix>group="</valuePrefix>
-      <valueSuffix>"</valueSuffix>
+      <delimiter> OR group=</delimiter>
+      <prefix>(group=</prefix>
+      <suffix>)</suffix>
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
@@ -47,14 +47,22 @@
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
+      <change>
+        <condition value="*">
+          <set token="selected_groups">*</set>
+        </condition>
+        <condition>
+          <set token="selected_groups">$selected_groups_raw$</set>
+        </condition>
+      </change>
     </input>
-    <input type="multiselect" token="selected_hosts" searchWhenChanged="true">
+    <input type="multiselect" token="selected_hosts_raw" searchWhenChanged="true">
       <label>Hostname</label>
       <choice value="*">All Hosts</choice>
       <default>*</default>
-      <delimiter>,</delimiter>
-      <valuePrefix>hostname="</valuePrefix>
-      <valueSuffix>"</valueSuffix>
+      <delimiter> OR hostname=</delimiter>
+      <prefix>(hostname=</prefix>
+      <suffix>)</suffix>
       <fieldForLabel>hostname</fieldForLabel>
       <fieldForValue>hostname</fieldForValue>
       <search>
@@ -62,6 +70,14 @@
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
+      <change>
+        <condition value="*">
+          <set token="selected_hosts">*</set>
+        </condition>
+        <condition>
+          <set token="selected_hosts">$selected_hosts_raw$</set>
+        </condition>
+      </change>
     </input>
   </fieldset>
 
