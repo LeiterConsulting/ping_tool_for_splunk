@@ -1,0 +1,19 @@
+# Application-level permissions
+[]
+export = system
+
+# Grant access to all users for views
+[views]
+export = system
+
+# Grant access to macros
+[macros]
+export = system
+
+# Grant access to lookups
+[lookups]
+export = system
+
+# Grant access to transforms
+[transforms]
+export = system

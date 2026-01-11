@@ -38,7 +38,3 @@ documentation/
 
 # Test suite and artifacts (not shipped)
 tests/
-
-# Splunk app development (packaged separately)
-splunk_app/
-*.tar.gz

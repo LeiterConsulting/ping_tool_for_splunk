@@ -1,0 +1,245 @@
+<dashboard version="1.1" theme="dark">
+  <label>Asset Discovery</label>
+  <description>Discover Splunk indexes and sourcetypes that contain data matching your monitored endpoints</description>
+  
+  <fieldset submitButton="true" autoRun="false">
+    <input type="text" token="events_index" searchWhenChanged="false">
+      <label>Ping Events Index</label>
+      <default>main</default>
+    </input>
+    <input type="text" token="events_sourcetype" searchWhenChanged="false">
+      <label>Ping Sourcetype</label>
+      <default>ping_monitor</default>
+    </input>
+    <input type="time" token="time_range" searchWhenChanged="false">
+      <label>Discovery Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="search_scope" searchWhenChanged="false">
+      <label>Search Scope</label>
+      <choice value="*">All Indexes</choice>
+      <choice value="main">Main Index Only</choice>
+      <choice value="_internal">Internal Only</choice>
+      <default>*</default>
+    </input>
+  </fieldset>
+
+  <!-- Row 1: Asset Inventory from Ping Data -->
+  <row>
+    <panel>
+      <title>Monitored Assets from Ping Data</title>
+      <table>
+        <search>
+          <query>index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+| stats dc(target_ip) as unique_ips,
+        values(hostname) as hostnames,
+        values(target_ip) as ips,
+        values(group) as groups,
+        values(entitytype) as entity_types,
+        values(device) as devices,
+        values(vendor) as vendors
+        by hostname
+| mvexpand hostnames
+| dedup hostnames
+| rename hostnames as asset_name, ips as ip_addresses
+| table asset_name, ip_addresses, groups, entity_types, devices, vendors
+| sort asset_name</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 2: Discover Indexes with Matching IPs -->
+  <row>
+    <panel>
+      <title>Indexes Containing Matching IP Addresses</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Searches for indexes where your monitored IP addresses appear in common IP fields (src_ip, dest_ip, ip, host, src, dest, dvc_ip)</p>
+      </html>
+      <table>
+        <search>
+          <query>| tstats count WHERE index=$search_scope$ BY index, sourcetype
+| rename count as baseline_count
+| join type=left index, sourcetype
+    [| search index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+     | stats values(target_ip) as ping_ips by hostname
+     | mvexpand ping_ips
+     | dedup ping_ips
+     | map search="| tstats count WHERE index=$search_scope$ (src_ip=$ping_ips$ OR dest_ip=$ping_ips$ OR ip=$ping_ips$ OR host=$ping_ips$ OR src=$ping_ips$ OR dest=$ping_ips$ OR dvc_ip=$ping_ips$) BY index, sourcetype" maxsearches=100
+     | stats sum(count) as matched_events by index, sourcetype]
+| where matched_events > 0
+| eval match_ratio = round((matched_events / baseline_count) * 100, 2)
+| sort -matched_events
+| table index, sourcetype, matched_events, baseline_count, match_ratio
+| rename matched_events as "Events with Matching IPs", baseline_count as "Total Events", match_ratio as "Match Ratio %"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 3: Discover Indexes with Matching Hostnames -->
+  <row>
+    <panel>
+      <title>Indexes Containing Matching Hostnames</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Searches for indexes where your monitored hostnames appear in common host fields (host, src_host, dest_host, dvc, hostname, computer)</p>
+      </html>
+      <table>
+        <search>
+          <query>| tstats count WHERE index=$search_scope$ BY index, sourcetype
+| rename count as baseline_count
+| join type=left index, sourcetype
+    [| search index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+     | dedup hostname
+     | map search="| tstats count WHERE index=$search_scope$ (host=\"*$hostname$*\" OR src_host=\"*$hostname$*\" OR dest_host=\"*$hostname$*\" OR dvc=\"*$hostname$*\" OR hostname=\"*$hostname$*\" OR computer=\"*$hostname$*\") BY index, sourcetype" maxsearches=100
+     | stats sum(count) as matched_events by index, sourcetype]
+| where matched_events > 0
+| eval match_ratio = round((matched_events / baseline_count) * 100, 2)
+| sort -matched_events
+| table index, sourcetype, matched_events, baseline_count, match_ratio
+| rename matched_events as "Events with Matching Hosts", baseline_count as "Total Events", match_ratio as "Match Ratio %"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 4: Field Discovery -->
+  <row>
+    <panel>
+      <title>Common IP/Host Fields Across All Indexes</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Shows which fields commonly contain IP addresses and hostnames that could be used for correlation</p>
+      </html>
+      <table>
+        <search>
+          <query>| tstats count WHERE index=$search_scope$ BY index, sourcetype
+| head 50
+| map maxsearches=50 search="| search index=$index$ sourcetype=$sourcetype$ 
+    | head 1000
+    | fieldsummary
+    | where match(field, \"(?i)(ip|host|src|dest|dvc|computer|addr|machine|system|server|node)\")
+    | eval index=\"$index$\", sourcetype=\"$sourcetype$\"
+    | table index, sourcetype, field, count, distinct_count"
+| stats sum(count) as total_values, avg(distinct_count) as avg_distinct by index, sourcetype, field
+| where total_values > 10
+| sort index, sourcetype, -total_values
+| table index, sourcetype, field, total_values, avg_distinct
+| rename total_values as "Total Values", avg_distinct as "Avg Distinct Values"</query>
+          <earliest>-1h@h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">30</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 5: Quick Discovery Search -->
+  <row>
+    <panel>
+      <title>Quick Asset Search</title>
+      <html>
+        <p style="color:#999;margin-bottom:10px;">Enter an IP address or hostname to find all indexes/sourcetypes containing that asset</p>
+      </html>
+      <input type="text" token="search_asset" searchWhenChanged="false">
+        <label>IP or Hostname</label>
+        <default>*</default>
+      </input>
+      <table>
+        <search>
+          <query>| tstats count WHERE index=$search_scope$ $search_asset$ BY index, sourcetype
+| sort -count
+| rename count as "Matching Events"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">20</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 6: Summary Statistics -->
+  <row>
+    <panel>
+      <single>
+        <title>Total Monitored Assets</title>
+        <search>
+          <query>index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+| stats dc(hostname) as asset_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Unique IP Addresses</title>
+        <search>
+          <query>index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+| stats dc(target_ip) as ip_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x65a637","0x65a637"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Unique Groups</title>
+        <search>
+          <query>index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+| stats dc(group) as group_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x6db7c6","0x6db7c6"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Entity Types</title>
+        <search>
+          <query>index=$events_index$ sourcetype=$events_sourcetype$ record_type=summary
+| stats dc(entitytype) as type_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0xf8be34","0xf8be34"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+</dashboard>
