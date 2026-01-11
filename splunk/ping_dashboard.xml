@@ -1,15 +1,52 @@
 <dashboard version="1.1" theme="dark">
-  <label>Ping Monitor Dashboard</label>
-  <description>Network endpoint availability and latency monitoring. Enter your index and sourcetype in the inputs below.</description>
+  <label>Ping Monitor Overview</label>
+  <description>Enterprise network endpoint availability and latency monitoring - supports Events, Metrics, or Combined data sources</description>
+  
+  <!-- Hidden search to load configuration from KV Store -->
+  <search id="load_config">
+    <query>| inputlookup ping_monitor_settings_lookup 
+| where _key="global" 
+| head 1
+| eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <set token="pm_index">$result.index$</set>
+      <set token="pm_sourcetype">$result.sourcetype$</set>
+      <set token="pm_metrics_index">$result.metrics_index$</set>
+      <set token="pm_configured">$result.configured$</set>
+    </done>
+  </search>
+  
+  <!-- Set defaults if config not loaded -->
+  <init>
+    <set token="pm_index">ping</set>
+    <set token="pm_sourcetype">ping_monitor</set>
+    <set token="pm_metrics_index">ping_metrics</set>
+    <set token="show_events">true</set>
+  </init>
   
   <fieldset submitButton="true" autoRun="true">
-    <input type="text" token="pm_index" searchWhenChanged="false">
-      <label>Index</label>
-      <default>ping</default>
-    </input>
-    <input type="text" token="pm_sourcetype" searchWhenChanged="false">
-      <label>Sourcetype</label>
-      <default>ping_monitor</default>
+    <input type="dropdown" token="data_source" searchWhenChanged="true">
+      <label>Data Source</label>
+      <choice value="events">Events (Classic)</choice>
+      <choice value="metrics">Metrics (Performance)</choice>
+      <choice value="combined">Combined (Historical + New)</choice>
+      <default>events</default>
+      <change>
+        <condition value="events">
+          <set token="show_events">true</set>
+          <unset token="show_metrics"></unset>
+        </condition>
+        <condition value="metrics">
+          <unset token="show_events"></unset>
+          <set token="show_metrics">true</set>
+        </condition>
+        <condition value="combined">
+          <set token="show_events">true</set>
+          <set token="show_metrics">true</set>
+        </condition>
+      </change>
     </input>
     <input type="time" token="time_range" searchWhenChanged="true">
       <label>Time Range</label>
@@ -28,16 +65,21 @@
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
-        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | dedup group | table group | sort group</query>
+        <query>| makeresults | eval source="init" 
+| append [| search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | stats count by group | fields group]
+| append [| mstats count WHERE index="$pm_metrics_index$" BY group | fields group]
+| stats count by group | fields group | sort group</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
       <change>
         <condition value="*">
           <set token="selected_groups">*</set>
+          <set token="selected_groups_metrics">*</set>
         </condition>
         <condition>
           <set token="selected_groups">$selected_groups_raw$</set>
+          <set token="selected_groups_metrics">$selected_groups_raw$</set>
         </condition>
       </change>
     </input>
@@ -51,26 +93,49 @@
       <fieldForLabel>hostname</fieldForLabel>
       <fieldForValue>hostname</fieldForValue>
       <search>
-        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | dedup hostname | table hostname | sort hostname</query>
+        <query>| makeresults | eval source="init"
+| append [| search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary | stats count by hostname | fields hostname]
+| append [| mstats count WHERE index="$pm_metrics_index$" BY hostname | fields hostname]
+| stats count by hostname | fields hostname | sort hostname</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
       </search>
       <change>
         <condition value="*">
           <set token="selected_hosts">*</set>
+          <set token="selected_hosts_metrics">*</set>
         </condition>
         <condition>
           <set token="selected_hosts">$selected_hosts_raw$</set>
+          <set token="selected_hosts_metrics">$selected_hosts_raw$</set>
         </condition>
       </change>
     </input>
   </fieldset>
 
-  <!-- Row 1: Key Metrics -->
+  <!-- Data Source Indicator -->
   <row>
     <panel>
+      <html>
+        <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
+          <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
+          <span style="color: #fff; margin-left: 10px;">
+            $data_source|s$
+          </span>
+          <span style="color: #888; margin-left: 20px;">
+            Events Index: <strong>$pm_index$</strong> | 
+            Metrics Index: <strong>$pm_metrics_index$</strong>
+          </span>
+        </div>
+      </html>
+    </panel>
+  </row>
+
+  <!-- Row 1: Key Metrics - EVENTS MODE -->
+  <row depends="$show_events$">
+    <panel>
       <single>
-        <title>Total Endpoints Monitored</title>
+        <title>Total Endpoints (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
 | stats dc(target_ip) as total_endpoints</query>
@@ -86,7 +151,7 @@
     </panel>
     <panel>
       <single>
-        <title>Overall Availability (%)</title>
+        <title>Overall Availability (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
 | stats sum(pings_successful) as success, sum(pings_sent) as total
@@ -106,7 +171,7 @@
     </panel>
     <panel>
       <single>
-        <title>Average Latency (ms)</title>
+        <title>Average Latency (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
 | stats avg(avg_latency_ms) as avg_latency
@@ -125,7 +190,7 @@
     </panel>
     <panel>
       <single>
-        <title>Hosts with Issues</title>
+        <title>Hosts with Issues (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
 | stats latest(packet_loss_pct) as packet_loss by hostname
@@ -143,10 +208,83 @@
     </panel>
   </row>
 
-  <!-- Row 2: Availability Over Time -->
-  <row>
+  <!-- Row 1: Key Metrics - METRICS MODE -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <single>
+        <title>Total Endpoints (Metrics)</title>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname | stats dc(hostname) as total_endpoints</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel rejects="$show_events$">
+      <single>
+        <title>Overall Availability (Metrics)</title>
+        <search>
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+| eval availability=round((success/total)*100, 2)
+| fields availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0xdc4e41","0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[90,99]</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel rejects="$show_events$">
+      <single>
+        <title>Average Latency (Metrics)</title>
+        <search>
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+| eval avg_latency=round(avg_latency, 2)</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[50,200]</option>
+        <option name="unit">ms</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel rejects="$show_events$">
+      <single>
+        <title>Hosts with Issues (Metrics)</title>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+| where packet_loss &gt; 0
+| stats count as hosts_with_issues</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <!-- Row 2: Availability Over Time - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Availability Over Time by Group</title>
+      <title>Availability Over Time by Group (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -166,10 +304,34 @@
     </panel>
   </row>
 
-  <!-- Row 3: Latency Analysis -->
-  <row>
+  <!-- Row 2: Availability Over Time - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Availability Over Time by Group (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY group span=5m
+| eval availability=100-packet_loss
+| timechart span=5m values(availability) as availability by group</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Availability (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 3: Latency Analysis - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Average Latency Over Time</title>
+      <title>Average Latency Over Time (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
@@ -187,7 +349,7 @@
       </chart>
     </panel>
     <panel>
-      <title>Latency by Host</title>
+      <title>Latency by Host - Top 20 (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
@@ -206,10 +368,48 @@
     </panel>
   </row>
 
-  <!-- Row 4: Packet Loss Analysis -->
-  <row>
+  <!-- Row 3: Latency Analysis - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Average Latency Over Time (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) span=5m</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">area</option>
+        <option name="charting.chart.nullValueMode">connect</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Latency (ms)</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.chart.stackMode">default</option>
+      </chart>
+    </panel>
+    <panel rejects="$show_events$">
+      <title>Latency by Host - Top 20 (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+| sort -avg_latency
+| head 20</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">bar</option>
+        <option name="charting.axisTitleX.text">Latency (ms)</option>
+        <option name="charting.axisTitleY.text">Hostname</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 4: Packet Loss Analysis - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Packet Loss Over Time</title>
+      <title>Packet Loss Over Time (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -227,7 +427,7 @@
       </chart>
     </panel>
     <panel>
-      <title>Packet Loss Distribution</title>
+      <title>Packet Loss Distribution (Events)</title>
       <chart>
         <search>
             <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -250,10 +450,53 @@
     </panel>
   </row>
 
-  <!-- Row 5: Host Status Table -->
-  <row>
+  <!-- Row 4: Packet Loss Analysis - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Packet Loss Over Time (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname span=5m</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.chart.nullValueMode">zero</option>
+        <option name="charting.axisTitleX.text">Time</option>
+        <option name="charting.axisTitleY.text">Packet Loss (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.legend.placement">bottom</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel rejects="$show_events$">
+      <title>Packet Loss Distribution (Metrics)</title>
+      <chart>
+        <search>
+            <query>| mstats avg("ping.packet_loss_pct") as packet_loss_pct WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname
+| eval loss_bucket=case(
+    packet_loss_pct==0, "0% (No Loss)",
+    packet_loss_pct&gt;0 AND packet_loss_pct&lt;=25, "1-25%",
+    packet_loss_pct&gt;25 AND packet_loss_pct&lt;=50, "26-50%",
+    packet_loss_pct&gt;50 AND packet_loss_pct&lt;=75, "51-75%",
+    packet_loss_pct&gt;75 AND packet_loss_pct&lt;100, "76-99%",
+    packet_loss_pct==100, "100% (Total Loss)"
+)
+| stats count by loss_bucket
+| sort loss_bucket</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 5: Host Status Table - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Current Host Status</title>
+      <title>Current Host Status (Events)</title>
       <table>
         <search>
             <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -265,7 +508,10 @@
         latest(pings_successful) as last_success,
         latest(pings_sent) as last_sent,
         values(group) as group,
-        values(description) as description
+        values(description) as description,
+        values(entitytype) as entitytype,
+        values(device) as device,
+        values(vendor) as vendor
         by hostname, target_ip
 | eval last_check=strftime(last_check_epoch, "%Y-%m-%d %H:%M:%S")
 | eval status=case(
@@ -285,7 +531,7 @@
 | eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
 | eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
 | eval packet_loss=packet_loss."%"
-| table display_status, hostname, target_ip, group, description, packet_loss, avg_latency, min_latency, max_latency, last_check
+| table display_status, hostname, target_ip, group, entitytype, device, vendor, description, packet_loss, avg_latency, min_latency, max_latency, last_check
 | rename display_status as Status
 | sort status</query>
           <earliest>$time_range.earliest$</earliest>
@@ -297,10 +543,55 @@
     </panel>
   </row>
 
-  <!-- Row 6: Individual Ping Results -->
-  <row>
+  <!-- Row 5: Host Status Table - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Current Host Status (Metrics)</title>
+      <table>
+        <search>
+            <query>| mstats latest(_time) as last_check_epoch,
+        latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.avg_latency_ms") as avg_latency,
+        latest("ping.min_latency_ms") as min_latency,
+        latest("ping.max_latency_ms") as max_latency,
+        latest("ping.pings_successful") as last_success,
+        latest("ping.pings_sent") as last_sent
+        WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$)
+        BY hostname, target_ip, group
+| eval last_check=strftime(last_check_epoch, "%Y-%m-%d %H:%M:%S")
+| eval status=case(
+    packet_loss==0, "Healthy",
+    packet_loss&gt;0 AND packet_loss&lt;50, "Degraded",
+    packet_loss&gt;=50 AND packet_loss&lt;100, "Critical",
+    packet_loss==100, "Down"
+)
+| eval status_icon=case(
+    status=="Healthy", "✅",
+    status=="Degraded", "⚠️",
+    status=="Critical", "🔶",
+    status=="Down", "❌"
+)
+| eval display_status=status_icon." ".status
+| eval avg_latency=if(avg_latency&gt;0, round(avg_latency, 2)." ms", "N/A")
+| eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
+| eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table display_status, hostname, target_ip, group, packet_loss, avg_latency, min_latency, max_latency, last_check
+| rename display_status as Status
+| sort status</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 6: Individual Ping Events (Events Only - not available in metrics mode) -->
+  <row depends="$show_events$">
     <panel>
-      <title>Recent Ping Events</title>
+      <title>Recent Ping Events (Individual Pings - Events Only)</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=ping ($selected_groups$) ($selected_hosts$)
@@ -319,10 +610,10 @@
     </panel>
   </row>
 
-  <!-- Row 7: Group Summary -->
-  <row>
+  <!-- Row 7: Group Summary - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Availability by Group</title>
+      <title>Availability by Group (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -342,7 +633,7 @@
       </chart>
     </panel>
     <panel>
-      <title>Host Count by Group</title>
+      <title>Host Count by Group (Events)</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
@@ -357,10 +648,46 @@
     </panel>
   </row>
 
-  <!-- Row 8: Alerts/Issues Summary -->
-  <row>
+  <!-- Row 7: Group Summary - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Availability by Group (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY group
+| eval availability=round((success/total)*100, 2)
+| fields group, availability
+| sort -availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.axisTitleX.text">Group</option>
+        <option name="charting.axisTitleY.text">Availability (%)</option>
+        <option name="charting.axisY.minimumNumber">0</option>
+        <option name="charting.axisY.maximumNumber">100</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel rejects="$show_events$">
+      <title>Host Count by Group (Metrics)</title>
+      <chart>
+        <search>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" ($selected_groups_metrics$) ($selected_hosts_metrics$) BY hostname, group | stats dc(hostname) as host_count by group
+| sort -host_count</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+
+  <!-- Row 8: Hosts with Issues - EVENTS -->
+  <row depends="$show_events$">
     <panel>
-      <title>Hosts with Recent Issues (Packet Loss &gt; 0%)</title>
+      <title>Hosts with Recent Issues - Packet Loss &gt; 0% (Events)</title>
       <table>
         <search>
             <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct&gt;0 ($selected_groups$) ($selected_hosts$)
@@ -376,6 +703,34 @@
 | sort -issue_count
 | table hostname, target_ip, group, issue_count, avg_loss, max_loss, last_issue
 | rename issue_count as "Issue Count", avg_loss as "Avg Loss", max_loss as "Max Loss", last_issue as "Last Issue"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="refresh.display">progressbar</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Row 8: Hosts with Issues - METRICS -->
+  <row depends="$show_metrics$">
+    <panel rejects="$show_events$">
+      <title>Hosts with Recent Issues - Packet Loss &gt; 0% (Metrics)</title>
+      <table>
+        <search>
+            <query>| mstats count as total_checks,
+        avg("ping.packet_loss_pct") as avg_loss,
+        max("ping.packet_loss_pct") as max_loss,
+        latest(_time) as last_issue_epoch
+        WHERE index="$pm_metrics_index$" "ping.packet_loss_pct"&gt;0 ($selected_groups_metrics$) ($selected_hosts_metrics$)
+        BY hostname, target_ip, group
+| where max_loss &gt; 0
+| eval last_issue=strftime(last_issue_epoch, "%Y-%m-%d %H:%M:%S")
+| eval avg_loss=round(avg_loss, 2)."%"
+| eval max_loss=max_loss."%"
+| sort -total_checks
+| table hostname, target_ip, group, total_checks, avg_loss, max_loss, last_issue
+| rename total_checks as "Issue Count", avg_loss as "Avg Loss", max_loss as "Max Loss", last_issue as "Last Issue"</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
