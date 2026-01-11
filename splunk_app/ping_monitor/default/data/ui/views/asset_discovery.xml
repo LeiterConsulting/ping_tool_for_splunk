@@ -265,8 +265,8 @@
       <html>
         <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; margin-bottom: 10px;">
           <p style="color: #6db7c6; margin: 0;">
-            <strong>💡 Tip:</strong> Use the "Quick Asset Search" below to find which indexes contain data about a specific IP or hostname.
-            Copy an IP address from the table below and paste it into the search field.
+            <strong>� Your Ping Monitoring Data:</strong> This table shows all IP addresses being monitored by Ping Monitor.
+            Use these IPs to correlate with firewall logs, network data, or other Splunk indexes.
           </p>
         </div>
       </html>
@@ -291,7 +291,7 @@
         <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; margin-bottom: 10px;">
           <p style="color: #6db7c6; margin: 0;">
             <strong>💡 Tip:</strong> These hostnames can be used with the lookup table to enrich other Splunk data.
-            Use <code>| lookup ping_health_lookup.csv hostname</code> in your searches.
+            Use <code style="background: #0d1520; padding: 2px 6px; border-radius: 3px; color: #f8f8f2;">| lookup ping_health_lookup hostname</code> in your searches.
           </p>
         </div>
       </html>
@@ -308,65 +308,6 @@
         </search>
         <option name="drilldown">none</option>
         <option name="count">15</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 4: Quick Discovery Search -->
-  <row>
-    <panel>
-      <html>
-        <div style="padding: 15px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
-          <h3 style="color: #5cc05c; margin: 0 0 10px 0;">🔍 Quick Asset Search</h3>
-          <p style="color: #aaa; margin: 0;">
-            Enter an IP address or hostname to search across ALL your Splunk indexes. 
-            This helps you discover where your monitored assets appear in other data sources (firewalls, servers, applications, etc.)
-          </p>
-        </div>
-      </html>
-    </panel>
-  </row>
-  
-  <row>
-    <panel>
-      <input type="text" token="search_asset_input" searchWhenChanged="false">
-        <label>IP or Hostname (press Enter to search)</label>
-        <default></default>
-        <change>
-          <condition match="len('$value$') &gt; 2">
-            <set token="search_asset">$value$</set>
-          </condition>
-          <condition>
-            <unset token="search_asset"/>
-          </condition>
-        </change>
-      </input>
-    </panel>
-  </row>
-  
-  <row depends="$search_asset$,$config_loaded$">
-    <panel>
-      <title>Indexes Containing: $search_asset$</title>
-      <html>
-        <div style="padding: 10px; background: #2a2a2a; border-radius: 5px; margin-bottom: 10px;">
-          <p style="color: #f8be34; margin: 0;">
-            <strong>⚠️ Note:</strong> This search scans all indexes. Results will appear as matching data is found.
-            Large environments may take longer to complete.
-          </p>
-        </div>
-      </html>
-      <table>
-        <search>
-          <query>search index=* (host="$search_asset$" OR host="*$search_asset$*" OR src_ip="$search_asset$" OR dest_ip="$search_asset$" OR src="$search_asset$" OR dest="$search_asset$" OR "$search_asset$")
-| stats count by index, sourcetype, host
-| sort -count
-| head 50
-| rename count as "Events", host as "Host"</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">20</option>
       </table>
     </panel>
   </row>
@@ -439,7 +380,7 @@
     <panel>
       <html>
         <div style="padding: 20px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
-          <h3 style="color: #5cc05c; margin: 0 0 15px 0;">📖 How to Use Asset Discovery</h3>
+          <h3 style="color: #5cc05c; margin: 0 0 15px 0;">📖 How to Use This Data</h3>
           <table style="width: 100%;">
             <tr>
               <td style="width: 40px; vertical-align: top; color: #5cc05c; font-size: 18px;">1.</td>
@@ -450,19 +391,19 @@
             <tr>
               <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">2.</td>
               <td style="color: #aaa; padding-bottom: 10px;">
-                <strong style="color: #fff;">Search for an Asset</strong> - Copy an IP or hostname and paste it into the Quick Asset Search to find where it appears in other Splunk data.
+                <strong style="color: #fff;">Copy Asset Info</strong> - Copy IP addresses or hostnames to use in Splunk searches to find matching data in other indexes.
               </td>
             </tr>
             <tr>
               <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">3.</td>
               <td style="color: #aaa; padding-bottom: 10px;">
-                <strong style="color: #fff;">Correlate Data</strong> - Use the results to understand which indexes contain data about your monitored assets. This helps you build correlation searches.
+                <strong style="color: #fff;">Enrich with Lookup</strong> - Use <code style="background: #0d1520; padding: 2px 6px; border-radius: 3px; color: #f8f8f2;">| lookup ping_health_lookup hostname</code> in any search to add ping health data.
               </td>
             </tr>
             <tr>
               <td style="vertical-align: top; color: #5cc05c; font-size: 18px;">4.</td>
               <td style="color: #aaa;">
-                <strong style="color: #fff;">Enrich with Lookup</strong> - Use <code style="background: #2a2a2a; padding: 2px 6px; border-radius: 3px;">| lookup ping_health_lookup.csv hostname</code> in any search to add ping health data.
+                <strong style="color: #fff;">Build Correlations</strong> - Visit <strong>Asset Health Correlation</strong> to see how ping health relates to your service groups and entity types.
               </td>
             </tr>
           </table>
@@ -472,4 +413,3 @@
   </row>
 
 </dashboard>
-

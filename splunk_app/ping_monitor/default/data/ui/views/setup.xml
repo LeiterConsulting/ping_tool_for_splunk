@@ -450,11 +450,12 @@
     <panel>
       <title>📖 Quick Reference: Using Health Data in Your Searches</title>
       <html>
-        <div style="padding: 15px; background: #2a2a2a; border-radius: 5px; font-family: monospace;">
-          <p style="color: #5cc05c; margin: 0 0 10px 0;">Enrich any search with ping health status:</p>
-          <pre style="color: #00ff00; margin: 0; overflow-x: auto;">index=your_index 
-| lookup ping_health_lookup.csv hostname OUTPUT health_status, packet_loss_pct, avg_latency_ms
-| where health_status!="Healthy"</pre>
+        <div style="padding: 15px; background: #1a1a2e; border-radius: 5px; border: 1px solid #5cc05c;">
+          <p style="color: #5cc05c; margin: 0 0 10px 0; font-weight: bold;">Enrich any search with ping health status:</p>
+          <pre style="background: #0d1520; padding: 15px; border-radius: 5px; color: #f8f8f2; margin: 0; overflow-x: auto; font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; line-height: 1.5;"><span style="color: #6db7c6;">index</span>=your_index 
+| <span style="color: #f8be34;">lookup</span> ping_health_lookup hostname <span style="color: #f8be34;">OUTPUT</span> health_status, packet_loss_pct, avg_latency_ms
+| <span style="color: #f8be34;">where</span> health_status!=<span style="color: #a6e22e;">"Healthy"</span></pre>
+          <p style="color: #888; margin: 10px 0 0 0; font-size: 12px;">💡 Make sure to update the Health Lookup table in Step 4 above, or enable the scheduled search for automatic updates.</p>
         </div>
       </html>
     </panel>

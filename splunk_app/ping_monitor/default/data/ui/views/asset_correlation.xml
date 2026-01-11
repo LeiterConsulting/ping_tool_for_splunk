@@ -407,9 +407,9 @@
         <div style="padding:15px;background:#1a2a3a;border-radius:5px;border:1px solid #6db7c6;">
           <h4 style="color:#6db7c6;margin-top:0;">💡 Using Health Data in Other Searches</h4>
           <p style="color:#ccc;">You can enrich any Splunk search with ping health data using the lookup table. Example:</p>
-          <pre style="background:#2a2a2a;padding:15px;border-radius:5px;color:#00ff00;overflow-x:auto;margin:10px 0;">index=your_index 
-| lookup ping_health_lookup.csv hostname OUTPUT health_status, packet_loss_pct, avg_latency_ms</pre>
-          <p style="color:#999;font-size:12px;">The health lookup is automatically populated when you run Setup. You can also enable the "Ping Monitor - Update Health Lookup" saved search for automatic updates every 5 minutes.</p>
+          <pre style="background:#0d1520;padding:15px;border-radius:5px;color:#f8f8f2;overflow-x:auto;margin:10px 0;font-family:'Consolas','Monaco',monospace;font-size:13px;line-height:1.5;"><span style="color:#6db7c6;">index</span>=your_index 
+| <span style="color:#f8be34;">lookup</span> ping_health_lookup hostname <span style="color:#f8be34;">OUTPUT</span> health_status, packet_loss_pct, avg_latency_ms</pre>
+          <p style="color:#999;font-size:12px;">The health lookup is populated when you click "Update Now" on the Setup page. You can also enable the "Ping Monitor - Update Health Lookup" saved search for automatic updates.</p>
         </div>
       </html>
     </panel>
