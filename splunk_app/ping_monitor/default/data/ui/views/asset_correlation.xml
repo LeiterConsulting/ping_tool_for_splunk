@@ -7,20 +7,25 @@
     <set token="show_events">true</set>
   </init>
   
-  <!-- Load configuration from KV Store - uses append with makeresults to always return a row -->
+  <!-- Load configuration from KV Store - sets config_loaded when complete -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
 | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false"]
+| eval found="yes"
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", found="no"]
 | head 1
-| eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
+| eval index=if(found=="yes", index, "ping")
+| eval sourcetype=if(found=="yes", sourcetype, "ping_monitor")
+| eval metrics_index=if(found=="yes", metrics_index, "ping_metrics")
+| fields index, sourcetype, metrics_index, found</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
       <set token="pm_index">$result.index$</set>
       <set token="pm_sourcetype">$result.sourcetype$</set>
       <set token="pm_metrics_index">$result.metrics_index$</set>
+      <set token="config_loaded">true</set>
     </done>
   </search>
   
@@ -75,7 +80,7 @@
   </row>
 
   <!-- Row 1: Health Status Summary - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Current Asset Health Status (Events)</title>
       <table>
@@ -157,7 +162,7 @@
   </row>
 
   <!-- Row 2: Health Distribution - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Health Distribution (Events)</title>
       <chart>
@@ -250,7 +255,7 @@
   </row>
 
   <!-- Row 3: Unhealthy Assets - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Unhealthy Assets - Potential Service Impact (Events)</title>
       <table>
@@ -309,7 +314,7 @@
   </row>
 
   <!-- Row 4: Service Impact Analysis -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Service Health by Entity Type (Events)</title>
       <table>
@@ -437,3 +442,4 @@
   </row>
 
 </dashboard>
+

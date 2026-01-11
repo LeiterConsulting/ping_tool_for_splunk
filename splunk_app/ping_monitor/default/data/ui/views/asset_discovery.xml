@@ -7,20 +7,25 @@
     <set token="show_events">true</set>
   </init>
   
-  <!-- Load configuration from KV Store - uses append with makeresults to always return a row -->
+  <!-- Load configuration from KV Store - sets config_loaded when complete -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
 | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false"]
+| eval found="yes"
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", found="no"]
 | head 1
-| eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
+| eval index=if(found=="yes", index, "ping")
+| eval sourcetype=if(found=="yes", sourcetype, "ping_monitor")
+| eval metrics_index=if(found=="yes", metrics_index, "ping_metrics")
+| fields index, sourcetype, metrics_index, found</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
       <set token="pm_index">$result.index$</set>
       <set token="pm_sourcetype">$result.sourcetype$</set>
       <set token="pm_metrics_index">$result.metrics_index$</set>
+      <set token="config_loaded">true</set>
     </done>
   </search>
   
@@ -75,7 +80,7 @@
   </row>
 
   <!-- Row 1: Summary Statistics - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <single>
         <title>Total Monitored Assets (Events)</title>
@@ -143,7 +148,7 @@
   </row>
 
   <!-- Row 1: Summary Statistics - METRICS -->
-  <row depends="$show_metrics$" rejects="$show_combined$">
+  <row depends="$show_metrics$,$config_loaded$" rejects="$show_combined$">
     <panel>
       <single>
         <title>Total Monitored Assets (Metrics)</title>
@@ -210,7 +215,7 @@
   </row>
 
   <!-- Row 2: Asset Inventory - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Monitored Assets from Ping Data (Events)</title>
       <table>
@@ -235,7 +240,7 @@
   </row>
 
   <!-- Row 2: Asset Inventory - METRICS -->
-  <row depends="$show_metrics$" rejects="$show_combined$">
+  <row depends="$show_metrics$,$config_loaded$" rejects="$show_combined$">
     <panel>
       <title>Monitored Assets from Ping Data (Metrics)</title>
       <table>
@@ -254,7 +259,7 @@
   </row>
 
   <!-- Row 3: Your Monitored IPs - Simple List -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Your Monitored IP Addresses</title>
       <html>
@@ -339,7 +344,7 @@
     </panel>
   </row>
   
-  <row depends="$search_asset$">
+  <row depends="$search_asset$,$config_loaded$">
     <panel>
       <title>Indexes Containing: $search_asset$</title>
       <html>
@@ -367,7 +372,7 @@
   </row>
 
   <!-- Row 5: Assets by Group - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Assets by Group (Events)</title>
       <chart>
@@ -399,7 +404,7 @@
   </row>
 
   <!-- Row 5: Assets by Group - METRICS -->
-  <row depends="$show_metrics$" rejects="$show_combined$">
+  <row depends="$show_metrics$,$config_loaded$" rejects="$show_combined$">
     <panel>
       <title>Assets by Group (Metrics)</title>
       <chart>
@@ -467,3 +472,4 @@
   </row>
 
 </dashboard>
+

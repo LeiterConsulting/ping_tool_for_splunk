@@ -2,7 +2,7 @@
   <label>Ping Monitor Overview</label>
   <description>Enterprise network endpoint availability and latency monitoring - supports Events, Metrics, or Combined data sources</description>
   
-  <!-- Set defaults first -->
+  <!-- Initialize UI state tokens only -->
   <init>
     <set token="show_events">true</set>
     <set token="selected_groups">*</set>
@@ -11,21 +11,25 @@
     <set token="selected_hosts_metrics"></set>
   </init>
   
-  <!-- Load configuration from KV Store - uses append with makeresults to always return a row -->
+  <!-- Load configuration from KV Store FIRST - sets config_loaded token when complete -->
   <search id="load_config">
     <query>| inputlookup ping_monitor_settings_lookup 
 | search _key="global" 
 | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false"]
+| eval found="yes"
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", found="no"]
 | head 1
-| eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")</query>
+| eval index=if(found=="yes", index, "ping")
+| eval sourcetype=if(found=="yes", sourcetype, "ping_monitor")
+| eval metrics_index=if(found=="yes", metrics_index, "ping_metrics")
+| fields index, sourcetype, metrics_index, found</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
       <set token="pm_index">$result.index$</set>
       <set token="pm_sourcetype">$result.sourcetype$</set>
       <set token="pm_metrics_index">$result.metrics_index$</set>
-      <set token="pm_configured">$result.configured$</set>
+      <set token="config_loaded">true</set>
     </done>
   </search>
   
@@ -70,13 +74,8 @@
       <suffix>)</suffix>
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
-      <search>
-        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary 
-| stats count by group 
-| fields group 
-| sort group</query>
-        <earliest>-24h@h</earliest>
-        <latest>now</latest>
+      <search base="load_config">
+        <query>| map maxsearches=1 search="search index=\"$result.index$\" sourcetype=\"$result.sourcetype$\" record_type=summary | stats count by group | fields group | sort group"</query>
       </search>
       <change>
         <condition value="*">
@@ -98,13 +97,8 @@
       <suffix>)</suffix>
       <fieldForLabel>hostname</fieldForLabel>
       <fieldForValue>hostname</fieldForValue>
-      <search>
-        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary 
-| stats count by hostname 
-| fields hostname 
-| sort hostname</query>
-        <earliest>-24h@h</earliest>
-        <latest>now</latest>
+      <search base="load_config">
+        <query>| map maxsearches=1 search="search index=\"$result.index$\" sourcetype=\"$result.sourcetype$\" record_type=summary | stats count by hostname | fields hostname | sort hostname"</query>
       </search>
       <change>
         <condition value="*">
@@ -120,7 +114,7 @@
   </fieldset>
 
   <!-- Data Source Indicator -->
-  <row>
+  <row depends="$config_loaded$">
     <panel>
       <html>
         <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
@@ -140,7 +134,7 @@
   <!-- ==================== EVENTS MODE ==================== -->
   
   <!-- Row 1: Key Metrics - EVENTS MODE -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <single>
         <title>Total Endpoints</title>
@@ -217,7 +211,7 @@
   </row>
 
   <!-- Row 2: Availability Over Time - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Availability Over Time by Group</title>
       <chart>
@@ -240,7 +234,7 @@
   </row>
 
   <!-- Row 3: Latency Analysis - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Average Latency Over Time</title>
       <chart>
@@ -280,7 +274,7 @@
   </row>
 
   <!-- Row 4: Packet Loss - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Packet Loss Over Time</title>
       <chart>
@@ -324,7 +318,7 @@
   </row>
 
   <!-- Row 5: Host Status Table - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Current Host Status</title>
       <table>
@@ -374,7 +368,7 @@
   </row>
 
   <!-- Row 6: Group Summary - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Availability by Group</title>
       <chart>
@@ -412,7 +406,7 @@
   </row>
 
   <!-- Row 7: Recent Ping Events - EVENTS -->
-  <row depends="$show_events$">
+  <row depends="$show_events$,$config_loaded$">
     <panel>
       <title>Recent Ping Events (Individual Pings)</title>
       <table>
@@ -436,7 +430,7 @@
   <!-- ==================== METRICS MODE ==================== -->
 
   <!-- Row 1: Key Metrics - METRICS MODE -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <single>
         <title>Total Endpoints (Metrics)</title>
@@ -509,7 +503,7 @@
   </row>
 
   <!-- Row 2: Availability Over Time - METRICS -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <title>Availability Over Time by Group (Metrics)</title>
       <chart>
@@ -533,7 +527,7 @@
   </row>
 
   <!-- Row 3: Latency Analysis - METRICS -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <title>Average Latency Over Time (Metrics)</title>
       <chart>
@@ -571,7 +565,7 @@
   </row>
 
   <!-- Row 4: Packet Loss - METRICS -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <title>Packet Loss Over Time (Metrics)</title>
       <chart>
@@ -614,7 +608,7 @@
   </row>
 
   <!-- Row 5: Host Status Table - METRICS -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <title>Current Host Status (Metrics)</title>
       <table>
@@ -658,7 +652,7 @@
   </row>
 
   <!-- Row 6: Group Summary - METRICS -->
-  <row depends="$show_metrics$">
+  <row depends="$show_metrics$,$config_loaded$">
     <panel>
       <title>Availability by Group (Metrics)</title>
       <chart>
@@ -697,7 +691,7 @@
   <!-- In Combined mode, we show both data sources on the same charts with clear labels -->
 
   <!-- Row 1: Key Metrics Side by Side - COMBINED -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Events vs Metrics Comparison</title>
       <html>
@@ -710,7 +704,7 @@
     </panel>
   </row>
 
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <single>
         <title>📋 Endpoints (Events)</title>
@@ -783,7 +777,7 @@
     </panel>
   </row>
 
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <single>
         <title>📋 Avg Latency (Events)</title>
@@ -859,7 +853,7 @@
   </row>
 
   <!-- Row 2: Availability Over Time - COMBINED (overlay both on same chart) -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Availability Over Time - Events vs Metrics Comparison</title>
       <chart>
@@ -885,7 +879,7 @@
   </row>
 
   <!-- Row 3: Latency Over Time - COMBINED -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Average Latency Over Time - Events vs Metrics Comparison</title>
       <chart>
@@ -908,7 +902,7 @@
   </row>
 
   <!-- Row 4: Packet Loss Over Time - COMBINED -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Packet Loss Over Time - Events vs Metrics Comparison</title>
       <chart>
@@ -932,7 +926,7 @@
   </row>
 
   <!-- Row 5: Host Status Comparison Table - COMBINED -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Host Status Comparison - Events vs Metrics</title>
       <table>
@@ -976,7 +970,7 @@
   </row>
 
   <!-- Row 6: Group Availability Comparison - COMBINED -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Availability by Group - Events vs Metrics</title>
       <chart>
@@ -1030,7 +1024,7 @@
   </row>
 
   <!-- Row 7: Hosts with Issues - COMBINED (showing issues from both sources) -->
-  <row depends="$show_combined$">
+  <row depends="$show_combined$,$config_loaded$">
     <panel>
       <title>📊 Hosts with Issues - Combined View</title>
       <table>
