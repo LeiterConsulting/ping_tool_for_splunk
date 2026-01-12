@@ -134,22 +134,16 @@
   <!-- ==================== DRILLDOWN PANELS ==================== -->
   <!-- These panels appear when user clicks on tiles, then can be dismissed -->
 
-  <!-- Drilldown: All Endpoints List -->
-  <row depends="$drilldown_panel$,$show_events$,$config_loaded$">
-    <panel>
-      <title>📋 All Monitored Endpoints (click ✖ to close)</title>
-      <html>
-        <div style="text-align: right; margin-bottom: 10px;">
-          <a href="#" onclick="require(['splunkjs/mvc'], function(mvc) { mvc.Components.get('default').set('drilldown_panel', undefined); }); return false;" 
-             style="background: #dc4e41; color: #fff; padding: 5px 15px; border-radius: 3px; text-decoration: none;">✖ Close</a>
-        </div>
-      </html>
+  <!-- Drilldown: All Endpoints List (only shows when drilldown_panel=all_endpoints) -->
+  <row depends="$show_events$,$config_loaded$">
+    <panel depends="$drilldown_show_all_endpoints$">
+      <title>📋 All Monitored Endpoints</title>
       <input type="link" token="close_drilldown" searchWhenChanged="true">
         <label></label>
-        <choice value="close">✖ Close Drilldown</choice>
+        <choice value="close">✖ Close</choice>
         <change>
           <unset token="drilldown_panel"/>
-          <unset token="drilldown_loss_bucket"/>
+          <unset token="drilldown_show_all_endpoints"/>
           <unset token="close_drilldown"/>
         </change>
       </input>
@@ -173,16 +167,16 @@
     </panel>
   </row>
 
-  <!-- Drilldown: Hosts with Issues -->
-  <row depends="$drilldown_panel$,$show_events$,$config_loaded$">
-    <panel depends="$drilldown_panel$">
-      <title>⚠️ Hosts with Issues (click ✖ to close)</title>
+  <!-- Drilldown: Hosts with Issues (only shows when drilldown_panel=hosts_with_issues) -->
+  <row depends="$show_events$,$config_loaded$">
+    <panel depends="$drilldown_show_hosts_issues$">
+      <title>⚠️ Hosts with Issues</title>
       <input type="link" token="close_drilldown2" searchWhenChanged="true">
         <label></label>
-        <choice value="close">✖ Close Drilldown</choice>
+        <choice value="close">✖ Close</choice>
         <change>
           <unset token="drilldown_panel"/>
-          <unset token="drilldown_loss_bucket"/>
+          <unset token="drilldown_show_hosts_issues"/>
           <unset token="close_drilldown2"/>
         </change>
       </input>
@@ -210,12 +204,11 @@
   <!-- Drilldown: Hosts by Loss Bucket -->
   <row depends="$drilldown_loss_bucket$,$show_events$,$config_loaded$">
     <panel>
-      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket$ (click ✖ to close)</title>
+      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket$</title>
       <input type="link" token="close_drilldown3" searchWhenChanged="true">
         <label></label>
-        <choice value="close">✖ Close Drilldown</choice>
+        <choice value="close">✖ Close</choice>
         <change>
-          <unset token="drilldown_panel"/>
           <unset token="drilldown_loss_bucket"/>
           <unset token="close_drilldown3"/>
         </change>
@@ -267,7 +260,9 @@
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
         <drilldown>
-          <set token="drilldown_panel">all_endpoints</set>
+          <set token="drilldown_show_all_endpoints">true</set>
+          <unset token="drilldown_show_hosts_issues"/>
+          <unset token="drilldown_loss_bucket"/>
         </drilldown>
       </single>
     </panel>
@@ -327,7 +322,9 @@
         <option name="rangeValues">[0,5]</option>
         <option name="useColors">1</option>
         <drilldown>
-          <set token="drilldown_panel">hosts_with_issues</set>
+          <set token="drilldown_show_hosts_issues">true</set>
+          <unset token="drilldown_show_all_endpoints"/>
+          <unset token="drilldown_loss_bucket"/>
         </drilldown>
       </single>
     </panel>
@@ -438,7 +435,8 @@
         <option name="charting.drilldown">all</option>
         <drilldown>
           <set token="drilldown_loss_bucket">$click.value$</set>
-          <set token="drilldown_panel">loss_bucket</set>
+          <unset token="drilldown_show_all_endpoints"/>
+          <unset token="drilldown_show_hosts_issues"/>
         </drilldown>
       </chart>
     </panel>
@@ -563,25 +561,53 @@
 
   <!-- ==================== METRICS MODE ==================== -->
 
-  <!-- Metrics Drilldown Panels -->
-  <row depends="$drilldown_panel_metrics$,$show_metrics$,$config_loaded$">
-    <panel>
-      <title>📋 Metrics Drilldown (click ✖ to close)</title>
-      <input type="link" token="close_drilldown_metrics" searchWhenChanged="true">
+  <!-- Metrics Drilldown: All Endpoints -->
+  <row depends="$show_metrics$,$config_loaded$">
+    <panel depends="$drilldown_metrics_all$">
+      <title>📋 All Monitored Endpoints (Metrics)</title>
+      <input type="link" token="close_metrics_all" searchWhenChanged="true">
         <label></label>
-        <choice value="close">✖ Close Drilldown</choice>
+        <choice value="close">✖ Close</choice>
         <change>
-          <unset token="drilldown_panel_metrics"/>
-          <unset token="close_drilldown_metrics"/>
+          <unset token="drilldown_metrics_all"/>
+          <unset token="close_metrics_all"/>
         </change>
       </input>
       <table>
         <search>
           <query>| mstats latest("ping.packet_loss_pct") as packet_loss, latest("ping.avg_latency_ms") as latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, target_ip, group
-| eval show_all=if("$drilldown_panel_metrics$"=="all_endpoints", 1, 0)
-| eval show_issues=if("$drilldown_panel_metrics$"=="hosts_with_issues", 1, 0)
-| where (show_all==1) OR (show_issues==1 AND packet_loss > 0)
 | eval status=case(packet_loss==0, "✅ Healthy", packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table status, hostname, target_ip, group, packet_loss, latency
+| rename status as Status, hostname as Hostname, target_ip as "IP Address", group as Group, packet_loss as "Packet Loss", latency as "Latency"
+| sort Hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Metrics Drilldown: Hosts with Issues -->
+  <row depends="$show_metrics$,$config_loaded$">
+    <panel depends="$drilldown_metrics_issues$">
+      <title>⚠️ Hosts with Issues (Metrics)</title>
+      <input type="link" token="close_metrics_issues" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close</choice>
+        <change>
+          <unset token="drilldown_metrics_issues"/>
+          <unset token="close_metrics_issues"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss, latest("ping.avg_latency_ms") as latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, target_ip, group
+| where packet_loss > 0
+| eval status=case(packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
 | eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
 | eval packet_loss=packet_loss."%"
 | table status, hostname, target_ip, group, packet_loss, latency
@@ -612,7 +638,9 @@
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
         <drilldown>
-          <set token="drilldown_panel_metrics">all_endpoints</set>
+          <set token="drilldown_metrics_all">true</set>
+          <unset token="drilldown_metrics_issues"/>
+          <unset token="drilldown_loss_bucket_metrics"/>
         </drilldown>
       </single>
     </panel>
@@ -669,7 +697,9 @@
         <option name="rangeValues">[0,5]</option>
         <option name="useColors">1</option>
         <drilldown>
-          <set token="drilldown_panel_metrics">hosts_with_issues</set>
+          <set token="drilldown_metrics_issues">true</set>
+          <unset token="drilldown_metrics_all"/>
+          <unset token="drilldown_loss_bucket_metrics"/>
         </drilldown>
       </single>
     </panel>
@@ -778,6 +808,8 @@
         <option name="charting.drilldown">all</option>
         <drilldown>
           <set token="drilldown_loss_bucket_metrics">$click.value$</set>
+          <unset token="drilldown_metrics_all"/>
+          <unset token="drilldown_metrics_issues"/>
         </drilldown>
       </chart>
     </panel>
@@ -786,10 +818,10 @@
   <!-- Metrics Loss Bucket Drilldown -->
   <row depends="$drilldown_loss_bucket_metrics$,$show_metrics$,$config_loaded$">
     <panel>
-      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket_metrics$ (click ✖ to close)</title>
+      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket_metrics$</title>
       <input type="link" token="close_loss_metrics" searchWhenChanged="true">
         <label></label>
-        <choice value="close">✖ Close Drilldown</choice>
+        <choice value="close">✖ Close</choice>
         <change>
           <unset token="drilldown_loss_bucket_metrics"/>
           <unset token="close_loss_metrics"/>
