@@ -1,4 +1,4 @@
-# Splunk Ping Monitor v2.5.2
+# Splunk Ping Monitor v2.7.0
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
