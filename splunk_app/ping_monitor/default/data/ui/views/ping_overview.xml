@@ -131,6 +131,123 @@
     </panel>
   </row>
 
+  <!-- ==================== DRILLDOWN PANELS ==================== -->
+  <!-- These panels appear when user clicks on tiles, then can be dismissed -->
+
+  <!-- Drilldown: All Endpoints List -->
+  <row depends="$drilldown_panel$,$show_events$,$config_loaded$">
+    <panel>
+      <title>📋 All Monitored Endpoints (click ✖ to close)</title>
+      <html>
+        <div style="text-align: right; margin-bottom: 10px;">
+          <a href="#" onclick="require(['splunkjs/mvc'], function(mvc) { mvc.Components.get('default').set('drilldown_panel', undefined); }); return false;" 
+             style="background: #dc4e41; color: #fff; padding: 5px 15px; border-radius: 3px; text-decoration: none;">✖ Close</a>
+        </div>
+      </html>
+      <input type="link" token="close_drilldown" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close Drilldown</choice>
+        <change>
+          <unset token="drilldown_panel"/>
+          <unset token="drilldown_loss_bucket"/>
+          <unset token="close_drilldown"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats latest(_time) as last_seen, latest(packet_loss_pct) as packet_loss, latest(avg_latency_ms) as latency, values(group) as group, values(description) as description by hostname, target_ip
+| eval last_seen=strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+| eval status=case(packet_loss==0, "✅ Healthy", packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table status, hostname, target_ip, group, description, packet_loss, latency, last_seen
+| rename status as Status, hostname as Hostname, target_ip as "IP Address", group as Group, description as Description, packet_loss as "Packet Loss", latency as "Latency", last_seen as "Last Seen"
+| sort Hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Drilldown: Hosts with Issues -->
+  <row depends="$drilldown_panel$,$show_events$,$config_loaded$">
+    <panel depends="$drilldown_panel$">
+      <title>⚠️ Hosts with Issues (click ✖ to close)</title>
+      <input type="link" token="close_drilldown2" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close Drilldown</choice>
+        <change>
+          <unset token="drilldown_panel"/>
+          <unset token="drilldown_loss_bucket"/>
+          <unset token="close_drilldown2"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats latest(_time) as last_seen, latest(packet_loss_pct) as packet_loss, latest(avg_latency_ms) as latency, values(group) as group, values(description) as description, values(entitytype) as entitytype, values(device) as device, values(vendor) as vendor by hostname, target_ip
+| where packet_loss &gt; 0
+| eval last_seen=strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+| eval status=case(packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss_display=packet_loss."%"
+| table status, hostname, target_ip, group, entitytype, device, vendor, description, packet_loss_display, latency, last_seen
+| rename status as Status, hostname as Hostname, target_ip as "IP Address", group as Group, entitytype as "Entity Type", device as Device, vendor as Vendor, description as Description, packet_loss_display as "Packet Loss", latency as "Latency", last_seen as "Last Seen"
+| sort -packet_loss</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <!-- Drilldown: Hosts by Loss Bucket -->
+  <row depends="$drilldown_loss_bucket$,$show_events$,$config_loaded$">
+    <panel>
+      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket$ (click ✖ to close)</title>
+      <input type="link" token="close_drilldown3" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close Drilldown</choice>
+        <change>
+          <unset token="drilldown_panel"/>
+          <unset token="drilldown_loss_bucket"/>
+          <unset token="close_drilldown3"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+| stats latest(_time) as last_seen, latest(packet_loss_pct) as packet_loss, latest(avg_latency_ms) as latency, values(group) as group by hostname, target_ip
+| eval loss_bucket=case(
+    packet_loss==0, "0% (No Loss)",
+    packet_loss&gt;0 AND packet_loss&lt;=25, "1-25%",
+    packet_loss&gt;25 AND packet_loss&lt;=50, "26-50%",
+    packet_loss&gt;50 AND packet_loss&lt;=75, "51-75%",
+    packet_loss&gt;75 AND packet_loss&lt;100, "76-99%",
+    packet_loss==100, "100% (Total Loss)"
+)
+| where loss_bucket="$drilldown_loss_bucket$"
+| eval last_seen=strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table hostname, target_ip, group, packet_loss, latency, last_seen
+| rename hostname as Hostname, target_ip as "IP Address", group as Group, packet_loss as "Packet Loss", latency as "Latency", last_seen as "Last Seen"
+| sort Hostname</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
   <!-- ==================== EVENTS MODE ==================== -->
   
   <!-- Row 1: Key Metrics - EVENTS MODE -->
@@ -145,10 +262,13 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
+        <option name="drilldown">all</option>
         <option name="rangeColors">["0x53a051","0x53a051"]</option>
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
+        <drilldown>
+          <set token="drilldown_panel">all_endpoints</set>
+        </drilldown>
       </single>
     </panel>
     <panel>
@@ -202,10 +322,13 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
+        <option name="drilldown">all</option>
         <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
         <option name="rangeValues">[0,5]</option>
         <option name="useColors">1</option>
+        <drilldown>
+          <set token="drilldown_panel">hosts_with_issues</set>
+        </drilldown>
       </single>
     </panel>
   </row>
@@ -312,7 +435,11 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
-        <option name="charting.drilldown">none</option>
+        <option name="charting.drilldown">all</option>
+        <drilldown>
+          <set token="drilldown_loss_bucket">$click.value$</set>
+          <set token="drilldown_panel">loss_bucket</set>
+        </drilldown>
       </chart>
     </panel>
   </row>
@@ -361,8 +488,11 @@
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
-        <option name="drilldown">none</option>
+        <option name="drilldown">row</option>
         <option name="refresh.display">progressbar</option>
+        <drilldown>
+          <link target="_blank">/app/ping_monitor/asset_correlation?form.asset_identifier=$row.hostname$</link>
+        </drilldown>
       </table>
     </panel>
   </row>
@@ -400,7 +530,11 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
-        <option name="charting.drilldown">none</option>
+        <option name="charting.drilldown">all</option>
+        <drilldown>
+          <set token="selected_groups_raw">(group=$click.value$)</set>
+          <set token="selected_groups">(group=$click.value$)</set>
+        </drilldown>
       </chart>
     </panel>
   </row>
@@ -429,6 +563,39 @@
 
   <!-- ==================== METRICS MODE ==================== -->
 
+  <!-- Metrics Drilldown Panels -->
+  <row depends="$drilldown_panel_metrics$,$show_metrics$,$config_loaded$">
+    <panel>
+      <title>📋 Metrics Drilldown (click ✖ to close)</title>
+      <input type="link" token="close_drilldown_metrics" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close Drilldown</choice>
+        <change>
+          <unset token="drilldown_panel_metrics"/>
+          <unset token="close_drilldown_metrics"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss, latest("ping.avg_latency_ms") as latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, target_ip, group
+| eval show_all=if("$drilldown_panel_metrics$"=="all_endpoints", 1, 0)
+| eval show_issues=if("$drilldown_panel_metrics$"=="hosts_with_issues", 1, 0)
+| where (show_all==1) OR (show_issues==1 AND packet_loss > 0)
+| eval status=case(packet_loss==0, "✅ Healthy", packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table status, hostname, target_ip, group, packet_loss, latency
+| rename status as Status, hostname as Hostname, target_ip as "IP Address", group as Group, packet_loss as "Packet Loss", latency as "Latency"
+| sort -packet_loss</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
   <!-- Row 1: Key Metrics - METRICS MODE -->
   <row depends="$show_metrics$,$config_loaded$">
     <panel>
@@ -440,10 +607,13 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
+        <option name="drilldown">all</option>
         <option name="rangeColors">["0x53a051","0x53a051"]</option>
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
+        <drilldown>
+          <set token="drilldown_panel_metrics">all_endpoints</set>
+        </drilldown>
       </single>
     </panel>
     <panel>
@@ -494,10 +664,13 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="colorMode">block</option>
-        <option name="drilldown">none</option>
+        <option name="drilldown">all</option>
         <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
         <option name="rangeValues">[0,5]</option>
         <option name="useColors">1</option>
+        <drilldown>
+          <set token="drilldown_panel_metrics">hosts_with_issues</set>
+        </drilldown>
       </single>
     </panel>
   </row>
@@ -602,8 +775,49 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
-        <option name="charting.drilldown">none</option>
+        <option name="charting.drilldown">all</option>
+        <drilldown>
+          <set token="drilldown_loss_bucket_metrics">$click.value$</set>
+        </drilldown>
       </chart>
+    </panel>
+  </row>
+
+  <!-- Metrics Loss Bucket Drilldown -->
+  <row depends="$drilldown_loss_bucket_metrics$,$show_metrics$,$config_loaded$">
+    <panel>
+      <title>📊 Hosts in Loss Category: $drilldown_loss_bucket_metrics$ (click ✖ to close)</title>
+      <input type="link" token="close_loss_metrics" searchWhenChanged="true">
+        <label></label>
+        <choice value="close">✖ Close Drilldown</choice>
+        <change>
+          <unset token="drilldown_loss_bucket_metrics"/>
+          <unset token="close_loss_metrics"/>
+        </change>
+      </input>
+      <table>
+        <search>
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss, latest("ping.avg_latency_ms") as latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, target_ip, group
+| eval loss_bucket=case(
+    packet_loss==0, "0% (No Loss)",
+    packet_loss&gt;0 AND packet_loss&lt;=25, "1-25%",
+    packet_loss&gt;25 AND packet_loss&lt;=50, "26-50%",
+    packet_loss&gt;50 AND packet_loss&lt;=75, "51-75%",
+    packet_loss&gt;75 AND packet_loss&lt;100, "76-99%",
+    packet_loss==100, "100% (Total Loss)"
+)
+| where loss_bucket="$drilldown_loss_bucket_metrics$"
+| eval status=case(packet_loss==0, "✅ Healthy", packet_loss&lt;50, "⚠️ Degraded", packet_loss&lt;100, "🔶 Critical", true(), "❌ Down")
+| eval latency=if(latency&gt;0, round(latency,2)." ms", "N/A")
+| eval packet_loss=packet_loss."%"
+| table status, hostname, target_ip, group, packet_loss, latency
+| rename status as Status, hostname as Hostname, target_ip as "IP Address", group as Group, packet_loss as "Packet Loss", latency as "Latency"</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
     </panel>
   </row>
 
@@ -645,8 +859,11 @@
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
-        <option name="drilldown">none</option>
+        <option name="drilldown">row</option>
         <option name="refresh.display">progressbar</option>
+        <drilldown>
+          <link target="_blank">/app/ping_monitor/asset_correlation?form.asset_identifier=$row.hostname$</link>
+        </drilldown>
       </table>
     </panel>
   </row>
@@ -669,7 +886,12 @@
         <option name="charting.axisTitleY.text">Availability (%)</option>
         <option name="charting.axisY.minimumNumber">0</option>
         <option name="charting.axisY.maximumNumber">100</option>
-        <option name="charting.drilldown">none</option>
+        <option name="charting.drilldown">all</option>
+        <drilldown>
+          <set token="selected_groups_raw">(group=$click.value$)</set>
+          <set token="selected_groups">(group=$click.value$)</set>
+          <set token="selected_groups_metrics">group="$click.value$"</set>
+        </drilldown>
       </chart>
     </panel>
     <panel>
@@ -682,7 +904,12 @@
           <latest>$time_range.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
-        <option name="charting.drilldown">none</option>
+        <option name="charting.drilldown">all</option>
+        <drilldown>
+          <set token="selected_groups_raw">(group=$click.value$)</set>
+          <set token="selected_groups">(group=$click.value$)</set>
+          <set token="selected_groups_metrics">group="$click.value$"</set>
+        </drilldown>
       </chart>
     </panel>
   </row>

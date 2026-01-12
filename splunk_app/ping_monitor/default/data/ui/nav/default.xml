@@ -1,6 +1,5 @@
 <nav color="#5cc05c">
   <view name="ping_overview" default="true"/>
-  <view name="asset_discovery"/>
   <view name="asset_correlation"/>
   <view name="setup"/>
   <collection label="Reports">

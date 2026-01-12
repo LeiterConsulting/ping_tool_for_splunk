@@ -38,3 +38,6 @@ documentation/
 
 # Test suite and artifacts (not shipped)
 tests/
+
+# Future feature ideas
+future_features/
