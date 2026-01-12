@@ -290,7 +290,7 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 1. **Install the app**:
    ```
-    Upload ping_monitor_app-2.5.2.tar.gz via Splunk Web → Manage Apps → Install from File
+    Upload ping_monitor_v2.7.0.tar.gz via Splunk Web → Manage Apps → Install from File
    ```
 
 2. **Run Setup**:
