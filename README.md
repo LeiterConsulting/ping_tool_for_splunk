@@ -542,7 +542,7 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-**v2.5.2** — Consistency update (docs + shipped views) for v2.5.1 features.
+**v2.7.0** — Consistency update (docs + shipped views) for v2.7.0 features.
 
 ---
 
