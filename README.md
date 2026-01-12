@@ -316,9 +316,11 @@ For environments where you can't install apps:
 2. Enter your index and sourcetype in the dashboard inputs
 3. Optionally install `splunk/macros.conf` for advanced queries
 
-### Macros Installation (Standalone Dashboard)
+### Macros Installation (Optional)
 
-The included standalone dashboard (`splunk/ping_dashboard.xml`) uses the dual-mode macros (events + metrics). Install these macros if you are using the standalone dashboard. (The Splunk app does not require these macros.)
+The shipped standalone dashboard (`splunk/ping_dashboard.xml`) does **not** require macros.
+
+Install `splunk/macros.conf` only if you want optional shortcut macros (for ad-hoc searches or custom dashboards), or if you are maintaining an older deployment that references the `ping_*` macros.
 
 #### Option 1: Add to Search App (Quick)
 

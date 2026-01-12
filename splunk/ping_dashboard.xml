@@ -4,6 +4,12 @@
   
   <!-- Initialize UI state tokens only -->
   <init>
+    <!-- Standalone defaults (override via inputs below) -->
+    <set token="pm_index">ping</set>
+    <set token="pm_sourcetype">ping_monitor</set>
+    <set token="pm_metrics_index">ping_metrics</set>
+    <set token="config_loaded">true</set>
+
     <set token="show_events">true</set>
     <set token="selected_groups">*</set>
     <set token="selected_hosts">*</set>
@@ -11,29 +17,20 @@
     <set token="selected_hosts_metrics"></set>
   </init>
   
-  <!-- Load configuration from KV Store FIRST - sets config_loaded token when complete -->
-  <search id="load_config">
-    <query>| inputlookup ping_monitor_settings_lookup 
-| search _key="global" 
-| head 1
-| eval found="yes"
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", found="no"]
-| head 1
-| eval index=if(found=="yes", index, "ping")
-| eval sourcetype=if(found=="yes", sourcetype, "ping_monitor")
-| eval metrics_index=if(found=="yes", metrics_index, "ping_metrics")
-| fields index, sourcetype, metrics_index, found</query>
-    <earliest>-1m</earliest>
-    <latest>now</latest>
-    <done>
-      <set token="pm_index">$result.index$</set>
-      <set token="pm_sourcetype">$result.sourcetype$</set>
-      <set token="pm_metrics_index">$result.metrics_index$</set>
-      <set token="config_loaded">true</set>
-    </done>
-  </search>
-  
   <fieldset submitButton="false" autoRun="true">
+    <input type="text" token="pm_index" searchWhenChanged="true">
+      <label>Events Index</label>
+      <default>ping</default>
+    </input>
+    <input type="text" token="pm_sourcetype" searchWhenChanged="true">
+      <label>Events Sourcetype</label>
+      <default>ping_monitor</default>
+    </input>
+    <input type="text" token="pm_metrics_index" searchWhenChanged="true">
+      <label>Metrics Index</label>
+      <default>ping_metrics</default>
+    </input>
+
     <input type="dropdown" token="data_source" searchWhenChanged="true">
       <label>Data Source</label>
       <choice value="events">Events (Classic)</choice>
@@ -74,8 +71,13 @@
       <suffix>)</suffix>
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
-      <search base="load_config">
-        <query>| map maxsearches=1 search="search index=\"$result.index$\" sourcetype=\"$result.sourcetype$\" record_type=summary | stats count by group | fields group | sort group"</query>
+      <search>
+        <query>search index="$pm_index$" sourcetype="$pm_sourcetype$" record_type=summary
+| stats count by group
+| fields group
+| sort group</query>
+        <earliest>$time_range.earliest$</earliest>
+        <latest>$time_range.latest$</latest>
       </search>
       <change>
         <condition value="*">
@@ -97,8 +99,13 @@
       <suffix>)</suffix>
       <fieldForLabel>hostname</fieldForLabel>
       <fieldForValue>hostname</fieldForValue>
-      <search base="load_config">
-        <query>| map maxsearches=1 search="search index=\"$result.index$\" sourcetype=\"$result.sourcetype$\" record_type=summary | stats count by hostname | fields hostname | sort hostname"</query>
+      <search>
+        <query>search index="$pm_index$" sourcetype="$pm_sourcetype$" record_type=summary
+| stats count by hostname
+| fields hostname
+| sort hostname</query>
+        <earliest>$time_range.earliest$</earliest>
+        <latest>$time_range.latest$</latest>
       </search>
       <change>
         <condition value="*">
