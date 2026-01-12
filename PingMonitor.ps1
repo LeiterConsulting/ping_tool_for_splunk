@@ -278,6 +278,10 @@ function Invoke-PingEndpoint {
         hostname            = $Endpoint.hostname
         group               = $Endpoint.group
         description         = $Endpoint.description
+        entitytype          = $Endpoint.entitytype
+        device              = $Endpoint.device
+        vendor              = $Endpoint.vendor
+        additional_notes    = $Endpoint.additional_notes
         record_type         = "summary"
         pings_sent          = $Count
         pings_successful    = $successCount
