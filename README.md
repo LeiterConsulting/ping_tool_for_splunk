@@ -313,7 +313,7 @@ The app includes:
 For environments where you can't install apps:
 
 1. Copy `splunk/ping_dashboard.xml` to your Splunk dashboards
-2. Enter your index and sourcetype in the dashboard inputs
+2. Edit the XML to update the defaults for index, sourcetype, and metrics index
 3. Optionally install `splunk/macros.conf` for advanced queries
 
 ### Macros Installation (Optional)
@@ -543,3 +543,7 @@ MIT License — free to use, modify, and distribute.
 ---
 
 **v2.5.2** — Consistency update (docs + shipped views) for v2.5.1 features.
+
+---
+
+*Last updated: 0950 12 Jan 2026*

@@ -2,19 +2,12 @@
   <label>Ping Monitor Overview</label>
   <description>Enterprise network endpoint availability and latency monitoring - supports Events, Metrics, or Combined data sources</description>
   
-  <!-- Initialize UI state tokens only -->
   <init>
-    <!-- Standalone defaults (override via inputs below) -->
     <set token="pm_index">ping</set>
     <set token="pm_sourcetype">ping_monitor</set>
     <set token="pm_metrics_index">ping_metrics</set>
     <set token="config_loaded">true</set>
-
     <set token="show_events">true</set>
-    <set token="selected_groups">*</set>
-    <set token="selected_hosts">*</set>
-    <set token="selected_groups_metrics"></set>
-    <set token="selected_hosts_metrics"></set>
   </init>
   
   <fieldset submitButton="false" autoRun="true">
@@ -23,14 +16,13 @@
       <default>ping</default>
     </input>
     <input type="text" token="pm_sourcetype" searchWhenChanged="true">
-      <label>Events Sourcetype</label>
+      <label>Sourcetype</label>
       <default>ping_monitor</default>
     </input>
     <input type="text" token="pm_metrics_index" searchWhenChanged="true">
       <label>Metrics Index</label>
       <default>ping_metrics</default>
     </input>
-
     <input type="dropdown" token="data_source" searchWhenChanged="true">
       <label>Data Source</label>
       <choice value="events">Events (Classic)</choice>
@@ -62,61 +54,61 @@
         <latest>now</latest>
       </default>
     </input>
-    <input type="multiselect" token="selected_groups_raw" searchWhenChanged="true">
+    <input type="dropdown" token="group_filter" searchWhenChanged="true">
       <label>Group</label>
       <choice value="*">All Groups</choice>
       <default>*</default>
-      <delimiter> OR group=</delimiter>
-      <prefix>(group=</prefix>
-      <suffix>)</suffix>
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
-        <query>search index="$pm_index$" sourcetype="$pm_sourcetype$" record_type=summary
-| stats count by group
-| fields group
-| sort group</query>
-        <earliest>$time_range.earliest$</earliest>
-        <latest>$time_range.latest$</latest>
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| stats count by group | fields group | sort group</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
       </search>
-      <change>
-        <condition value="*">
-          <set token="selected_groups">*</set>
-          <set token="selected_groups_metrics"></set>
-        </condition>
-        <condition>
-          <set token="selected_groups">$selected_groups_raw$</set>
-          <set token="selected_groups_metrics">$selected_groups_raw$</set>
-        </condition>
-      </change>
     </input>
-    <input type="multiselect" token="selected_hosts_raw" searchWhenChanged="true">
+    <input type="text" token="hostname_filter" searchWhenChanged="true">
       <label>Hostname</label>
-      <choice value="*">All Hosts</choice>
       <default>*</default>
-      <delimiter> OR hostname=</delimiter>
-      <prefix>(hostname=</prefix>
-      <suffix>)</suffix>
-      <fieldForLabel>hostname</fieldForLabel>
-      <fieldForValue>hostname</fieldForValue>
+    </input>
+    <input type="dropdown" token="entitytype_filter" searchWhenChanged="true">
+      <label>Entity Type</label>
+      <choice value="*">All Types</choice>
+      <default>*</default>
+      <fieldForLabel>entitytype</fieldForLabel>
+      <fieldForValue>entitytype</fieldForValue>
       <search>
-        <query>search index="$pm_index$" sourcetype="$pm_sourcetype$" record_type=summary
-| stats count by hostname
-| fields hostname
-| sort hostname</query>
-        <earliest>$time_range.earliest$</earliest>
-        <latest>$time_range.latest$</latest>
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary entitytype=*
+| stats count by entitytype | fields entitytype | sort entitytype</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
       </search>
-      <change>
-        <condition value="*">
-          <set token="selected_hosts">*</set>
-          <set token="selected_hosts_metrics"></set>
-        </condition>
-        <condition>
-          <set token="selected_hosts">$selected_hosts_raw$</set>
-          <set token="selected_hosts_metrics">$selected_hosts_raw$</set>
-        </condition>
-      </change>
+    </input>
+    <input type="dropdown" token="device_filter" searchWhenChanged="true">
+      <label>Device</label>
+      <choice value="*">All Devices</choice>
+      <default>*</default>
+      <fieldForLabel>device</fieldForLabel>
+      <fieldForValue>device</fieldForValue>
+      <search>
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary device=*
+| stats count by device | fields device | sort device</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="dropdown" token="vendor_filter" searchWhenChanged="true">
+      <label>Vendor</label>
+      <choice value="*">All Vendors</choice>
+      <default>*</default>
+      <fieldForLabel>vendor</fieldForLabel>
+      <fieldForValue>vendor</fieldForValue>
+      <search>
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary vendor=*
+| stats count by vendor | fields vendor | sort vendor</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </search>
     </input>
   </fieldset>
 
@@ -126,9 +118,7 @@
       <html>
         <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
           <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
-          <span style="color: #fff; margin-left: 10px;">
-            $data_source|s$
-          </span>
+          <span style="color: #fff; margin-left: 10px;">$data_source|s$</span>
           <span style="color: #888; margin-left: 20px;">
             Events Index: <strong>$pm_index$</strong> | 
             Metrics Index: <strong>$pm_metrics_index$</strong>
@@ -141,12 +131,13 @@
   <!-- ==================== EVENTS MODE ==================== -->
   
   <!-- Row 1: Key Metrics - EVENTS MODE -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <single>
         <title>Total Endpoints</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats dc(target_ip) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -162,7 +153,8 @@
       <single>
         <title>Overall Availability</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
@@ -182,7 +174,8 @@
       <single>
         <title>Average Latency</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats avg(avg_latency_ms) as avg_latency
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
@@ -201,7 +194,8 @@
       <single>
         <title>Hosts with Issues</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss &gt; 0
 | stats count as hosts_with_issues</query>
@@ -218,12 +212,13 @@
   </row>
 
   <!-- Row 2: Availability Over Time - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Availability Over Time by Group</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | timechart span=5m avg(eval(100-packet_loss_pct)) as availability by group</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -241,12 +236,13 @@
   </row>
 
   <!-- Row 3: Latency Analysis - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Average Latency Over Time</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | timechart span=5m avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -264,7 +260,8 @@
       <title>Latency by Host - Top 20</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency by hostname
 | sort -avg_latency
 | head 20</query>
@@ -281,12 +278,13 @@
   </row>
 
   <!-- Row 4: Packet Loss - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Packet Loss Over Time</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | timechart span=5m avg(packet_loss_pct) as avg_packet_loss by hostname</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -304,7 +302,8 @@
       <title>Packet Loss Distribution</title>
       <chart>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval loss_bucket=case(
     packet_loss_pct==0, "0% (No Loss)",
     packet_loss_pct&gt;0 AND packet_loss_pct&lt;=25, "1-25%",
@@ -325,12 +324,13 @@
   </row>
 
   <!-- Row 5: Host Status Table - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Current Host Status</title>
       <table>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats latest(_time) as last_check_epoch,
         latest(packet_loss_pct) as packet_loss,
         latest(avg_latency_ms) as avg_latency,
@@ -375,12 +375,13 @@
   </row>
 
   <!-- Row 6: Group Summary - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Availability by Group</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats sum(pings_successful) as success, sum(pings_sent) as total by group
 | eval availability=round((success/total)*100, 2)
 | fields group, availability
@@ -400,7 +401,8 @@
       <title>Host Count by Group</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats dc(hostname) as host_count by group
 | sort -host_count</query>
           <earliest>$time_range.earliest$</earliest>
@@ -413,12 +415,13 @@
   </row>
 
   <!-- Row 7: Recent Ping Events - EVENTS -->
-  <row depends="$show_events$,$config_loaded$">
+  <row depends="$show_events$">
     <panel>
       <title>Recent Ping Events (Individual Pings)</title>
       <table>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=ping ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=ping
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval status_icon=if(status=="success", "✅", "❌")
 | eval latency_display=if(latency_ms&gt;0, latency_ms." ms", "N/A")
 | table timestamp, status_icon, hostname, target_ip, group, latency_display, ttl, error_message
@@ -437,12 +440,13 @@
   <!-- ==================== METRICS MODE ==================== -->
 
   <!-- Row 1: Key Metrics - METRICS MODE -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <single>
         <title>Total Endpoints (Metrics)</title>
         <search>
-          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname | stats dc(hostname) as total_endpoints</query>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
+| stats dc(hostname) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -457,7 +461,7 @@
       <single>
         <title>Overall Availability (Metrics)</title>
         <search>
-          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
           <earliest>$time_range.earliest$</earliest>
@@ -476,7 +480,7 @@
       <single>
         <title>Average Latency (Metrics)</title>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -494,7 +498,7 @@
       <single>
         <title>Hosts with Issues (Metrics)</title>
         <search>
-          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
 | where packet_loss &gt; 0
 | stats count as hosts_with_issues</query>
           <earliest>$time_range.earliest$</earliest>
@@ -510,12 +514,12 @@
   </row>
 
   <!-- Row 2: Availability Over Time - METRICS -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <title>Availability Over Time by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY group span=5m
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY group span=5m
 | eval availability=100-packet_loss
 | timechart span=5m values(availability) as availability by group</query>
           <earliest>$time_range.earliest$</earliest>
@@ -534,12 +538,12 @@
   </row>
 
   <!-- Row 3: Latency Analysis - METRICS -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <title>Average Latency Over Time (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ span=5m</query>
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ span=5m</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -556,7 +560,7 @@
       <title>Latency by Host - Top 20 (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency, max("ping.max_latency_ms") as max_latency, min("ping.min_latency_ms") as min_latency WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
 | sort -avg_latency
 | head 20</query>
           <earliest>$time_range.earliest$</earliest>
@@ -572,12 +576,12 @@
   </row>
 
   <!-- Row 4: Packet Loss - METRICS -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <title>Packet Loss Over Time (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname span=5m</query>
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname span=5m</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -594,7 +598,7 @@
       <title>Packet Loss Distribution (Metrics)</title>
       <chart>
         <search>
-            <query>| mstats avg("ping.packet_loss_pct") as packet_loss_pct WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss_pct WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
 | eval loss_bucket=case(
     packet_loss_pct==0, "0% (No Loss)",
     packet_loss_pct&gt;0 AND packet_loss_pct&lt;=25, "1-25%",
@@ -615,18 +619,18 @@
   </row>
 
   <!-- Row 5: Host Status Table - METRICS -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <title>Current Host Status (Metrics)</title>
       <table>
         <search>
-            <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
         latest("ping.avg_latency_ms") as avg_latency,
         latest("ping.min_latency_ms") as min_latency,
         latest("ping.max_latency_ms") as max_latency,
         latest("ping.pings_successful") as last_success,
         latest("ping.pings_sent") as last_sent
-        WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
+        WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
         BY hostname, target_ip, group
 | eval last_check=strftime(_time, "%Y-%m-%d %H:%M:%S")
 | eval status=case(
@@ -659,12 +663,12 @@
   </row>
 
   <!-- Row 6: Group Summary - METRICS -->
-  <row depends="$show_metrics$,$config_loaded$">
+  <row depends="$show_metrics$">
     <panel>
       <title>Availability by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY group
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY group
 | eval availability=round((success/total)*100, 2)
 | fields group, availability
 | sort -availability</query>
@@ -683,7 +687,8 @@
       <title>Host Count by Group (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname, group | stats dc(hostname) as host_count by group
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname, group
+| stats dc(hostname) as host_count by group
 | sort -host_count</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -695,10 +700,9 @@
   </row>
 
   <!-- ==================== COMBINED MODE ==================== -->
-  <!-- In Combined mode, we show both data sources on the same charts with clear labels -->
 
   <!-- Row 1: Key Metrics Side by Side - COMBINED -->
-  <row depends="$show_combined$,$config_loaded$">
+  <row depends="$show_combined$">
     <panel>
       <title>📊 Events vs Metrics Comparison</title>
       <html>
@@ -711,12 +715,13 @@
     </panel>
   </row>
 
-  <row depends="$show_combined$,$config_loaded$">
+  <row depends="$show_combined$">
     <panel>
       <single>
         <title>📋 Endpoints (Events)</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats dc(target_ip) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -732,7 +737,8 @@
       <single>
         <title>📈 Endpoints (Metrics)</title>
         <search>
-          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname | stats dc(hostname) as total_endpoints</query>
+          <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
+| stats dc(hostname) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
@@ -747,7 +753,8 @@
       <single>
         <title>📋 Availability (Events)</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
@@ -767,7 +774,7 @@
       <single>
         <title>📈 Availability (Metrics)</title>
         <search>
-          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
+          <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval availability=round((success/total)*100, 2)
 | fields availability</query>
           <earliest>$time_range.earliest$</earliest>
@@ -784,12 +791,13 @@
     </panel>
   </row>
 
-  <row depends="$show_combined$,$config_loaded$">
+  <row depends="$show_combined$">
     <panel>
       <single>
         <title>📋 Avg Latency (Events)</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats avg(avg_latency_ms) as avg_latency
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
@@ -808,7 +816,7 @@
       <single>
         <title>📈 Avg Latency (Metrics)</title>
         <search>
-          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$
+          <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | eval avg_latency=round(avg_latency, 2)</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -826,7 +834,8 @@
       <single>
         <title>📋 Hosts with Issues (Events)</title>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss &gt; 0
 | stats count as hosts_with_issues</query>
@@ -844,7 +853,7 @@
       <single>
         <title>📈 Hosts with Issues (Metrics)</title>
         <search>
-          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" $selected_groups_metrics$ $selected_hosts_metrics$ BY hostname
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$ BY hostname
 | where packet_loss &gt; 0
 | stats count as hosts_with_issues</query>
           <earliest>$time_range.earliest$</earliest>
@@ -859,13 +868,14 @@
     </panel>
   </row>
 
-  <!-- Row 2: Availability Over Time - COMBINED (overlay both on same chart) -->
-  <row depends="$show_combined$,$config_loaded$">
+  <!-- Row 2: Availability Over Time - COMBINED -->
+  <row depends="$show_combined$">
     <panel>
       <title>📊 Availability Over Time - Events vs Metrics Comparison</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | timechart span=5m avg(eval(100-packet_loss_pct)) as "Events Availability"
 | join type=outer _time [| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" span=5m | eval "Metrics Availability"=100-packet_loss | fields _time "Metrics Availability"]
 | fillnull value=0</query>
@@ -880,18 +890,18 @@
         <option name="charting.axisY.maximumNumber">100</option>
         <option name="charting.legend.placement">bottom</option>
         <option name="charting.drilldown">none</option>
-        <option name="charting.chart.showDataLabels">none</option>
       </chart>
     </panel>
   </row>
 
   <!-- Row 3: Latency Over Time - COMBINED -->
-  <row depends="$show_combined$,$config_loaded$">
+  <row depends="$show_combined$">
     <panel>
       <title>📊 Average Latency Over Time - Events vs Metrics Comparison</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$) avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | timechart span=5m avg(avg_latency_ms) as "Events Avg Latency", max(max_latency_ms) as "Events Max Latency"
 | join type=outer _time [| mstats avg("ping.avg_latency_ms") as "Metrics Avg Latency", max("ping.max_latency_ms") as "Metrics Max Latency" WHERE index="$pm_metrics_index$" span=5m | fields _time "Metrics Avg Latency" "Metrics Max Latency"]
 | fillnull value=0</query>
@@ -908,37 +918,14 @@
     </panel>
   </row>
 
-  <!-- Row 4: Packet Loss Over Time - COMBINED -->
-  <row depends="$show_combined$,$config_loaded$">
-    <panel>
-      <title>📊 Packet Loss Over Time - Events vs Metrics Comparison</title>
-      <chart>
-        <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
-| timechart span=5m avg(packet_loss_pct) as "Events Packet Loss"
-| join type=outer _time [| mstats avg("ping.packet_loss_pct") as "Metrics Packet Loss" WHERE index="$pm_metrics_index$" span=5m | fields _time "Metrics Packet Loss"]
-| fillnull value=0</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="charting.chart">line</option>
-        <option name="charting.chart.nullValueMode">zero</option>
-        <option name="charting.axisTitleX.text">Time</option>
-        <option name="charting.axisTitleY.text">Packet Loss (%)</option>
-        <option name="charting.axisY.minimumNumber">0</option>
-        <option name="charting.legend.placement">bottom</option>
-        <option name="charting.drilldown">none</option>
-      </chart>
-    </panel>
-  </row>
-
-  <!-- Row 5: Host Status Comparison Table - COMBINED -->
-  <row depends="$show_combined$,$config_loaded$">
+  <!-- Row 4: Host Status Comparison Table - COMBINED -->
+  <row depends="$show_combined$">
     <panel>
       <title>📊 Host Status Comparison - Events vs Metrics</title>
       <table>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats latest(packet_loss_pct) as events_loss, 
         latest(avg_latency_ms) as events_latency,
         latest(group) as group
@@ -960,8 +947,6 @@
 )]
 | eval events_latency=round(events_latency, 2)
 | eval metrics_latency=round(metrics_latency, 2)
-| eval diff_loss=events_loss - coalesce(metrics_loss, 0)
-| eval diff_latency=events_latency - coalesce(metrics_latency, 0)
 | eval match=if(events_status==metrics_status, "✓", "⚠️ Mismatch")
 | table hostname, target_ip, group, events_status, metrics_status, match, events_loss, metrics_loss, events_latency, metrics_latency
 | rename events_status as "Events Status", metrics_status as "Metrics Status", match as "Match", events_loss as "Events Loss %", metrics_loss as "Metrics Loss %", events_latency as "Events Latency (ms)", metrics_latency as "Metrics Latency (ms)"
@@ -976,13 +961,14 @@
     </panel>
   </row>
 
-  <!-- Row 6: Group Availability Comparison - COMBINED -->
-  <row depends="$show_combined$,$config_loaded$">
+  <!-- Row 5: Group Availability Comparison - COMBINED -->
+  <row depends="$show_combined$">
     <panel>
       <title>📊 Availability by Group - Events vs Metrics</title>
       <chart>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary ($selected_groups$) ($selected_hosts$)
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
 | stats sum(pings_successful) as success, sum(pings_sent) as total by group
 | eval events_availability=round((success/total)*100, 2)
 | fields group, events_availability
@@ -1013,6 +999,7 @@
 | append [| makeresults | eval source="Metrics", index="$pm_metrics_index$", sourcetype="N/A (mstats)"]
 | join type=outer source [
     search index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary 
+    | search group=$group_filter$ hostname=$hostname_filter$ entitytype=$entitytype_filter$ device=$device_filter$ vendor=$vendor_filter$
     | stats count as event_count, dc(hostname) as hosts 
     | eval source="Events"]
 | join type=outer source [
@@ -1026,43 +1013,6 @@
         </search>
         <option name="drilldown">none</option>
         <option name="count">5</option>
-      </table>
-    </panel>
-  </row>
-
-  <!-- Row 7: Hosts with Issues - COMBINED (showing issues from both sources) -->
-  <row depends="$show_combined$,$config_loaded$">
-    <panel>
-      <title>📊 Hosts with Issues - Combined View</title>
-      <table>
-        <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct&gt;0 ($selected_groups$) ($selected_hosts$)
-| stats latest(packet_loss_pct) as events_loss,
-        latest(avg_latency_ms) as events_latency,
-        latest(group) as group
-        by hostname, target_ip
-| eval source="Events"
-| append [| mstats latest("ping.packet_loss_pct") as metrics_loss,
-        latest("ping.avg_latency_ms") as metrics_latency
-        WHERE index="$pm_metrics_index$" BY hostname, target_ip, group
-| where metrics_loss &gt; 0
-| eval source="Metrics"
-| rename metrics_loss as events_loss, metrics_latency as events_latency]
-| eval status=case(
-    events_loss&gt;0 AND events_loss&lt;50, "⚠️ Degraded",
-    events_loss&gt;=50 AND events_loss&lt;100, "🔶 Critical",
-    events_loss==100, "❌ Down"
-)
-| eval events_latency=round(events_latency, 2)
-| table source, status, hostname, target_ip, group, events_loss, events_latency
-| rename source as "Source", status as "Status", events_loss as "Packet Loss %", events_latency as "Latency (ms)"
-| sort -"Packet Loss %"</query>
-          <earliest>$time_range.earliest$</earliest>
-          <latest>$time_range.latest$</latest>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="refresh.display">progressbar</option>
-        <option name="count">20</option>
       </table>
     </panel>
   </row>
