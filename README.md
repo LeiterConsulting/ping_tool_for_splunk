@@ -1,4 +1,4 @@
-# Splunk Ping Monitor v2.0
+# Splunk Ping Monitor v2.5.2
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
@@ -19,7 +19,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 ---
 
-## What's New in v2.0
+## What's New in v2.x
 
 ### 🎯 Flexible Event Volume Control
 Choose your output granularity:
@@ -48,6 +48,9 @@ The included Splunk dashboard automatically works with:
 - New metrics data (post-upgrade)
 - Mixed data during transition periods
 
+### 🧭 Splunk App (Setup + Drilldowns)
+The included Splunk app provides a KV Store-backed Setup screen and interactive drilldowns from the Overview dashboard.
+
 ---
 
 ## Editions
@@ -57,7 +60,7 @@ The included Splunk dashboard automatically works with:
 | 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor.ps1` | `config.psd1` |
 | 🐧 **Unix** | POSIX Shell | `ping_monitor.sh` | `config.conf` |
 
-Both editions produce identical JSON output and support the same features.
+Both editions share the same summary + enrichment schema. (Windows currently supports optional per-ping events; the Unix edition emits summary events by default.)
 
 ---
 
@@ -176,7 +179,7 @@ METRICS_ENABLED="false"
 METRICS_MODE="dual"
 METRICS_INDEX="ping_metrics"
 METRICS_HEC_URL="https://splunk:8088/services/collector"
-METRICS_TOKEN="your-token"
+METRICS_HEC_TOKEN="your-token"
 ```
 
 ---
@@ -187,8 +190,8 @@ METRICS_TOKEN="your-token"
 
 | Mode | Events/Cycle/Endpoint | Best For |
 |------|----------------------|----------|
-| **Full** (`emit_individual_pings=true`) | `pings + 1` (e.g., 5 for 4 pings) | Detailed troubleshooting |
-| **Summary-only** (`emit_individual_pings=false`) | `1` | Balanced monitoring |
+| **Full (Windows)** (`emit_individual_pings=true`) | `pings + 1` (e.g., 5 for 4 pings) | Detailed troubleshooting |
+| **Summary-only** (`emit_individual_pings=false`) | `1` | Balanced monitoring (default on Unix) |
 | **Metrics-only** (`metrics.mode="metrics_only"`) | `0` events, metrics only | Maximum efficiency |
 
 ### Event Reduction Math
@@ -287,13 +290,13 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 1. **Install the app**:
    ```
-   Upload ping_monitor-2.0.0.tar.gz via Splunk Web → Manage Apps → Install from File
+    Upload ping_monitor_app-2.5.2.tar.gz via Splunk Web → Manage Apps → Install from File
    ```
 
 2. **Run Setup**:
    - Navigate to **Ping Monitor → Setup**
    - Enter your index, sourcetype, and metrics index
-   - Click the search button to save
+    - Click **Save Configuration**
 
 3. **View Data**:
    - Navigate to **Ping Monitor → Ping Monitor Overview**
@@ -301,7 +304,6 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 The app includes:
 - **Ping Monitor Overview** - Main availability/latency dashboard
-- **Asset Discovery** - Find related data sources in Splunk
 - **Asset Health Correlation** - Enrich other data with ping health
 - **Setup Wizard** - First-run configuration (no XML editing required)
 - **Pre-built Alerts** - Down, packet loss, latency alerts (disabled by default)
@@ -314,9 +316,9 @@ For environments where you can't install apps:
 2. Enter your index and sourcetype in the dashboard inputs
 3. Optionally install `splunk/macros.conf` for advanced queries
 
-### Macros Installation (Optional - for Standalone Dashboard)
+### Macros Installation (Standalone Dashboard)
 
-The macros enable seamless queries across both event and metrics data. **This is required if you're using the dual-mode dashboard or transitioning from events to metrics.**
+The included standalone dashboard (`splunk/ping_dashboard.xml`) uses the dual-mode macros (events + metrics). Install these macros if you are using the standalone dashboard. (The Splunk app does not require these macros.)
 
 #### Option 1: Add to Search App (Quick)
 
@@ -351,8 +353,9 @@ label = Ping Monitor
 [launcher]
 author = Your Organization
 description = Network availability monitoring with dual-mode support
-version = 2.0.0
+version = 2.5.2
 EOF
+
 
 # Set permissions
 cat > $SPLUNK_HOME/etc/apps/ping_monitor/metadata/local.meta << 'EOF'
@@ -452,7 +455,7 @@ sudo ./install_unix.sh
 | `cycle_interval_seconds` | 60 | Seconds between cycles |
 | `timeout_ms` | 1000 | Ping timeout (ms) |
 | `parallel_threads` | 10 | Concurrent pings (Windows) |
-| `emit_individual_pings` | true | Emit per-ping events |
+| `emit_individual_pings` | true | Emit per-ping events (Windows) |
 
 ### HEC Settings
 
@@ -537,4 +540,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-**v2.0.0** — Cross-platform ping monitoring with event reduction, Splunk Metrics, and enrichment support.
+**v2.5.2** — Consistency update (docs + shipped views) for v2.5.1 features.

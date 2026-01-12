@@ -254,15 +254,6 @@
             </tr>
             <tr>
               <td style="width: 60px; vertical-align: top;">
-                <span style="font-size: 28px;">🔍</span>
-              </td>
-              <td>
-                <strong style="color: #6db7c6; font-size: 16px;">Discover Related Assets</strong>
-                <p style="color: #aaa; margin: 5px 0 0 0;">Use <strong>Asset Discovery</strong> to find other Splunk indexes that contain data about your monitored IP addresses and hostnames.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="width: 60px; vertical-align: top;">
                 <span style="font-size: 28px;">🔗</span>
               </td>
               <td>

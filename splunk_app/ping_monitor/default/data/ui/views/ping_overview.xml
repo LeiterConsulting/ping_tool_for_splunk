@@ -134,7 +134,7 @@
   <!-- ==================== DRILLDOWN PANELS ==================== -->
   <!-- These panels appear when user clicks on tiles, then can be dismissed -->
 
-  <!-- Drilldown: All Endpoints List (only shows when drilldown_panel=all_endpoints) -->
+  <!-- Drilldown: All Endpoints List -->
   <row depends="$show_events$,$config_loaded$">
     <panel depends="$drilldown_show_all_endpoints$">
       <title>📋 All Monitored Endpoints</title>
@@ -142,7 +142,6 @@
         <label></label>
         <choice value="close">✖ Close</choice>
         <change>
-          <unset token="drilldown_panel"/>
           <unset token="drilldown_show_all_endpoints"/>
           <unset token="close_drilldown"/>
         </change>
@@ -167,7 +166,7 @@
     </panel>
   </row>
 
-  <!-- Drilldown: Hosts with Issues (only shows when drilldown_panel=hosts_with_issues) -->
+  <!-- Drilldown: Hosts with Issues -->
   <row depends="$show_events$,$config_loaded$">
     <panel depends="$drilldown_show_hosts_issues$">
       <title>⚠️ Hosts with Issues</title>
@@ -175,7 +174,6 @@
         <label></label>
         <choice value="close">✖ Close</choice>
         <change>
-          <unset token="drilldown_panel"/>
           <unset token="drilldown_show_hosts_issues"/>
           <unset token="close_drilldown2"/>
         </change>

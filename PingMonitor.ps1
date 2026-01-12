@@ -26,7 +26,7 @@
 
 .NOTES
     Author: Splunk Ping Monitor
-    Version: 1.3.0
+    Version: 2.5.2
     Requires: PowerShell 7.4+ (no external modules - airgap friendly)
 #>
 
