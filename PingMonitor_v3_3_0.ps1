@@ -1,30 +1,41 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor v3.2.1 - Retry-safe HEC, reduced allocations, event_id for dedupe.
+    Splunk Ping Monitor v3.3.0 - Memory-optimized with reusable RunspacePool and persistent HEC buffer.
 
 .DESCRIPTION
     Pings endpoints from CSV, outputs to file (UF) or Splunk HEC, with optional metrics.
 
-    VERSION 3.2.1 CHANGELOG:
+    VERSION 3.3.0 CHANGELOG:
     ========================
-    ENHANCEMENT 1: Retry-safe HEC batching with bounded buffer
-      - New config keys: hec.batch_size, hec.drop_on_failure, hec.max_buffer_events,
-        hec.max_buffer_bytes, hec.retry.enabled/max_attempts/base_delay_ms/jitter_pct/backoff
-      - On flush failure with retry enabled: retries with exponential/fixed backoff
-      - hec.retry.max_attempts = TOTAL attempts including first try (must be >= 1)
-      - Buffer caps prevent unbounded memory growth; NEWEST events dropped when cap exceeded
-      - Convert-SizeToBytes helper parses "5MB" style strings
+    MEMORY OPTIMIZATION 1: Reusable RunspacePool across cycles
+      - RunspacePool is created ONCE at startup, not per-cycle
+      - Eliminates major source of handle/thread churn and GC pressure
+      - Pool is disposed only when script exits (finally block)
+      - Individual PowerShell instances still disposed after each endpoint completes
 
-    ENHANCEMENT 2: Reduced allocations in streaming loop
-      - Write-JsonLineToWriter and Add-EventToHecBuffer for single events
-      - Streaming loop emits individual list and summary directly without intermediate copy
-      - Same output, fewer allocations
+    MEMORY OPTIMIZATION 2: Persistent HEC buffer across cycles
+      - HecBuffer created once, reused across all cycles
+      - Enables true "retry across cycles" when drop_on_failure=false
+      - StringBuilder capacity reset after successful flush if > 1MB (prevents ratcheting)
+      - Buffer state (EventCount, BufferBytes, DroppedEvents) persists correctly
 
-    ENHANCEMENT 3: Per-event event_id for Splunk dedupe
-      - SHA256 hash of: collector_host|target_ip|record_type|timestamp[|ping_number]
-      - Uses collector host ($env:COMPUTERNAME), NOT target hostname
-      - Added to both ping and summary records; HEC envelope includes "id" field
+    MEMORY OPTIMIZATION 3: Diagnostics support
+      - New config: diagnostics.enabled (default false)
+      - Logs PM/WS/GC/Handles/Threads per cycle when enabled
+      - Low overhead: uses [GC]::GetTotalMemory($false) and Process stats
+
+    MEMORY OPTIMIZATION 4: Leak prevention
+      - activeRunspaces list explicitly cleared after processing
+      - No per-cycle collections escape their scope
+      - Test-MemoryStability helper for manual verification
+
+    VERSION 3.2.1 FEATURES (preserved):
+    ===================================
+    - Retry-safe HEC batching with bounded buffer
+    - Reduced allocations in streaming loop
+    - Per-event event_id for Splunk dedupe
+    - Detailed HEC error logging
 
     BACKWARD COMPATIBILITY: All existing config.psd1, endpoints.csv, event schemas preserved.
 
@@ -38,7 +49,7 @@
     Run single cycle and exit.
 
 .NOTES
-    Version: 3.2.1
+    Version: 3.3.0
     Requires: PowerShell 7.4+ (no external modules)
 #>
 
@@ -99,12 +110,13 @@ function Get-Configuration {
     if (-not (Test-Path $Path)) { throw "Configuration file not found: $Path" }
     $config = Import-PowerShellDataFile -Path $Path
 
-    # Defaults including new v3.2.0 HEC keys
+    # Defaults including new v3.2.0 HEC keys and v3.3.0 diagnostics
     $defaults = @{
         pings_per_cycle = 4; cycle_interval_seconds = 60; timeout_ms = 1000
         parallel_threads = 10; output_mode = "file"
         log_path = Join-Path $ScriptDir "logs\ping_results.log"
         log_rotation_size_mb = 50; emit_individual_pings = $true
+        diagnostics = @{ enabled = $false }  # v3.3.0: Memory diagnostics
         hec = @{
             enabled = $false; url = ""; token = ""; index = "main"
             sourcetype = "ping_monitor"; verify_ssl = $true; ssl_protocol = "Default"
@@ -143,6 +155,13 @@ function Get-Configuration {
             if (-not $config.metrics.ContainsKey($mk)) { $config.metrics[$mk] = $defaults.metrics[$mk] }
         }
     } else { $config['metrics'] = $defaults.metrics }
+
+    # Merge diagnostics defaults (v3.3.0)
+    if ($config.ContainsKey('diagnostics') -and $null -ne $config.diagnostics) {
+        foreach ($dk in $defaults.diagnostics.Keys) {
+            if (-not $config.diagnostics.ContainsKey($dk)) { $config.diagnostics[$dk] = $defaults.diagnostics[$dk] }
+        }
+    } else { $config['diagnostics'] = $defaults.diagnostics }
 
     # Validation
     if ($config.pings_per_cycle -lt 1) { $config.pings_per_cycle = 4 }
@@ -217,7 +236,7 @@ function Close-FileWriter {
 
 #endregion
 
-#region HEC Buffer with Retry (v3.2.0)
+#region HEC Buffer with Retry (v3.2.0, v3.3.0 memory optimizations)
 
 function Initialize-HecBuffer {
     param([hashtable]$HecConfig)
@@ -242,7 +261,23 @@ function Initialize-HecBuffer {
         RetryJitterPct = [int]$HecConfig.retry.jitter_pct
         RetryBackoff = $HecConfig.retry.backoff
         DroppedEvents = 0
+        # v3.3.0: Track StringBuilder capacity threshold for reset (1MB chars = ~2MB bytes)
+        BuilderCapacityThreshold = 1MB
     }
+}
+
+function Reset-HecBufferBuilder {
+    <# v3.3.0: Reset StringBuilder if capacity has grown too large to prevent memory ratcheting #>
+    param([hashtable]$Buffer)
+    $oldCapacity = $Buffer['Builder'].Capacity
+    if ($oldCapacity -gt $Buffer['BuilderCapacityThreshold']) {
+        $Buffer['Builder'] = [System.Text.StringBuilder]::new()
+        Write-Verbose "HEC buffer StringBuilder replaced (old capacity: $oldCapacity chars)"
+    } else {
+        [void]$Buffer['Builder'].Clear()
+    }
+    $Buffer['EventCount'] = 0
+    $Buffer['BufferBytes'] = 0
 }
 
 function Add-EventToHecBuffer {
@@ -365,10 +400,8 @@ function Flush-HecBuffer {
     }
 
     if ($success -or $Buffer['DropOnFailure']) {
-        # Clear buffer
-        [void]$Buffer['Builder'].Clear()
-        $Buffer['EventCount'] = 0
-        $Buffer['BufferBytes'] = 0
+        # v3.3.0: Use Reset-HecBufferBuilder to handle StringBuilder capacity management
+        Reset-HecBufferBuilder -Buffer $Buffer
     } else {
         # Keep for retry next cycle (capped by Add logic)
         Write-Warning "HEC flush failed after $attempts attempts. Retaining $eventCount events in buffer."
@@ -467,22 +500,30 @@ function Invoke-LogRotation {
 
 #endregion
 
-#region Streaming Parallel Ping
+#region Streaming Parallel Ping (v3.3.0: accepts reusable RunspacePool)
 
 function Invoke-StreamingParallelPing {
+    <#
+    .SYNOPSIS
+        Execute parallel pings using a shared RunspacePool (v3.3.0 memory optimization).
+    .DESCRIPTION
+        v3.3.0: RunspacePool is passed in rather than created per-cycle.
+        This eliminates handle/thread churn and significantly reduces memory growth.
+        Individual PowerShell instances are still disposed after each endpoint completes.
+    #>
     param(
         [System.Collections.Generic.List[PSCustomObject]]$Endpoints,
-        [int]$PingsPerCycle, [int]$TimeoutMs, [int]$ParallelThreads,
+        [int]$PingsPerCycle, [int]$TimeoutMs,
         [bool]$EmitIndividualPings, [bool]$EmitEventSummaries, [bool]$EmitMetrics,
         [System.IO.StreamWriter]$FileWriter, [hashtable]$HecBuffer,
-        [hashtable]$HecConfig, [hashtable]$MetricsConfig
+        [hashtable]$HecConfig, [hashtable]$MetricsConfig,
+        [System.Management.Automation.Runspaces.RunspacePool]$RunspacePool  # v3.3.0: Passed in, not created
     )
 
     $hostname = $env:COMPUTERNAME
     $stats = @{ TotalSuccess=0; TotalPartial=0; TotalFailed=0; HecBatchSuccessCount=0; HecBatchFailCount=0; HecEventCount=0; MetricsSuccessCount=0; MetricsFailCount=0 }
 
-    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $ParallelThreads)
-    $runspacePool.Open()
+    # v3.3.0: RunspacePool is now passed in; no creation here
     $activeRunspaces = [System.Collections.Generic.List[hashtable]]::new()
 
     # Worker scriptblock with event_id generation
@@ -573,9 +614,10 @@ function Invoke-StreamingParallelPing {
     }
 
     # Start runspaces - FIX 1: Pass $hostname (CollectorHost) to runspace for event_id
+    # v3.3.0: Use the passed-in RunspacePool instead of creating one
     foreach ($ep in $Endpoints) {
         $ps = [powershell]::Create()
-        $ps.RunspacePool = $runspacePool
+        $ps.RunspacePool = $RunspacePool
         [void]$ps.AddScript($pingScript).AddArgument($ep).AddArgument($PingsPerCycle).AddArgument($TimeoutMs).AddArgument($EmitIndividualPings).AddArgument($hostname)
         $activeRunspaces.Add(@{ PowerShell=$ps; Handle=$ps.BeginInvoke(); Endpoint=$ep })
     }
@@ -627,32 +669,69 @@ function Invoke-StreamingParallelPing {
                     }
                 }
             } catch { Write-Warning "Runspace error for $($rs.Endpoint.hostname): $($_.Exception.Message)"; $stats.TotalFailed++ }
-            finally { $rs.PowerShell.Dispose() }
+            finally { $rs.PowerShell.Dispose() }  # v3.3.0: Dispose individual PS instance, but NOT the pool
             $activeRunspaces.RemoveAt($idx)
         }
         if ($completed.Count -eq 0 -and $activeRunspaces.Count -gt 0) { Start-Sleep -Milliseconds 10 }
     }
 
-    $runspacePool.Close(); $runspacePool.Dispose()
+    # v3.3.0: Clear the list explicitly (leak prevention); do NOT close/dispose the pool here
+    $activeRunspaces.Clear()
     return $stats
 }
 
 #endregion
 
-#region Main Execution
+#region Main Execution (v3.3.0: Memory-optimized with reusable resources)
+
+function Get-MemoryDiagnostics {
+    <# v3.3.0: Get current memory/handle statistics for diagnostics output #>
+    $proc = [System.Diagnostics.Process]::GetCurrentProcess()
+    return @{
+        PM_MB = [math]::Round($proc.PrivateMemorySize64 / 1MB, 1)
+        WS_MB = [math]::Round($proc.WorkingSet64 / 1MB, 1)
+        GC_MB = [math]::Round([GC]::GetTotalMemory($false) / 1MB, 1)
+        Handles = $proc.HandleCount
+        Threads = $proc.Threads.Count
+    }
+}
+
+function Write-MemoryDiagnostics {
+    <# v3.3.0: Output compact memory diagnostics line #>
+    param([string]$Phase, [int]$CycleNum)
+    $m = Get-MemoryDiagnostics
+    Write-Host "MEM[$Phase #$CycleNum]: PM=$($m.PM_MB)MB WS=$($m.WS_MB)MB GC=$($m.GC_MB)MB Handles=$($m.Handles) Threads=$($m.Threads)" -ForegroundColor DarkGray
+}
 
 function Start-PingMonitor {
+    <#
+    .SYNOPSIS
+        Main monitoring loop with v3.3.0 memory optimizations.
+    .DESCRIPTION
+        v3.3.0 Memory Optimizations:
+        1. RunspacePool created ONCE and reused across all cycles (biggest win)
+        2. HecBuffer created ONCE and persists across cycles (enables true retry-across-cycles)
+        3. Diagnostics output when diagnostics.enabled = $true
+        4. Explicit resource cleanup in finally block
+        
+        Why this matters:
+        - RunspacePool creation allocates threads and handles that accumulate if created per-cycle
+        - StringBuilder.Clear() doesn't release capacity; we replace it if it grows too large
+        - Persistent HecBuffer allows failed batches to retry on next cycle (when drop_on_failure=false)
+    #>
     param([hashtable]$Config, [System.Collections.Generic.List[PSCustomObject]]$Endpoints, [switch]$RunOnce)
 
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor v3.2.1" -ForegroundColor Cyan
-    Write-Host "  (Retry HEC + event_id + low-alloc)" -ForegroundColor DarkCyan
+    Write-Host "  Splunk Ping Monitor v3.3.0" -ForegroundColor Cyan
+    Write-Host "  (Memory-optimized + Retry HEC)" -ForegroundColor DarkCyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Endpoints: $($Endpoints.Count) | Pings/cycle: $($Config.pings_per_cycle) | Interval: $($Config.cycle_interval_seconds)s"
     Write-Host "Output: $($Config.output_mode) | Metrics: $(if ($Config.metrics.enabled) { $Config.metrics.mode } else { 'disabled' })"
     if ($Config.hec.enabled -and $Config.hec.retry.enabled) {
         Write-Host "HEC Retry: enabled (max $($Config.hec.retry.max_attempts) attempts, $($Config.hec.retry.backoff) backoff)" -ForegroundColor DarkYellow
     }
+    $diagnosticsEnabled = $Config.diagnostics.enabled
+    if ($diagnosticsEnabled) { Write-Host "Diagnostics: enabled (memory stats per cycle)" -ForegroundColor DarkYellow }
     Write-Host "----------------------------------------" -ForegroundColor Gray
 
     $emitIndividual = $Config.emit_individual_pings
@@ -665,63 +744,90 @@ function Start-PingMonitor {
     }
 
     $hecValid = Test-HecConfiguration -HecConfig $Config.hec -WarnOnInvalid
+    $useHec = ($Config.output_mode -in @('hec','both')) -and $hecValid -and ($emitIndividual -or $emitSummaries)
+    $useFile = ($Config.output_mode -in @('file','both')) -and ($emitIndividual -or $emitSummaries)
+
+    # v3.3.0: Create RunspacePool ONCE, reuse across all cycles
+    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $Config.parallel_threads)
+    $runspacePool.Open()
+
+    # v3.3.0: Create HecBuffer ONCE if needed, persist across cycles for true retry-across-cycles
+    $hecBuffer = if ($useHec) { Initialize-HecBuffer -HecConfig $Config.hec } else { $null }
+
     $cycleCount = 0
 
-    do {
-        $cycleCount++
-        $cycleStart = Get-Date
-        Write-Host "`n[$cycleStart] Cycle #$cycleCount..." -ForegroundColor Cyan
+    try {
+        do {
+            $cycleCount++
+            $cycleStart = Get-Date
+            
+            # v3.3.0: Diagnostics at cycle start
+            if ($diagnosticsEnabled) { Write-MemoryDiagnostics -Phase "START" -CycleNum $cycleCount }
+            
+            Write-Host "`n[$cycleStart] Cycle #$cycleCount..." -ForegroundColor Cyan
 
-        $fileWriter = $null
-        $useFile = ($Config.output_mode -in @('file','both')) -and ($emitIndividual -or $emitSummaries)
-        if ($useFile) {
-            Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
-            try { $fileWriter = Open-FileWriter -LogPath $Config.log_path }
-            catch { Write-Warning "Failed to open log: $($_.Exception.Message)"; $useFile = $false }
-        }
+            $fileWriter = $null
+            if ($useFile) {
+                Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
+                try { $fileWriter = Open-FileWriter -LogPath $Config.log_path }
+                catch { Write-Warning "Failed to open log: $($_.Exception.Message)" }
+            }
 
-        $hecBuffer = $null
-        $useHec = ($Config.output_mode -in @('hec','both')) -and $hecValid -and ($emitIndividual -or $emitSummaries)
-        if ($useHec) { $hecBuffer = Initialize-HecBuffer -HecConfig $Config.hec }
+            $stats = $null
+            try {
+                # v3.3.0: Pass the shared RunspacePool instead of ParallelThreads
+                $stats = Invoke-StreamingParallelPing -Endpoints $Endpoints `
+                    -PingsPerCycle $Config.pings_per_cycle -TimeoutMs $Config.timeout_ms `
+                    -EmitIndividualPings $emitIndividual -EmitEventSummaries $emitSummaries -EmitMetrics $emitMetrics `
+                    -FileWriter $fileWriter -HecBuffer $hecBuffer -HecConfig $Config.hec -MetricsConfig $Config.metrics `
+                    -RunspacePool $runspacePool
+            } finally {
+                if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
+            }
 
-        $stats = $null
-        try {
-            $stats = Invoke-StreamingParallelPing -Endpoints $Endpoints `
-                -PingsPerCycle $Config.pings_per_cycle -TimeoutMs $Config.timeout_ms -ParallelThreads $Config.parallel_threads `
-                -EmitIndividualPings $emitIndividual -EmitEventSummaries $emitSummaries -EmitMetrics $emitMetrics `
-                -FileWriter $fileWriter -HecBuffer $hecBuffer -HecConfig $Config.hec -MetricsConfig $Config.metrics
-        } finally {
-            if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
+            # v3.3.0: Flush remaining HEC buffer events at end of cycle
             if ($null -ne $hecBuffer -and $hecBuffer['EventCount'] -gt 0) {
                 $fr = Flush-HecBuffer -Buffer $hecBuffer -HecConfig $Config.hec
-                # FIX 2: Count batch success/failure based on Success flag, not EventsFlushed
                 if ($null -ne $stats -and $fr.Flushed) {
                     if ($fr.Success) { $stats.HecBatchSuccessCount++ }
                     else { $stats.HecBatchFailCount++ }
                 }
             }
+
+            if ($null -eq $stats) { $stats = @{ TotalSuccess=0; TotalPartial=0; TotalFailed=$Endpoints.Count; HecBatchSuccessCount=0; HecBatchFailCount=0; HecEventCount=0; MetricsSuccessCount=0; MetricsFailCount=0 } }
+
+            if ($useFile -and $null -ne $fileWriter) { Write-Host "File: $($Config.log_path)" -ForegroundColor Green }
+            if ($useHec) {
+                $totalBatches = $stats.HecBatchSuccessCount + $stats.HecBatchFailCount
+                Write-Host "HEC: $($stats.HecEventCount) events, $totalBatches batches (OK=$($stats.HecBatchSuccessCount), Failed=$($stats.HecBatchFailCount))" -ForegroundColor $(if ($stats.HecBatchFailCount -eq 0) { "Green" } else { "Yellow" })
+                if ($hecBuffer -and $hecBuffer['DroppedEvents'] -gt 0) { Write-Host "HEC: $($hecBuffer['DroppedEvents']) events dropped (buffer cap)" -ForegroundColor Yellow }
+                # v3.3.0: Show retained events if any (for retry next cycle)
+                if ($hecBuffer -and $hecBuffer['EventCount'] -gt 0) { Write-Host "HEC: $($hecBuffer['EventCount']) events retained for retry" -ForegroundColor Yellow }
+            }
+            if ($emitMetrics) { Write-Host "Metrics: $($stats.MetricsSuccessCount) sent" -ForegroundColor Green }
+
+            Write-Host "Cycle #$cycleCount complete: Success=$($stats.TotalSuccess) Partial=$($stats.TotalPartial) Failed=$($stats.TotalFailed)" -ForegroundColor $(if ($stats.TotalFailed -eq 0) { "Green" } elseif ($stats.TotalFailed -lt $Endpoints.Count) { "Yellow" } else { "Red" })
+
+            # v3.3.0: Diagnostics at cycle end
+            if ($diagnosticsEnabled) { Write-MemoryDiagnostics -Phase "END" -CycleNum $cycleCount }
+
+            if (-not $RunOnce) {
+                $sleep = [math]::Max(0, $Config.cycle_interval_seconds - ((Get-Date) - $cycleStart).TotalSeconds)
+                if ($sleep -gt 0) { Write-Host "Sleeping $([math]::Round($sleep,1))s..." -ForegroundColor Gray; Start-Sleep -Seconds $sleep }
+            }
+        } while (-not $RunOnce)
+    }
+    finally {
+        # v3.3.0: Clean up shared resources on exit
+        Write-Host "`nCleaning up resources..." -ForegroundColor Gray
+        if ($null -ne $runspacePool) {
+            $runspacePool.Close()
+            $runspacePool.Dispose()
         }
+        # HecBuffer doesn't need explicit disposal (it's just a hashtable with a StringBuilder)
+    }
 
-        if ($null -eq $stats) { $stats = @{ TotalSuccess=0; TotalPartial=0; TotalFailed=$Endpoints.Count; HecBatchSuccessCount=0; HecBatchFailCount=0; HecEventCount=0; MetricsSuccessCount=0; MetricsFailCount=0 } }
-
-        if ($useFile) { Write-Host "File: $($Config.log_path)" -ForegroundColor Green }
-        if ($useHec) {
-            # FIX 5: Show both OK and failed batch counts for clarity
-            $totalBatches = $stats.HecBatchSuccessCount + $stats.HecBatchFailCount
-            Write-Host "HEC: $($stats.HecEventCount) events, $totalBatches batches (OK=$($stats.HecBatchSuccessCount), Failed=$($stats.HecBatchFailCount))" -ForegroundColor $(if ($stats.HecBatchFailCount -eq 0) { "Green" } else { "Yellow" })
-            if ($hecBuffer -and $hecBuffer['DroppedEvents'] -gt 0) { Write-Host "HEC: $($hecBuffer['DroppedEvents']) events dropped (buffer cap)" -ForegroundColor Yellow }
-        }
-        if ($emitMetrics) { Write-Host "Metrics: $($stats.MetricsSuccessCount) sent" -ForegroundColor Green }
-
-        Write-Host "Cycle #$cycleCount complete: Success=$($stats.TotalSuccess) Partial=$($stats.TotalPartial) Failed=$($stats.TotalFailed)" -ForegroundColor $(if ($stats.TotalFailed -eq 0) { "Green" } elseif ($stats.TotalFailed -lt $Endpoints.Count) { "Yellow" } else { "Red" })
-
-        if (-not $RunOnce) {
-            $sleep = [math]::Max(0, $Config.cycle_interval_seconds - ((Get-Date) - $cycleStart).TotalSeconds)
-            if ($sleep -gt 0) { Write-Host "Sleeping $([math]::Round($sleep,1))s..." -ForegroundColor Gray; Start-Sleep -Seconds $sleep }
-        }
-    } while (-not $RunOnce)
-
-    Write-Host "`nPing Monitor v3.2.1 completed." -ForegroundColor Cyan
+    Write-Host "Ping Monitor v3.3.0 completed." -ForegroundColor Cyan
 }
 
 #endregion
@@ -831,6 +937,136 @@ function Test-EventIdDeterminism {
     $id4 = Get-EventId -CollectorHost "COLLECTOR02" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
     if ($id1 -ne $id4) { Write-Host "PASS: Different collectors produce different IDs" -ForegroundColor Green }
     else { Write-Host "FAIL: Different collectors should produce different IDs" -ForegroundColor Red }
+}
+
+function Test-MemoryStability {
+    <#
+    .SYNOPSIS
+        v3.3.0: Run N quick cycles to verify memory doesn't grow unbounded.
+    .DESCRIPTION
+        Runs multiple ping cycles with a small endpoint set and short intervals,
+        printing memory diagnostics each cycle. Use this to verify that PM/WS/GC
+        remain stable (or grow only slightly) rather than increasing linearly.
+        
+        Expected behavior after v3.3.0 optimizations:
+        - Handles should remain roughly constant (no per-cycle growth)
+        - PM should stabilize after initial warmup (1-2 cycles)
+        - GC managed memory should fluctuate but not trend upward
+    .PARAMETER Cycles
+        Number of cycles to run (default: 10)
+    .PARAMETER IntervalSeconds
+        Seconds between cycles (default: 5)
+    .EXAMPLE
+        Test-MemoryStability -Cycles 20 -IntervalSeconds 3
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Cycles = 10,
+        [int]$IntervalSeconds = 5
+    )
+
+    Write-Host "=== Memory Stability Test (v3.3.0) ===" -ForegroundColor Cyan
+    Write-Host "Running $Cycles cycles with ${IntervalSeconds}s interval" -ForegroundColor Gray
+    Write-Host "Watch for: PM/WS should stabilize, Handles should not grow" -ForegroundColor Gray
+    Write-Host ""
+
+    # Create minimal test config
+    $testConfig = @{
+        pings_per_cycle = 2
+        cycle_interval_seconds = $IntervalSeconds
+        timeout_ms = 500
+        parallel_threads = 4
+        output_mode = "file"
+        log_path = Join-Path $env:TEMP "ping_mem_test.log"
+        log_rotation_size_mb = 10
+        emit_individual_pings = $false
+        diagnostics = @{ enabled = $true }
+        hec = @{ enabled = $false }
+        metrics = @{ enabled = $false }
+    }
+
+    # Create minimal endpoints (just localhost)
+    $testEndpoints = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $testEndpoints.Add([PSCustomObject]@{
+        ip = "127.0.0.1"; hostname = "localhost"; group = "test"
+        description = "loopback"; entitytype = "test"; device = "loopback"
+        vendor = ""; additional_notes = ""
+    })
+    # Add a few more to exercise parallelism
+    for ($i = 1; $i -le 3; $i++) {
+        $testEndpoints.Add([PSCustomObject]@{
+            ip = "127.0.0.$i"; hostname = "test$i"; group = "test"
+            description = "test endpoint"; entitytype = "test"; device = "virtual"
+            vendor = ""; additional_notes = ""
+        })
+    }
+
+    Write-Host "Endpoints: $($testEndpoints.Count) | Starting memory baseline..." -ForegroundColor Gray
+    $baseline = Get-MemoryDiagnostics
+    Write-Host "Baseline: PM=$($baseline.PM_MB)MB WS=$($baseline.WS_MB)MB Handles=$($baseline.Handles)" -ForegroundColor Yellow
+    Write-Host ""
+
+    # Create shared resources (simulating what Start-PingMonitor does)
+    $runspacePool = [runspacefactory]::CreateRunspacePool(1, $testConfig.parallel_threads)
+    $runspacePool.Open()
+
+    try {
+        for ($cycle = 1; $cycle -le $Cycles; $cycle++) {
+            $cycleStart = Get-Date
+            
+            # Run a ping cycle
+            $fileWriter = $null
+            try {
+                $fileWriter = Open-FileWriter -LogPath $testConfig.log_path
+                $stats = Invoke-StreamingParallelPing -Endpoints $testEndpoints `
+                    -PingsPerCycle $testConfig.pings_per_cycle -TimeoutMs $testConfig.timeout_ms `
+                    -EmitIndividualPings $false -EmitEventSummaries $true -EmitMetrics $false `
+                    -FileWriter $fileWriter -HecBuffer $null -HecConfig $testConfig.hec -MetricsConfig $testConfig.metrics `
+                    -RunspacePool $runspacePool
+            }
+            finally {
+                if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
+            }
+
+            # Memory stats
+            $m = Get-MemoryDiagnostics
+            $pmDelta = $m.PM_MB - $baseline.PM_MB
+            $handleDelta = $m.Handles - $baseline.Handles
+            $color = if ($pmDelta -gt 50 -or $handleDelta -gt 100) { "Red" } elseif ($pmDelta -gt 20 -or $handleDelta -gt 50) { "Yellow" } else { "Green" }
+            Write-Host "Cycle $cycle/$Cycles : PM=$($m.PM_MB)MB (+$pmDelta) WS=$($m.WS_MB)MB GC=$($m.GC_MB)MB Handles=$($m.Handles) (+$handleDelta)" -ForegroundColor $color
+
+            # Brief sleep (don't wait full interval for testing)
+            if ($cycle -lt $Cycles) {
+                Start-Sleep -Seconds ([math]::Min($IntervalSeconds, 2))
+            }
+        }
+    }
+    finally {
+        $runspacePool.Close()
+        $runspacePool.Dispose()
+    }
+
+    # Final comparison
+    $final = Get-MemoryDiagnostics
+    Write-Host ""
+    Write-Host "=== Summary ===" -ForegroundColor Cyan
+    Write-Host "Start:  PM=$($baseline.PM_MB)MB Handles=$($baseline.Handles)"
+    Write-Host "Final:  PM=$($final.PM_MB)MB Handles=$($final.Handles)"
+    Write-Host "Delta:  PM=+$($final.PM_MB - $baseline.PM_MB)MB Handles=+$($final.Handles - $baseline.Handles)"
+    
+    $pmGrowth = $final.PM_MB - $baseline.PM_MB
+    $handleGrowth = $final.Handles - $baseline.Handles
+    if ($pmGrowth -lt 30 -and $handleGrowth -lt 20) {
+        Write-Host "PASS: Memory growth is within acceptable limits" -ForegroundColor Green
+    } elseif ($pmGrowth -lt 100 -and $handleGrowth -lt 100) {
+        Write-Host "WARN: Memory growth is elevated but may be acceptable" -ForegroundColor Yellow
+    } else {
+        Write-Host "FAIL: Significant memory growth detected - investigate leaks" -ForegroundColor Red
+    }
+
+    # Cleanup test file
+    if (Test-Path $testConfig.log_path) { Remove-Item $testConfig.log_path -Force -ErrorAction SilentlyContinue }
+    Write-Host "=== Test Complete ===" -ForegroundColor Green
 }
 
 #endregion
