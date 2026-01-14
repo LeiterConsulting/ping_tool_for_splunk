@@ -256,15 +256,13 @@ function Add-EventToHecBuffer {
         [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     }
 
-    # Build HEC envelope with event_id for dedupe
-    $eventId = $Event.event_id
+    # Build HEC envelope (event_id is inside event payload for search-time dedupe)
     $hecEvent = [ordered]@{
         time = $unixTime
         host = $Hostname; source = "ping_monitor"
         sourcetype = $HecConfig.sourcetype; index = $HecConfig.index
+        event = $Event
     }
-    if ($eventId) { $hecEvent['id'] = $eventId }  # HEC-level dedupe
-    $hecEvent['event'] = $Event
 
     $eventJson = $hecEvent | ConvertTo-Json -Compress -Depth 5
     $eventBytes = [System.Text.Encoding]::UTF8.GetByteCount($eventJson) + 1  # +1 for newline
@@ -316,7 +314,25 @@ function Invoke-HecPost {
     if (-not $HecConfig.verify_ssl) { $splat['SkipCertificateCheck'] = $true }
     if ($HecConfig.ssl_protocol -and $HecConfig.ssl_protocol -ne 'Default') { $splat['SslProtocol'] = $HecConfig.ssl_protocol }
     try { Invoke-RestMethod @splat | Out-Null; return $true }
-    catch { return $false }
+    catch {
+        $errorMessage = $_.Exception.Message
+        # Try to extract HEC response body for better diagnostics
+        try {
+            if ($_.Exception.Response) {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $responseBody = $reader.ReadToEnd()
+                    $reader.Dispose()
+                    if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
+                        $errorMessage = "$errorMessage | HEC response: $responseBody"
+                    }
+                }
+            }
+        } catch { }
+        Write-Warning "HEC POST failed: $errorMessage"
+        return $false
+    }
 }
 
 function Flush-HecBuffer {
@@ -412,7 +428,26 @@ function Send-ToMetricsSink {
     $splat = @{ Uri = $MetricsConfig.hec_url; Method = "POST"; Headers = $headers; Body = $body; TimeoutSec = 5; ErrorAction = "Stop" }
     if (-not $MetricsConfig.verify_ssl) { $splat['SkipCertificateCheck'] = $true }
     if ($MetricsConfig.ssl_protocol -and $MetricsConfig.ssl_protocol -ne 'Default') { $splat['SslProtocol'] = $MetricsConfig.ssl_protocol }
-    try { Invoke-RestMethod @splat | Out-Null; return $true } catch { return $false }
+    try { Invoke-RestMethod @splat | Out-Null; return $true }
+    catch {
+        $errorMessage = $_.Exception.Message
+        # Try to extract HEC response body for better diagnostics
+        try {
+            if ($_.Exception.Response) {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $responseBody = $reader.ReadToEnd()
+                    $reader.Dispose()
+                    if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
+                        $errorMessage = "$errorMessage | HEC response: $responseBody"
+                    }
+                }
+            }
+        } catch { }
+        Write-Warning "Metrics POST failed: $errorMessage"
+        return $false
+    }
 }
 
 #endregion

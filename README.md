@@ -1,4 +1,4 @@
-# Splunk Ping Monitor v2.7.1
+# Splunk Ping Monitor v3.2.1
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
@@ -16,6 +16,43 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 | **Long-term retention** | Native Splunk Metrics support for efficient time-series storage |
 | **Mixed historical data** | Dual-mode dashboard queries work across events and metrics seamlessly |
 | **Custom metadata** | Enrich endpoints with entity type, vendor, device role, and notes |
+| **Network reliability** | HEC retry with backoff handles transient failures gracefully |
+
+---
+
+## What's New in v3.x
+
+### 🔄 Retry-Safe HEC Batching (v3.2.x)
+Robust HEC delivery with configurable retry logic:
+- **Automatic batching** with configurable batch size
+- **Retry with backoff** (exponential or fixed) on transient failures
+- **Buffer caps** prevent unbounded memory growth
+- **Drop-newest policy** when buffer is full (protects older data)
+
+```powershell
+hec = @{
+    batch_size = 100
+    max_buffer_events = 5000
+    max_buffer_bytes = "5MB"
+    retry = @{
+        enabled = $true
+        max_attempts = 3      # Total attempts (not retries)
+        base_delay_ms = 250
+        jitter_pct = 20
+        backoff = "exponential"  # or "fixed"
+    }
+}
+```
+
+### 🆔 Event Deduplication Support (v3.2.x)
+Deterministic `event_id` field for Splunk deduplication:
+- SHA256 hash of: `collector_host|target_ip|record_type|timestamp[|ping_number]`
+- Use `| dedup event_id` in searches to eliminate duplicates from retries
+- Consistent across script restarts
+
+### ⚡ Reduced Memory Allocations (v3.2.x)
+- Streaming event emission without intermediate copies
+- Lower GC pressure for high-endpoint deployments
 
 ---
 
@@ -66,7 +103,7 @@ The included Splunk app provides a KV Store-backed Setup screen and interactive 
 
 | Edition | Platform | Script | Config |
 |---------|----------|--------|--------|
-| 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor.ps1` | `config.psd1` |
+| 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor_v3_2_1.ps1` | `config.psd1` |
 | 🐧 **Unix** | POSIX Shell | `ping_monitor.sh` | `config.conf` |
 
 Both editions share the same summary + enrichment schema. (Windows currently supports optional per-ping events; the Unix edition emits summary events by default.)
@@ -82,10 +119,10 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 notepad endpoints.csv
 
 # 2. Test run
-pwsh -File .\PingMonitor.ps1 -RunOnce
+pwsh -File .\PingMonitor_v3_2_1.ps1 -RunOnce
 
 # 3. Run continuously
-pwsh -File .\PingMonitor.ps1
+pwsh -File .\PingMonitor_v3_2_1.ps1
 ```
 
 ### Unix/Linux/macOS
@@ -141,7 +178,7 @@ ip,hostname,group,description,entitytype,device,vendor,additional_notes
     output_mode = "file"
     log_path = "./logs/ping_results.log"
     
-    # Splunk HEC (direct ingestion)
+    # Splunk HEC (direct ingestion) with retry support
     hec = @{
         enabled = $false
         url = "https://splunk:8088/services/collector/event"
@@ -150,6 +187,19 @@ ip,hostname,group,description,entitytype,device,vendor,additional_notes
         sourcetype = "ping_monitor"
         verify_ssl = $true
         ssl_protocol = "Tls12"
+        
+        # v3.2+ batching and retry
+        batch_size = 100
+        drop_on_failure = $true
+        max_buffer_events = 5000
+        max_buffer_bytes = "5MB"
+        retry = @{
+            enabled = $true
+            max_attempts = 3
+            base_delay_ms = 250
+            jitter_pct = 20
+            backoff = "exponential"
+        }
     }
     
     # Splunk Metrics (high-efficiency storage)
@@ -552,6 +602,14 @@ MIT License — free to use, modify, and distribute.
 ---
 
 ## Changelog
+
+**v3.2.1** — HEC reliability and correctness fixes
+- Retry-safe HEC batching with configurable retry/backoff
+- Buffer caps with drop-newest policy (prevents memory bloat)
+- Deterministic `event_id` for search-time deduplication
+- Reduced memory allocations in streaming loop
+- Enhanced error logging with HEC response details
+- Fixed batch counting logic for accurate reporting
 
 **v2.7.1** — Multi-word filter support
 - Dashboard filters now correctly handle values with spaces (e.g., "Network Printers", "Palo Alto")
