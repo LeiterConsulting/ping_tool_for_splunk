@@ -38,6 +38,11 @@ documentation/
 # Test suite and artifacts (not shipped)
 tests/
 
-
 # Future feature ideas
 future_features/
+# Archived/obsolete versions
+ping_monitor_app-2.6.0/
+PingMonitor_v3_2_1.ps1
+
+# VS Code workspace file
+Ping Tool for Splunk.code-workspace
