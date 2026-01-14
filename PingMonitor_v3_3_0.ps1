@@ -1,13 +1,32 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor v3.3.0 - Memory-optimized with reusable RunspacePool and persistent HEC buffer.
+    Splunk Ping Monitor v3.3.1 - Handle leak fix and improved diagnostics.
 
 .DESCRIPTION
     Pings endpoints from CSV, outputs to file (UF) or Splunk HEC, with optional metrics.
 
-    VERSION 3.3.0 CHANGELOG:
+    VERSION 3.3.1 CHANGELOG:
     ========================
+    HANDLE LEAK FIX: Dispose AsyncWaitHandle from BeginInvoke()
+      - BeginInvoke() returns IAsyncResult with an OS WaitHandle (AsyncWaitHandle)
+      - Previously only PowerShell instance was disposed, not the WaitHandle
+      - This caused per-cycle handle accumulation and memory pressure
+      - Fix: Dispose AsyncWaitHandle in finally block after EndInvoke()
+      - Also nullify references to help GC
+
+    DIAGNOSTICS IMPROVEMENT: Baseline and delta reporting
+      - Captures baseline memory stats at cycle #1 start
+      - Reports deltas (change from baseline) each cycle
+      - Format: PM=X.XMB (+Y.Y) Handles=N (+M)
+      - Easier to spot trends and validate stability
+
+    HARDENING: Response stream disposal in error handlers
+      - Invoke-HecPost and Send-ToMetricsSink now use try/finally for stream cleanup
+      - Prevents handle leaks from HTTP error response reading
+
+    VERSION 3.3.0 FEATURES (preserved):
+    ===================================
     MEMORY OPTIMIZATION 1: Reusable RunspacePool across cycles
       - RunspacePool is created ONCE at startup, not per-cycle
       - Eliminates major source of handle/thread churn and GC pressure
@@ -49,7 +68,7 @@
     Run single cycle and exit.
 
 .NOTES
-    Version: 3.3.0
+    Version: 3.3.1
     Requires: PowerShell 7.4+ (no external modules)
 #>
 
@@ -62,6 +81,9 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+
+# v3.3.1: Script-scope baseline for diagnostics delta reporting
+$script:MemoryBaseline = $null
 
 $ScriptDir = $PSScriptRoot
 if ([string]::IsNullOrEmpty($ScriptDir)) { $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
@@ -352,19 +374,26 @@ function Invoke-HecPost {
     catch {
         $errorMessage = $_.Exception.Message
         # Try to extract HEC response body for better diagnostics
+        # v3.3.1: Use try/finally to ensure stream and reader disposal (handle leak prevention)
+        $stream = $null
+        $reader = $null
         try {
             if ($_.Exception.Response) {
                 $stream = $_.Exception.Response.GetResponseStream()
-                if ($stream) {
+                if ($null -ne $stream) {
                     $reader = [System.IO.StreamReader]::new($stream)
                     $responseBody = $reader.ReadToEnd()
-                    $reader.Dispose()
                     if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
                         $errorMessage = "$errorMessage | HEC response: $responseBody"
                     }
                 }
             }
-        } catch { }
+        }
+        catch { }
+        finally {
+            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+        }
         Write-Warning "HEC POST failed: $errorMessage"
         return $false
     }
@@ -465,19 +494,26 @@ function Send-ToMetricsSink {
     catch {
         $errorMessage = $_.Exception.Message
         # Try to extract HEC response body for better diagnostics
+        # v3.3.1: Use try/finally to ensure stream and reader disposal (handle leak prevention)
+        $stream = $null
+        $reader = $null
         try {
             if ($_.Exception.Response) {
                 $stream = $_.Exception.Response.GetResponseStream()
-                if ($stream) {
+                if ($null -ne $stream) {
                     $reader = [System.IO.StreamReader]::new($stream)
                     $responseBody = $reader.ReadToEnd()
-                    $reader.Dispose()
                     if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
                         $errorMessage = "$errorMessage | HEC response: $responseBody"
                     }
                 }
             }
-        } catch { }
+        }
+        catch { }
+        finally {
+            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+        }
         Write-Warning "Metrics POST failed: $errorMessage"
         return $false
     }
@@ -669,7 +705,23 @@ function Invoke-StreamingParallelPing {
                     }
                 }
             } catch { Write-Warning "Runspace error for $($rs.Endpoint.hostname): $($_.Exception.Message)"; $stats.TotalFailed++ }
-            finally { $rs.PowerShell.Dispose() }  # v3.3.0: Dispose individual PS instance, but NOT the pool
+            finally {
+                # v3.3.1: Dispose the AsyncWaitHandle created by BeginInvoke() to prevent handle accumulation
+                # This is the PRIMARY fix for per-cycle handle growth. The IAsyncResult.AsyncWaitHandle
+                # is an OS WaitHandle that must be explicitly disposed.
+                try {
+                    if ($null -ne $rs.Handle -and $null -ne $rs.Handle.AsyncWaitHandle) {
+                        $rs.Handle.AsyncWaitHandle.Dispose()
+                    }
+                } catch { }
+
+                # Dispose the PowerShell instance (but NOT the shared RunspacePool)
+                try { $rs.PowerShell.Dispose() } catch { }
+
+                # Nullify references to help GC and prevent accidental reuse
+                $rs.Handle = $null
+                $rs.PowerShell = $null
+            }
             $activeRunspaces.RemoveAt($idx)
         }
         if ($completed.Count -eq 0 -and $activeRunspaces.Count -gt 0) { Start-Sleep -Milliseconds 10 }
@@ -697,10 +749,36 @@ function Get-MemoryDiagnostics {
 }
 
 function Write-MemoryDiagnostics {
-    <# v3.3.0: Output compact memory diagnostics line #>
+    <#
+    .SYNOPSIS
+        v3.3.1: Output compact memory diagnostics line with baseline delta tracking.
+    .DESCRIPTION
+        Captures baseline on first call (cycle #1 START), then reports both
+        absolute values and deltas from baseline. This makes it easy to spot
+        trends and verify that handles/memory stabilize after warm-up.
+    #>
     param([string]$Phase, [int]$CycleNum)
     $m = Get-MemoryDiagnostics
-    Write-Host "MEM[$Phase #$CycleNum]: PM=$($m.PM_MB)MB WS=$($m.WS_MB)MB GC=$($m.GC_MB)MB Handles=$($m.Handles) Threads=$($m.Threads)" -ForegroundColor DarkGray
+
+    # Capture baseline on first invocation
+    if ($null -eq $script:MemoryBaseline) {
+        $script:MemoryBaseline = $m.Clone()
+    }
+
+    # Calculate deltas from baseline
+    $dPM = $m.PM_MB - $script:MemoryBaseline.PM_MB
+    $dWS = $m.WS_MB - $script:MemoryBaseline.WS_MB
+    $dGC = $m.GC_MB - $script:MemoryBaseline.GC_MB
+    $dHandles = $m.Handles - $script:MemoryBaseline.Handles
+    $dThreads = $m.Threads - $script:MemoryBaseline.Threads
+
+    # Format delta strings with sign
+    $fmtDelta = { param($v) if ($v -ge 0) { "+$v" } else { "$v" } }
+
+    # Output format: MEM[PHASE #N]: PM=X.XMB (+Y.Y) WS=... Handles=N (+M) Threads=T (+D)
+    Write-Host ("MEM[$Phase #$CycleNum]: PM=$($m.PM_MB)MB ($(& $fmtDelta $dPM)) " +
+        "WS=$($m.WS_MB)MB ($(& $fmtDelta $dWS)) GC=$($m.GC_MB)MB ($(& $fmtDelta $dGC)) " +
+        "Handles=$($m.Handles) ($(& $fmtDelta $dHandles)) Threads=$($m.Threads) ($(& $fmtDelta $dThreads))") -ForegroundColor DarkGray
 }
 
 function Start-PingMonitor {
@@ -722,8 +800,8 @@ function Start-PingMonitor {
     param([hashtable]$Config, [System.Collections.Generic.List[PSCustomObject]]$Endpoints, [switch]$RunOnce)
 
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor v3.3.0" -ForegroundColor Cyan
-    Write-Host "  (Memory-optimized + Retry HEC)" -ForegroundColor DarkCyan
+    Write-Host "  Splunk Ping Monitor v3.3.1" -ForegroundColor Cyan
+    Write-Host "  (Handle leak fix + Delta diagnostics)" -ForegroundColor DarkCyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Endpoints: $($Endpoints.Count) | Pings/cycle: $($Config.pings_per_cycle) | Interval: $($Config.cycle_interval_seconds)s"
     Write-Host "Output: $($Config.output_mode) | Metrics: $(if ($Config.metrics.enabled) { $Config.metrics.mode } else { 'disabled' })"
@@ -731,7 +809,11 @@ function Start-PingMonitor {
         Write-Host "HEC Retry: enabled (max $($Config.hec.retry.max_attempts) attempts, $($Config.hec.retry.backoff) backoff)" -ForegroundColor DarkYellow
     }
     $diagnosticsEnabled = $Config.diagnostics.enabled
-    if ($diagnosticsEnabled) { Write-Host "Diagnostics: enabled (memory stats per cycle)" -ForegroundColor DarkYellow }
+    if ($diagnosticsEnabled) {
+        Write-Host "Diagnostics: enabled (memory stats with delta tracking)" -ForegroundColor DarkYellow
+        # v3.3.1: Reset baseline for fresh delta tracking each run
+        $script:MemoryBaseline = $null
+    }
     Write-Host "----------------------------------------" -ForegroundColor Gray
 
     $emitIndividual = $Config.emit_individual_pings
@@ -827,7 +909,7 @@ function Start-PingMonitor {
         # HecBuffer doesn't need explicit disposal (it's just a hashtable with a StringBuilder)
     }
 
-    Write-Host "Ping Monitor v3.3.0 completed." -ForegroundColor Cyan
+    Write-Host "Ping Monitor v3.3.1 completed." -ForegroundColor Cyan
 }
 
 #endregion
@@ -948,8 +1030,8 @@ function Test-MemoryStability {
         printing memory diagnostics each cycle. Use this to verify that PM/WS/GC
         remain stable (or grow only slightly) rather than increasing linearly.
         
-        Expected behavior after v3.3.0 optimizations:
-        - Handles should remain roughly constant (no per-cycle growth)
+        Expected behavior after v3.3.1 fix:
+        - Handles should remain stable (AsyncWaitHandle disposal prevents growth)
         - PM should stabilize after initial warmup (1-2 cycles)
         - GC managed memory should fluctuate but not trend upward
     .PARAMETER Cycles
@@ -965,7 +1047,7 @@ function Test-MemoryStability {
         [int]$IntervalSeconds = 5
     )
 
-    Write-Host "=== Memory Stability Test (v3.3.0) ===" -ForegroundColor Cyan
+    Write-Host "=== Memory Stability Test (v3.3.1) ===" -ForegroundColor Cyan
     Write-Host "Running $Cycles cycles with ${IntervalSeconds}s interval" -ForegroundColor Gray
     Write-Host "Watch for: PM/WS should stabilize, Handles should not grow" -ForegroundColor Gray
     Write-Host ""
@@ -1002,6 +1084,8 @@ function Test-MemoryStability {
     }
 
     Write-Host "Endpoints: $($testEndpoints.Count) | Starting memory baseline..." -ForegroundColor Gray
+    # v3.3.1: Reset script baseline for fresh delta tracking in this test
+    $script:MemoryBaseline = $null
     $baseline = Get-MemoryDiagnostics
     Write-Host "Baseline: PM=$($baseline.PM_MB)MB WS=$($baseline.WS_MB)MB Handles=$($baseline.Handles)" -ForegroundColor Yellow
     Write-Host ""

@@ -180,4 +180,14 @@
         # SSL protocol for metrics HEC
         ssl_protocol = "Default"
     }
+
+    # ----------------------------------------
+    # DIAGNOSTICS SETTINGS (v3.3.1)
+    # ----------------------------------------
+    diagnostics = @{
+        # Enable memory/handle diagnostics output per cycle
+        # Shows PM, WS, GC, Handles, Threads with deltas from baseline
+        # Useful for detecting memory leaks; disable in production for cleaner logs
+        enabled = $true
+    }
 }
