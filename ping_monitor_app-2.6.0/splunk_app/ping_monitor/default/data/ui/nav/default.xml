@@ -1,0 +1,12 @@
+<nav color="#5cc05c">
+  <view name="ping_overview" default="true"/>
+  <view name="asset_correlation"/>
+  <view name="setup"/>
+  <collection label="Reports">
+    <saved source="unclassified" match="Ping Monitor"/>
+  </collection>
+  <collection label="Help">
+    <a href="/app/ping_monitor/setup">Run Setup Wizard</a>
+    <a href="https://github.com/LeiterConsulting/ping_tool_for_splunk" target="_blank">GitHub Repository</a>
+  </collection>
+</nav>

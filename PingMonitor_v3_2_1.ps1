@@ -1,18 +1,19 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor v3.2.0 - Retry-safe HEC, reduced allocations, event_id for dedupe.
+    Splunk Ping Monitor v3.2.1 - Retry-safe HEC, reduced allocations, event_id for dedupe.
 
 .DESCRIPTION
     Pings endpoints from CSV, outputs to file (UF) or Splunk HEC, with optional metrics.
 
-    VERSION 3.2.0 CHANGELOG:
+    VERSION 3.2.1 CHANGELOG:
     ========================
     ENHANCEMENT 1: Retry-safe HEC batching with bounded buffer
       - New config keys: hec.batch_size, hec.drop_on_failure, hec.max_buffer_events,
         hec.max_buffer_bytes, hec.retry.enabled/max_attempts/base_delay_ms/jitter_pct/backoff
       - On flush failure with retry enabled: retries with exponential/fixed backoff
-      - Buffer caps prevent unbounded memory growth; oldest events dropped when exceeded
+      - hec.retry.max_attempts = TOTAL attempts including first try (must be >= 1)
+      - Buffer caps prevent unbounded memory growth; NEWEST events dropped when cap exceeded
       - Convert-SizeToBytes helper parses "5MB" style strings
 
     ENHANCEMENT 2: Reduced allocations in streaming loop
@@ -21,9 +22,9 @@
       - Same output, fewer allocations
 
     ENHANCEMENT 3: Per-event event_id for Splunk dedupe
-      - SHA256 hash of: hostname|target_ip|record_type|timestamp[|ping_number]
-      - Added to both ping and summary records
-      - HEC envelope includes "id" field for Splunk deduplication
+      - SHA256 hash of: collector_host|target_ip|record_type|timestamp[|ping_number]
+      - Uses collector host ($env:COMPUTERNAME), NOT target hostname
+      - Added to both ping and summary records; HEC envelope includes "id" field
 
     BACKWARD COMPATIBILITY: All existing config.psd1, endpoints.csv, event schemas preserved.
 
@@ -37,7 +38,7 @@
     Run single cycle and exit.
 
 .NOTES
-    Version: 3.2.0
+    Version: 3.2.1
     Requires: PowerShell 7.4+ (no external modules)
 #>
 
@@ -58,10 +59,12 @@ if ([string]::IsNullOrEmpty($ScriptDir)) { $ScriptDir = Get-Location }
 #region Utility Functions
 
 function Convert-SizeToBytes {
-    <# Converts "5MB", "1GB", or numeric to bytes #>
+    <# Converts "5MB", "1GB", or numeric to bytes. Tolerates whitespace and casing. #>
     param([Parameter(Mandatory)]$Size)
     if ($Size -is [int] -or $Size -is [long] -or $Size -is [double]) { return [long]$Size }
     if ($Size -is [string]) {
+        # FIX 3: Trim whitespace before matching for inputs like "  5mb  " or "5 MB"
+        $Size = $Size.Trim()
         if ($Size -match '^(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)?$') {
             $num = [double]$Matches[1]
             $unit = if ($Matches[2]) { $Matches[2].ToUpper() } else { "" }
@@ -78,10 +81,10 @@ function Convert-SizeToBytes {
 }
 
 function Get-EventId {
-    <# SHA256 hash for deterministic event_id #>
-    param([string]$Hostname, [string]$TargetIp, [string]$RecordType, [string]$Timestamp, [int]$PingNumber = -1)
-    $input_str = if ($PingNumber -ge 0) { "${Hostname}|${TargetIp}|${RecordType}|${Timestamp}|${PingNumber}" }
-                 else { "${Hostname}|${TargetIp}|${RecordType}|${Timestamp}" }
+    <# SHA256 hash for deterministic event_id. CollectorHost = machine running script, TargetIp = ping destination #>
+    param([string]$CollectorHost, [string]$TargetIp, [string]$RecordType, [string]$Timestamp, [int]$PingNumber = -1)
+    $input_str = if ($PingNumber -ge 0) { "${CollectorHost}|${TargetIp}|${RecordType}|${Timestamp}|${PingNumber}" }
+                 else { "${CollectorHost}|${TargetIp}|${RecordType}|${Timestamp}" }
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($input_str)
     $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
     return [BitConverter]::ToString($hash).Replace("-", "").ToLower()
@@ -219,7 +222,9 @@ function Close-FileWriter {
 function Initialize-HecBuffer {
     param([hashtable]$HecConfig)
     $batchSize = if ($HecConfig.batch_size -ge 1) { $HecConfig.batch_size } else { 100 }
-    $maxEvents = if ($HecConfig.max_buffer_events -ge $batchSize) { $HecConfig.max_buffer_events } else { 5000 }
+    # FIX 4: Avoid silent reset to 5000; use Max(batchSize, desiredMaxEvents) if valid
+    $desiredMaxEvents = [int]$HecConfig.max_buffer_events
+    $maxEvents = if ($desiredMaxEvents -lt 1) { 5000 } else { [math]::Max($batchSize, $desiredMaxEvents) }
     $maxBytes = Convert-SizeToBytes $HecConfig.max_buffer_bytes
     if ($maxBytes -lt 1) { $maxBytes = 5MB }
 
@@ -241,13 +246,20 @@ function Initialize-HecBuffer {
 }
 
 function Add-EventToHecBuffer {
-    <# Add single event to buffer - v3.2.0 #>
+    <# Add single event to buffer - v3.2.0 (hardened timestamp, drop-newest cap policy) #>
     param([hashtable]$Buffer, [PSCustomObject]$Event, [hashtable]$HecConfig, [string]$Hostname)
+
+    # FIX: Hardened timestamp parsing - fallback to UtcNow on parse failure
+    $unixTime = try {
+        [DateTimeOffset]::Parse($Event.timestamp).ToUnixTimeSeconds()
+    } catch {
+        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    }
 
     # Build HEC envelope with event_id for dedupe
     $eventId = $Event.event_id
     $hecEvent = [ordered]@{
-        time = [DateTimeOffset]::Parse($Event.timestamp).ToUnixTimeSeconds()
+        time = $unixTime
         host = $Hostname; source = "ping_monitor"
         sourcetype = $HecConfig.sourcetype; index = $HecConfig.index
     }
@@ -257,15 +269,12 @@ function Add-EventToHecBuffer {
     $eventJson = $hecEvent | ConvertTo-Json -Compress -Depth 5
     $eventBytes = [System.Text.Encoding]::UTF8.GetByteCount($eventJson) + 1  # +1 for newline
 
-    # Check caps before adding
+    # FIX: Drop-newest policy - reject this event if adding would exceed caps
     if (($Buffer['EventCount'] + 1) -gt $Buffer['MaxBufferEvents'] -or
         ($Buffer['BufferBytes'] + $eventBytes) -gt $Buffer['MaxBufferBytes']) {
-        # Drop oldest by clearing and warn
-        $Buffer['DroppedEvents'] += $Buffer['EventCount']
-        Write-Warning "HEC buffer cap reached. Dropped $($Buffer['EventCount']) buffered events."
-        [void]$Buffer['Builder'].Clear()
-        $Buffer['EventCount'] = 0
-        $Buffer['BufferBytes'] = 0
+        $Buffer['DroppedEvents']++
+        Write-Warning "HEC buffer cap reached. Dropping newest event (total dropped: $($Buffer['DroppedEvents']))"
+        return @{ Flushed = $false; Success = $false; EventsFlushed = 0; Dropped = $true }
     }
 
     if ($Buffer['EventCount'] -gt 0) { [void]$Buffer['Builder'].Append("`n") }
@@ -277,7 +286,8 @@ function Add-EventToHecBuffer {
     if ($Buffer['EventCount'] -ge $Buffer['BatchSize']) {
         return Flush-HecBuffer -Buffer $Buffer -HecConfig $HecConfig
     }
-    return @{ Flushed = $false; Success = $false; EventsFlushed = 0 }
+    # Successfully buffered (no flush yet)
+    return @{ Flushed = $false; Success = $true; EventsFlushed = 0; Dropped = $false }
 }
 
 function Add-EventsToHecBuffer {
@@ -291,9 +301,16 @@ function Add-EventsToHecBuffer {
     return @{ SuccessCount = $successCount; FailCount = $failCount }
 }
 
+# FIX 6: Script-scope mock mode for testing Invoke-HecPost without network calls
+$script:HecPostMockMode = $null  # $null = real calls, $true = force success, $false = force failure
+
 function Invoke-HecPost {
-    <# Low-level HEC POST, returns $true on success #>
+    <# Low-level HEC POST, returns $true on success. Supports mock mode for testing. #>
     param([string]$Body, [hashtable]$HecConfig)
+
+    # FIX 6: Check mock mode for testing
+    if ($null -ne $script:HecPostMockMode) { return $script:HecPostMockMode }
+
     $headers = @{ "Authorization" = "Splunk $($HecConfig.token)"; "Content-Type" = "application/json" }
     $splat = @{ Uri = $HecConfig.url; Method = "POST"; Headers = $headers; Body = $Body; TimeoutSec = 10; ErrorAction = "Stop" }
     if (-not $HecConfig.verify_ssl) { $splat['SkipCertificateCheck'] = $true }
@@ -303,26 +320,30 @@ function Invoke-HecPost {
 }
 
 function Flush-HecBuffer {
-    <# Flush buffer with optional retry #>
+    <# Flush buffer with optional retry. max_attempts = TOTAL attempts including first try. #>
     param([hashtable]$Buffer, [hashtable]$HecConfig)
 
-    if ($Buffer['EventCount'] -eq 0) { return @{ Flushed = $false; Success = $true; EventsFlushed = 0 } }
+    if ($Buffer['EventCount'] -eq 0) { return @{ Flushed = $false; Success = $true; EventsFlushed = 0; Dropped = $false } }
 
     $body = $Buffer['Builder'].ToString()
     $eventCount = $Buffer['EventCount']
     $success = $false
     $attempts = 0
+    # FIX 4: max_attempts = TOTAL attempts (including first). Enforce >= 1 when retry enabled.
     $maxAttempts = if ($Buffer['RetryEnabled']) { [math]::Max(1, $Buffer['RetryMaxAttempts']) } else { 1 }
 
     while ($attempts -lt $maxAttempts -and -not $success) {
         $attempts++
         $success = Invoke-HecPost -Body $body -HecConfig $HecConfig
         if (-not $success -and $attempts -lt $maxAttempts) {
-            # Calculate delay with jitter
+            # Calculate delay with jitter (handle jitter_pct=0 case)
             $delay = $Buffer['RetryBaseDelayMs']
             if ($Buffer['RetryBackoff'] -eq 'exponential') { $delay = $delay * [math]::Pow(2, $attempts - 1) }
-            $jitter = Get-Random -Minimum (-$Buffer['RetryJitterPct']) -Maximum $Buffer['RetryJitterPct']
-            $delay = [int]($delay * (1 + $jitter / 100))
+            $jitterPct = $Buffer['RetryJitterPct']
+            if ($jitterPct -gt 0) {
+                $jitter = Get-Random -Minimum (-$jitterPct) -Maximum $jitterPct
+                $delay = [int]($delay * (1 + $jitter / 100))
+            }
             Start-Sleep -Milliseconds ([math]::Max(0, $delay))
         }
     }
@@ -338,7 +359,7 @@ function Flush-HecBuffer {
     }
 
     if (-not $success) { Write-Warning "HEC batch send failed." }
-    return @{ Flushed = $true; Success = $success; EventsFlushed = if ($success) { $eventCount } else { 0 } }
+    return @{ Flushed = $true; Success = $success; EventsFlushed = if ($success) { $eventCount } else { 0 }; Dropped = $false }
 }
 
 function Test-HecConfiguration {
@@ -364,8 +385,15 @@ function Send-ToMetricsSink {
     if (-not $MetricsConfig.enabled) { return $true }
     if ([string]::IsNullOrWhiteSpace($MetricsConfig.hec_url) -or [string]::IsNullOrWhiteSpace($MetricsConfig.token)) { return $false }
 
+    # FIX: Hardened timestamp parsing - fallback to UtcNow on parse failure
+    $unixTime = try {
+        [DateTimeOffset]::Parse($Summary.timestamp).ToUnixTimeSeconds()
+    } catch {
+        [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    }
+
     $metricsEvent = @{
-        time = [DateTimeOffset]::Parse($Summary.timestamp).ToUnixTimeSeconds()
+        time = $unixTime
         host = $Hostname; source = "ping_monitor"; index = $MetricsConfig.index; event = "metric"
         fields = @{
             "metric_name:ping.avg_latency_ms" = [double]$Summary.avg_latency_ms
@@ -423,13 +451,15 @@ function Invoke-StreamingParallelPing {
     $activeRunspaces = [System.Collections.Generic.List[hashtable]]::new()
 
     # Worker scriptblock with event_id generation
+    # FIX 1: Pass CollectorHost as argument so event_id uses collector machine, not target hostname
     $pingScript = {
-        param($Endpoint, $Count, $Timeout, $EmitIndividual)
+        param($Endpoint, $Count, $Timeout, $EmitIndividual, $CollectorHost)
 
         # Local event_id function (runspaces are isolated)
+        # FIX 1: Uses CollectorHost (machine running script) NOT target hostname for event_id
         function Get-EventIdLocal {
-            param([string]$h, [string]$t, [string]$r, [string]$ts, [int]$pn = -1)
-            $s = if ($pn -ge 0) { "$h|$t|$r|$ts|$pn" } else { "$h|$t|$r|$ts" }
+            param([string]$ch, [string]$t, [string]$r, [string]$ts, [int]$pn = -1)
+            $s = if ($pn -ge 0) { "$ch|$t|$r|$ts|$pn" } else { "$ch|$t|$r|$ts" }
             $bytes = [System.Text.Encoding]::UTF8.GetBytes($s)
             $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
             return [BitConverter]::ToString($hash).Replace("-", "").ToLower()
@@ -451,7 +481,8 @@ function Invoke-StreamingParallelPing {
                         $successCount++; $totalLatency += $lat
                         $minLat = [math]::Min($minLat, $lat); $maxLat = [math]::Max($maxLat, $lat)
                         if ($EmitIndividual) {
-                            $evId = Get-EventIdLocal $Endpoint.hostname $Endpoint.ip "ping" $ts ($i+1)
+                            # FIX 1: Use CollectorHost for event_id, hostname field stays Endpoint.hostname
+                            $evId = Get-EventIdLocal $CollectorHost $Endpoint.ip "ping" $ts ($i+1)
                             $individual.Add([PSCustomObject]@{
                                 event_id=$evId; timestamp=$ts; target_ip=$Endpoint.ip; hostname=$Endpoint.hostname
                                 group=$Endpoint.group; description=$Endpoint.description; entitytype=$Endpoint.entitytype
@@ -461,7 +492,8 @@ function Invoke-StreamingParallelPing {
                         }
                     } else {
                         if ($EmitIndividual) {
-                            $evId = Get-EventIdLocal $Endpoint.hostname $Endpoint.ip "ping" $ts ($i+1)
+                            # FIX 1: Use CollectorHost for event_id
+                            $evId = Get-EventIdLocal $CollectorHost $Endpoint.ip "ping" $ts ($i+1)
                             $individual.Add([PSCustomObject]@{
                                 event_id=$evId; timestamp=$ts; target_ip=$Endpoint.ip; hostname=$Endpoint.hostname
                                 group=$Endpoint.group; description=$Endpoint.description; entitytype=$Endpoint.entitytype
@@ -473,7 +505,8 @@ function Invoke-StreamingParallelPing {
                     }
                 } catch {
                     if ($EmitIndividual) {
-                        $evId = Get-EventIdLocal $Endpoint.hostname $Endpoint.ip "ping" $ts ($i+1)
+                        # FIX 1: Use CollectorHost for event_id
+                        $evId = Get-EventIdLocal $CollectorHost $Endpoint.ip "ping" $ts ($i+1)
                         $individual.Add([PSCustomObject]@{
                             event_id=$evId; timestamp=$ts; target_ip=$Endpoint.ip; hostname=$Endpoint.hostname
                             group=$Endpoint.group; description=$Endpoint.description; entitytype=$Endpoint.entitytype
@@ -489,7 +522,8 @@ function Invoke-StreamingParallelPing {
         $pktLoss = [math]::Round((($Count - $successCount) / $Count) * 100, 2)
         $avgLat = if ($successCount -gt 0) { [math]::Round($totalLatency / $successCount, 2) } else { -1 }
         $sumTs = Get-Date -Format "o"
-        $sumEvId = Get-EventIdLocal $Endpoint.hostname $Endpoint.ip "summary" $sumTs
+        # FIX 1: Use CollectorHost for event_id, hostname field stays Endpoint.hostname
+        $sumEvId = Get-EventIdLocal $CollectorHost $Endpoint.ip "summary" $sumTs
 
         $summary = [PSCustomObject]@{
             event_id=$sumEvId; timestamp=$sumTs; target_ip=$Endpoint.ip; hostname=$Endpoint.hostname
@@ -503,11 +537,11 @@ function Invoke-StreamingParallelPing {
         return @{ Individual=$individual; Summary=$summary }
     }
 
-    # Start runspaces
+    # Start runspaces - FIX 1: Pass $hostname (CollectorHost) to runspace for event_id
     foreach ($ep in $Endpoints) {
         $ps = [powershell]::Create()
         $ps.RunspacePool = $runspacePool
-        [void]$ps.AddScript($pingScript).AddArgument($ep).AddArgument($PingsPerCycle).AddArgument($TimeoutMs).AddArgument($EmitIndividualPings)
+        [void]$ps.AddScript($pingScript).AddArgument($ep).AddArgument($PingsPerCycle).AddArgument($TimeoutMs).AddArgument($EmitIndividualPings).AddArgument($hostname)
         $activeRunspaces.Add(@{ PowerShell=$ps; Handle=$ps.BeginInvoke(); Endpoint=$ep })
     }
 
@@ -545,7 +579,11 @@ function Invoke-StreamingParallelPing {
                         if ($null -ne $HecBuffer) {
                             $stats.HecEventCount++
                             $fr = Add-EventToHecBuffer -Buffer $HecBuffer -Event $summary -HecConfig $HecConfig -Hostname $hostname
-                            if ($fr.Flushed) { if ($fr.Success) { $stats.HecBatchSuccessCount++ } else { $stats.HecBatchFailCount++ } }
+                            # FIX 1: Count batch success/failure based on Success flag, not EventsFlushed
+                            if ($fr.Flushed) {
+                                if ($fr.Success) { $stats.HecBatchSuccessCount++ }
+                                else { $stats.HecBatchFailCount++ }
+                            }
                         }
                     }
                     if ($EmitMetrics) {
@@ -572,7 +610,7 @@ function Start-PingMonitor {
     param([hashtable]$Config, [System.Collections.Generic.List[PSCustomObject]]$Endpoints, [switch]$RunOnce)
 
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor v3.2.0" -ForegroundColor Cyan
+    Write-Host "  Splunk Ping Monitor v3.2.1" -ForegroundColor Cyan
     Write-Host "  (Retry HEC + event_id + low-alloc)" -ForegroundColor DarkCyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Endpoints: $($Endpoints.Count) | Pings/cycle: $($Config.pings_per_cycle) | Interval: $($Config.cycle_interval_seconds)s"
@@ -621,7 +659,11 @@ function Start-PingMonitor {
             if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
             if ($null -ne $hecBuffer -and $hecBuffer['EventCount'] -gt 0) {
                 $fr = Flush-HecBuffer -Buffer $hecBuffer -HecConfig $Config.hec
-                if ($null -ne $stats) { if ($fr.Success) { $stats.HecBatchSuccessCount++ } else { $stats.HecBatchFailCount++ } }
+                # FIX 2: Count batch success/failure based on Success flag, not EventsFlushed
+                if ($null -ne $stats -and $fr.Flushed) {
+                    if ($fr.Success) { $stats.HecBatchSuccessCount++ }
+                    else { $stats.HecBatchFailCount++ }
+                }
             }
         }
 
@@ -629,8 +671,9 @@ function Start-PingMonitor {
 
         if ($useFile) { Write-Host "File: $($Config.log_path)" -ForegroundColor Green }
         if ($useHec) {
-            $batches = $stats.HecBatchSuccessCount + $stats.HecBatchFailCount
-            Write-Host "HEC: $($stats.HecEventCount) events, $batches batches ($($stats.HecBatchSuccessCount) OK)" -ForegroundColor $(if ($stats.HecBatchFailCount -eq 0) { "Green" } else { "Yellow" })
+            # FIX 5: Show both OK and failed batch counts for clarity
+            $totalBatches = $stats.HecBatchSuccessCount + $stats.HecBatchFailCount
+            Write-Host "HEC: $($stats.HecEventCount) events, $totalBatches batches (OK=$($stats.HecBatchSuccessCount), Failed=$($stats.HecBatchFailCount))" -ForegroundColor $(if ($stats.HecBatchFailCount -eq 0) { "Green" } else { "Yellow" })
             if ($hecBuffer -and $hecBuffer['DroppedEvents'] -gt 0) { Write-Host "HEC: $($hecBuffer['DroppedEvents']) events dropped (buffer cap)" -ForegroundColor Yellow }
         }
         if ($emitMetrics) { Write-Host "Metrics: $($stats.MetricsSuccessCount) sent" -ForegroundColor Green }
@@ -643,7 +686,7 @@ function Start-PingMonitor {
         }
     } while (-not $RunOnce)
 
-    Write-Host "`nPing Monitor v3.2.0 completed." -ForegroundColor Cyan
+    Write-Host "`nPing Monitor v3.2.1 completed." -ForegroundColor Cyan
 }
 
 #endregion
@@ -651,7 +694,7 @@ function Start-PingMonitor {
 #region Self-Tests (Manual Use Only)
 
 function Test-HecRetryAndCaps {
-    <# Test HEC buffer retry and cap behavior #>
+    <# FIX 6: Test HEC buffer retry and cap behavior using real Add-EventToHecBuffer + Flush-HecBuffer with mock mode #>
     [CmdletBinding()] param([switch]$SimulateFailure)
 
     Write-Host "=== HEC Retry/Caps Test ===" -ForegroundColor Cyan
@@ -662,49 +705,97 @@ function Test-HecRetryAndCaps {
         retry=@{ enabled=$true; max_attempts=2; base_delay_ms=10; jitter_pct=0; backoff="fixed" }
     }
 
-    $buffer = Initialize-HecBuffer -HecConfig $mockConfig
-    Write-Host "Buffer initialized: BatchSize=$($buffer['BatchSize']), MaxEvents=$($buffer['MaxBufferEvents'])"
+    # FIX 6: Use mock mode for deterministic testing without network calls
+    $script:HecPostMockMode = if ($SimulateFailure) { $false } else { $true }
 
-    # Add 7 events (should trigger flushes at 3 and 6)
-    for ($i = 1; $i -le 7; $i++) {
-        $ev = [PSCustomObject]@{ event_id="test$i"; timestamp=(Get-Date -Format "o"); record_type="ping"; hostname="test" }
-        if ($buffer['EventCount'] -gt 0) { [void]$buffer['Builder'].Append("`n") }
-        [void]$buffer['Builder'].Append(($ev | ConvertTo-Json -Compress))
-        $buffer['EventCount']++
-        $buffer['BufferBytes'] += 100
-        Write-Verbose "Added event $i, EventCount=$($buffer['EventCount'])"
+    try {
+        $buffer = Initialize-HecBuffer -HecConfig $mockConfig
+        Write-Host "Buffer: BatchSize=$($buffer['BatchSize']), MaxEvents=$($buffer['MaxBufferEvents']), MockMode=$script:HecPostMockMode"
 
-        if ($buffer['EventCount'] -ge $buffer['BatchSize']) {
-            Write-Host "  Flush triggered at event $i (EventCount=$($buffer['EventCount']))" -ForegroundColor Yellow
-            if ($SimulateFailure) {
-                Write-Host "  Simulating failure - buffer retained" -ForegroundColor Red
+        $batchOk = 0; $batchFail = 0; $eventsAdded = 0
+
+        # Add 7 events - should auto-flush at 3 and 6, then final flush of 1
+        for ($i = 1; $i -le 7; $i++) {
+            $ev = [PSCustomObject]@{ event_id="test$i"; timestamp=(Get-Date -Format "o"); record_type="ping"; hostname="target$i" }
+            $result = Add-EventToHecBuffer -Buffer $buffer -Event $ev -HecConfig $mockConfig -Hostname "collector"
+            $eventsAdded++
+            if ($result.Flushed) {
+                if ($result.Success) { $batchOk++; Write-Host "  Event ${i} flush OK ($($result.EventsFlushed) events)" -ForegroundColor Green }
+                else { $batchFail++; Write-Host "  Event ${i} flush FAILED" -ForegroundColor Red }
             } else {
-                [void]$buffer['Builder'].Clear(); $buffer['EventCount']=0; $buffer['BufferBytes']=0
+                Write-Verbose "Event ${i} buffered (count=$($buffer['EventCount']))"
             }
         }
-    }
 
-    if ($buffer['EventCount'] -gt 0) { Write-Host "Final flush pending: $($buffer['EventCount']) events" -ForegroundColor Yellow }
+        # Final flush if pending
+        if ($buffer['EventCount'] -gt 0) {
+            Write-Host "  Final flush pending: $($buffer['EventCount']) events" -ForegroundColor Yellow
+            $finalResult = Flush-HecBuffer -Buffer $buffer -HecConfig $mockConfig
+            if ($finalResult.Flushed) {
+                if ($finalResult.Success) { $batchOk++; Write-Host "  Final flush: OK" -ForegroundColor Green }
+                else { $batchFail++; Write-Host "  Final flush: FAILED" -ForegroundColor Red }
+            }
+        }
+
+        Write-Host "Summary: $eventsAdded events added, $batchOk batches OK, $batchFail batches failed, $($buffer['DroppedEvents']) dropped"
+
+        # Test cap behavior: simulate failed flushes so buffer accumulates, then test drop-newest
+        Write-Host "`n--- Testing cap behavior (drop newest on failure) ---"
+        $script:HecPostMockMode = $false  # Force all flushes to fail
+        $capConfig = @{
+            enabled=$true; url="http://test"; token="test"; index="test"; sourcetype="test"
+            verify_ssl=$false; ssl_protocol="Default"; batch_size=2; drop_on_failure=$false
+            max_buffer_events=5; max_buffer_bytes="10MB"
+            retry=@{ enabled=$false; max_attempts=1; base_delay_ms=1; jitter_pct=0; backoff="fixed" }
+        }
+        $buffer2 = Initialize-HecBuffer -HecConfig $capConfig
+        Write-Host "  Cap test buffer: MaxEvents=$($buffer2['MaxBufferEvents']), BatchSize=$($buffer2['BatchSize'])"
+        Write-Host "  (Flushes will fail, buffer accumulates until cap hit)"
+
+        # Add 8 events: batch_size=2 means flush at 2,4,6,8 but all fail and buffer retained
+        # drop_on_failure=false means failed batches stay in buffer
+        # max_buffer_events=5 means after 5 events, new events are dropped (events 6,7,8)
+        for ($i = 1; $i -le 8; $i++) {
+            $ev = [PSCustomObject]@{ event_id="cap$i"; timestamp=(Get-Date -Format "o"); record_type="ping"; hostname="target" }
+            $r = Add-EventToHecBuffer -Buffer $buffer2 -Event $ev -HecConfig $capConfig -Hostname "collector"
+            Write-Host "  Event ${i} count=$($buffer2['EventCount']), dropped=$($buffer2['DroppedEvents']), flushed=$($r.Flushed), dropped_flag=$($r.Dropped)"
+        }
+        # With forced failure: events 1-5 fill buffer, events 6-8 are dropped = 3 dropped
+        if ($buffer2['DroppedEvents'] -eq 3) {
+            Write-Host "PASS: Correct drop count (expected 3, got $($buffer2['DroppedEvents']))" -ForegroundColor Green
+        } else {
+            Write-Host "FAIL: Expected 3 dropped events, got $($buffer2['DroppedEvents'])" -ForegroundColor Red
+        }
+
+    } finally {
+        $script:HecPostMockMode = $null  # Reset mock mode
+    }
     Write-Host "=== Test Complete ===" -ForegroundColor Green
 }
 
 function Test-EventIdDeterminism {
-    <# Verify event_id is deterministic #>
+    <# Verify event_id is deterministic - FIX 1: Uses CollectorHost, not target hostname #>
     Write-Host "=== Event ID Determinism Test ===" -ForegroundColor Cyan
     $ts = "2026-01-14T12:00:00.0000000-05:00"
-    $id1 = Get-EventId -Hostname "test-host" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
-    $id2 = Get-EventId -Hostname "test-host" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
-    $id3 = Get-EventId -Hostname "test-host" -TargetIp "1.2.3.4" -RecordType "summary" -Timestamp $ts
+    # FIX 1: CollectorHost is the machine running the script, TargetIp is the ping destination
+    $id1 = Get-EventId -CollectorHost "COLLECTOR01" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
+    $id2 = Get-EventId -CollectorHost "COLLECTOR01" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
+    $id3 = Get-EventId -CollectorHost "COLLECTOR01" -TargetIp "1.2.3.4" -RecordType "summary" -Timestamp $ts
 
     Write-Host "Ping event_id (run 1): $id1"
     Write-Host "Ping event_id (run 2): $id2"
     Write-Host "Summary event_id:      $id3"
 
-    if ($id1 -eq $id2) { Write-Host "PASS: Ping IDs match" -ForegroundColor Green }
+    if ($id1 -eq $id2) { Write-Host "PASS: Ping IDs match (deterministic)" -ForegroundColor Green }
     else { Write-Host "FAIL: Ping IDs differ" -ForegroundColor Red }
 
     if ($id1 -ne $id3) { Write-Host "PASS: Ping vs Summary differ" -ForegroundColor Green }
     else { Write-Host "FAIL: Ping vs Summary match (should differ)" -ForegroundColor Red }
+
+    # Additional test: same target from different collectors produces different IDs
+    $id4 = Get-EventId -CollectorHost "COLLECTOR02" -TargetIp "1.2.3.4" -RecordType "ping" -Timestamp $ts -PingNumber 1
+    if ($id1 -ne $id4) { Write-Host "PASS: Different collectors produce different IDs" -ForegroundColor Green }
+    else { Write-Host "FAIL: Different collectors should produce different IDs" -ForegroundColor Red }
 }
 
 #endregion
