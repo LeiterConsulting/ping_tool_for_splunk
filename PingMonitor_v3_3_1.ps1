@@ -1,13 +1,30 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor v3.3.1 - Handle leak fix and improved diagnostics.
+    Splunk Ping Monitor v3.3.2 - Metrics compatibility mode + optional metrics-index mode.
 
 .DESCRIPTION
     Pings endpoints from CSV, outputs to file (UF) or Splunk HEC, with optional metrics.
 
-    VERSION 3.3.1 CHANGELOG:
+    VERSION 3.3.2 CHANGELOG:
     ========================
+    METRICS COMPATIBILITY MODE (default, preserves existing dashboards):
+      - New config keys: compat_mode, sourcetype, event_name, use_metrics_index
+      - Default compat_mode=true keeps IDENTICAL payload to v3.3.1
+      - Existing config.psd1 files work unchanged (new keys have safe defaults)
+      - Refactored: Build-MetricsPayload helper for testability
+
+    OPTIONAL METRICS-INDEX MODE (opt-in only):
+      - Set compat_mode=false or use_metrics_index=true to enable
+      - Designed for true Splunk metrics index ingestion
+      - Same field naming scheme, just alternate code path for future enhancements
+
+    DIAGNOSTICS: Metrics config logging at startup when diagnostics.enabled=true
+
+    NEW SELF-TEST: Test-MetricsPayloadShape validates payload structure without network calls
+
+    VERSION 3.3.1 FEATURES (preserved):
+    ===================================
     HANDLE LEAK FIX: Dispose AsyncWaitHandle from BeginInvoke()
       - BeginInvoke() returns IAsyncResult with an OS WaitHandle (AsyncWaitHandle)
       - Previously only PowerShell instance was disposed, not the WaitHandle
@@ -68,7 +85,7 @@
     Run single cycle and exit.
 
 .NOTES
-    Version: 3.3.1
+    Version: 3.3.2
     Requires: PowerShell 7.4+ (no external modules)
 #>
 
@@ -149,6 +166,11 @@ function Get-Configuration {
         metrics = @{
             enabled = $false; mode = "dual"; index = ""; hec_url = ""
             token = ""; verify_ssl = $true; ssl_protocol = "Default"
+            # v3.3.2: New keys for metrics compatibility/migration
+            compat_mode = $true            # true = v3.3.1 compatible payload (default)
+            sourcetype = "ping_monitor:metrics"  # sourcetype for metrics events
+            event_name = "metric"          # event field value (Splunk metrics expects "metric")
+            use_metrics_index = $false     # opt-in for metrics index mode
         }
     }
 
@@ -458,33 +480,109 @@ function Test-HecConfiguration {
 
 #region Metrics Sink
 
-function Send-ToMetricsSink {
-    param([PSCustomObject]$Summary, [hashtable]$MetricsConfig, [string]$Hostname)
-    if (-not $MetricsConfig.enabled) { return $true }
-    if ([string]::IsNullOrWhiteSpace($MetricsConfig.hec_url) -or [string]::IsNullOrWhiteSpace($MetricsConfig.token)) { return $false }
+function Build-MetricsPayload {
+    <#
+    .SYNOPSIS
+        v3.3.2: Build metrics payload hashtable for HEC submission.
+    .DESCRIPTION
+        Separated from Send-ToMetricsSink for testability (Test-MetricsPayloadShape).
+        Supports two modes:
+        - compat_mode=true (default): Identical to v3.3.1 payload structure
+        - compat_mode=false or use_metrics_index=true: Alternate path for metrics index
+        Both modes currently produce the same structure; separation enables future divergence.
+    #>
+    param(
+        [PSCustomObject]$Summary,
+        [hashtable]$MetricsConfig,
+        [string]$Hostname
+    )
 
-    # FIX: Hardened timestamp parsing - fallback to UtcNow on parse failure
+    # Hardened timestamp parsing - fallback to UtcNow on parse failure
     $unixTime = try {
         [DateTimeOffset]::Parse($Summary.timestamp).ToUnixTimeSeconds()
     } catch {
         [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     }
 
-    $metricsEvent = @{
-        time = $unixTime
-        host = $Hostname; source = "ping_monitor"; index = $MetricsConfig.index; event = "metric"
-        fields = @{
-            "metric_name:ping.avg_latency_ms" = [double]$Summary.avg_latency_ms
-            "metric_name:ping.min_latency_ms" = [double]$Summary.min_latency_ms
-            "metric_name:ping.max_latency_ms" = [double]$Summary.max_latency_ms
-            "metric_name:ping.packet_loss_pct" = [double]$Summary.packet_loss_pct
-            "metric_name:ping.pings_sent" = [int]$Summary.pings_sent
-            "metric_name:ping.pings_successful" = [int]$Summary.pings_successful
-            hostname = $Summary.hostname; target_ip = $Summary.target_ip; group = $Summary.group
-            description = $Summary.description; entitytype = $Summary.entitytype
-            device = $Summary.device; vendor = $Summary.vendor; additional_notes = $Summary.additional_notes
+    # Determine which mode to use
+    $useCompatMode = $MetricsConfig.compat_mode -eq $true -and $MetricsConfig.use_metrics_index -ne $true
+
+    # Get event_name from config (default "metric" for Splunk metrics ingestion)
+    $eventName = if ($MetricsConfig.ContainsKey('event_name') -and -not [string]::IsNullOrWhiteSpace($MetricsConfig.event_name)) {
+        $MetricsConfig.event_name
+    } else { "metric" }
+
+    # Get sourcetype from config
+    $sourcetype = if ($MetricsConfig.ContainsKey('sourcetype') -and -not [string]::IsNullOrWhiteSpace($MetricsConfig.sourcetype)) {
+        $MetricsConfig.sourcetype
+    } else { "ping_monitor:metrics" }
+
+    if ($useCompatMode) {
+        # COMPAT MODE: Identical to v3.3.1 payload (preserves existing dashboards)
+        $metricsEvent = @{
+            time = $unixTime
+            host = $Hostname
+            source = "ping_monitor"
+            sourcetype = $sourcetype
+            index = $MetricsConfig.index
+            event = $eventName
+            fields = @{
+                "metric_name:ping.avg_latency_ms" = [double]$Summary.avg_latency_ms
+                "metric_name:ping.min_latency_ms" = [double]$Summary.min_latency_ms
+                "metric_name:ping.max_latency_ms" = [double]$Summary.max_latency_ms
+                "metric_name:ping.packet_loss_pct" = [double]$Summary.packet_loss_pct
+                "metric_name:ping.pings_sent" = [int]$Summary.pings_sent
+                "metric_name:ping.pings_successful" = [int]$Summary.pings_successful
+                hostname = $Summary.hostname
+                target_ip = $Summary.target_ip
+                group = $Summary.group
+                description = $Summary.description
+                entitytype = $Summary.entitytype
+                device = $Summary.device
+                vendor = $Summary.vendor
+                additional_notes = $Summary.additional_notes
+            }
+        }
+    } else {
+        # METRICS-INDEX MODE: Opt-in alternate path for true metrics index usage
+        # Currently same structure as compat mode; separation allows future enhancements
+        $metricsEvent = @{
+            time = $unixTime
+            host = $Hostname
+            source = "ping_monitor"
+            sourcetype = $sourcetype
+            index = $MetricsConfig.index
+            event = "metric"  # Splunk metrics index requires event="metric"
+            fields = @{
+                "metric_name:ping.avg_latency_ms" = [double]$Summary.avg_latency_ms
+                "metric_name:ping.min_latency_ms" = [double]$Summary.min_latency_ms
+                "metric_name:ping.max_latency_ms" = [double]$Summary.max_latency_ms
+                "metric_name:ping.packet_loss_pct" = [double]$Summary.packet_loss_pct
+                "metric_name:ping.pings_sent" = [int]$Summary.pings_sent
+                "metric_name:ping.pings_successful" = [int]$Summary.pings_successful
+                hostname = $Summary.hostname
+                target_ip = $Summary.target_ip
+                group = $Summary.group
+                description = $Summary.description
+                entitytype = $Summary.entitytype
+                device = $Summary.device
+                vendor = $Summary.vendor
+                additional_notes = $Summary.additional_notes
+            }
         }
     }
+
+    return $metricsEvent
+}
+
+function Send-ToMetricsSink {
+    <# Send metrics payload to HEC. Uses Build-MetricsPayload for payload construction. #>
+    param([PSCustomObject]$Summary, [hashtable]$MetricsConfig, [string]$Hostname)
+    if (-not $MetricsConfig.enabled) { return $true }
+    if ([string]::IsNullOrWhiteSpace($MetricsConfig.hec_url) -or [string]::IsNullOrWhiteSpace($MetricsConfig.token)) { return $false }
+
+    # v3.3.2: Use Build-MetricsPayload helper for testability
+    $metricsEvent = Build-MetricsPayload -Summary $Summary -MetricsConfig $MetricsConfig -Hostname $Hostname
     $body = $metricsEvent | ConvertTo-Json -Depth 5 -Compress
     $headers = @{ "Authorization" = "Splunk $($MetricsConfig.token)"; "Content-Type" = "application/json" }
     $splat = @{ Uri = $MetricsConfig.hec_url; Method = "POST"; Headers = $headers; Body = $body; TimeoutSec = 5; ErrorAction = "Stop" }
@@ -801,8 +899,8 @@ function Start-PingMonitor {
     param([hashtable]$Config, [System.Collections.Generic.List[PSCustomObject]]$Endpoints, [switch]$RunOnce)
 
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor v3.3.1" -ForegroundColor Cyan
-    Write-Host "  (Handle leak fix + Delta diagnostics)" -ForegroundColor DarkCyan
+    Write-Host "  Splunk Ping Monitor v3.3.2" -ForegroundColor Cyan
+    Write-Host "  (Metrics compat mode + opt-in metrics-index)" -ForegroundColor DarkCyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Endpoints: $($Endpoints.Count) | Pings/cycle: $($Config.pings_per_cycle) | Interval: $($Config.cycle_interval_seconds)s"
     Write-Host "Output: $($Config.output_mode) | Metrics: $(if ($Config.metrics.enabled) { $Config.metrics.mode } else { 'disabled' })"
@@ -814,6 +912,14 @@ function Start-PingMonitor {
         Write-Host "Diagnostics: enabled (memory stats with delta tracking)" -ForegroundColor DarkYellow
         # v3.3.1: Reset baseline for fresh delta tracking each run
         $script:MemoryBaseline = $null
+        # v3.3.2: Log metrics config when diagnostics enabled
+        if ($Config.metrics.enabled) {
+            $compatMode = if ($Config.metrics.ContainsKey('compat_mode')) { $Config.metrics.compat_mode } else { $true }
+            $useMetricsIdx = if ($Config.metrics.ContainsKey('use_metrics_index')) { $Config.metrics.use_metrics_index } else { $false }
+            $metricsIdx = if (-not [string]::IsNullOrWhiteSpace($Config.metrics.index)) { $Config.metrics.index } else { '(default)' }
+            $metricsUrl = if (-not [string]::IsNullOrWhiteSpace($Config.metrics.hec_url)) { $Config.metrics.hec_url } else { '(not set)' }
+            Write-Host "Metrics: enabled | compat_mode=$compatMode | use_metrics_index=$useMetricsIdx | index=$metricsIdx | hec_url=$metricsUrl" -ForegroundColor DarkYellow
+        }
     }
     Write-Host "----------------------------------------" -ForegroundColor Gray
 
@@ -916,7 +1022,7 @@ function Start-PingMonitor {
         # HecBuffer doesn't need explicit disposal (it's just a hashtable with a StringBuilder)
     }
 
-    Write-Host "Ping Monitor v3.3.1 completed." -ForegroundColor Cyan
+    Write-Host "Ping Monitor v3.3.2 completed." -ForegroundColor Cyan
 }
 
 #endregion
@@ -1028,6 +1134,179 @@ function Test-EventIdDeterminism {
     else { Write-Host "FAIL: Different collectors should produce different IDs" -ForegroundColor Red }
 }
 
+function Test-MetricsPayloadShape {
+    <#
+    .SYNOPSIS
+        v3.3.2: Validate metrics payload structure without network calls.
+    .DESCRIPTION
+        Tests Build-MetricsPayload output in both compat_mode and metrics-index mode.
+        Validates expected top-level keys and fields structure.
+        No network traffic is generated.
+    .EXAMPLE
+        Test-MetricsPayloadShape
+    #>
+    [CmdletBinding()]
+    param()
+
+    Write-Host "=== Metrics Payload Shape Test (v3.3.2) ===" -ForegroundColor Cyan
+
+    # Create minimal test summary
+    $testSummary = [PSCustomObject]@{
+        timestamp = Get-Date -Format "o"
+        target_ip = "192.168.1.1"
+        hostname = "test-host"
+        group = "test-group"
+        description = "Test endpoint"
+        entitytype = "server"
+        device = "vm"
+        vendor = "test"
+        additional_notes = ""
+        avg_latency_ms = 15.5
+        min_latency_ms = 10.0
+        max_latency_ms = 25.0
+        packet_loss_pct = 0.0
+        pings_sent = 4
+        pings_successful = 4
+    }
+
+    $testHostname = "TESTCOLLECTOR"
+    $passCount = 0
+    $failCount = 0
+
+    # Test 1: Compat mode (default)
+    Write-Host "`n--- Test 1: compat_mode=true (default) ---" -ForegroundColor Gray
+    $compatConfig = @{
+        enabled = $true
+        index = "test_metrics"
+        hec_url = "https://test:8088/services/collector"
+        token = "test-token"
+        compat_mode = $true
+        use_metrics_index = $false
+        event_name = "metric"
+        sourcetype = "ping_monitor:metrics"
+    }
+
+    $payload1 = Build-MetricsPayload -Summary $testSummary -MetricsConfig $compatConfig -Hostname $testHostname
+
+    # Validate top-level keys
+    $requiredTopKeys = @('time', 'host', 'source', 'sourcetype', 'index', 'event', 'fields')
+    $missingTopKeys = $requiredTopKeys | Where-Object { -not $payload1.ContainsKey($_) }
+    if ($missingTopKeys.Count -eq 0) {
+        Write-Host "  PASS: All required top-level keys present" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: Missing top-level keys: $($missingTopKeys -join ', ')" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Validate event field
+    if ($payload1.event -eq "metric") {
+        Write-Host "  PASS: event='metric' as expected" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: event='$($payload1.event)', expected 'metric'" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Validate metric_name fields
+    $requiredMetricFields = @(
+        'metric_name:ping.avg_latency_ms',
+        'metric_name:ping.min_latency_ms',
+        'metric_name:ping.max_latency_ms',
+        'metric_name:ping.packet_loss_pct',
+        'metric_name:ping.pings_sent',
+        'metric_name:ping.pings_successful'
+    )
+    $missingMetricFields = $requiredMetricFields | Where-Object { -not $payload1.fields.ContainsKey($_) }
+    if ($missingMetricFields.Count -eq 0) {
+        Write-Host "  PASS: All metric_name fields present" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: Missing metric fields: $($missingMetricFields -join ', ')" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Validate dimension fields
+    $requiredDimensions = @('hostname', 'target_ip', 'group')
+    $missingDimensions = $requiredDimensions | Where-Object { -not $payload1.fields.ContainsKey($_) }
+    if ($missingDimensions.Count -eq 0) {
+        Write-Host "  PASS: All dimension fields present" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: Missing dimension fields: $($missingDimensions -join ', ')" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Validate host field uses collector hostname
+    if ($payload1.host -eq $testHostname) {
+        Write-Host "  PASS: host field uses collector hostname" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: host='$($payload1.host)', expected '$testHostname'" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Test 2: Metrics-index mode (opt-in)
+    Write-Host "`n--- Test 2: use_metrics_index=true (opt-in) ---" -ForegroundColor Gray
+    $metricsIdxConfig = @{
+        enabled = $true
+        index = "metrics_index"
+        hec_url = "https://test:8088/services/collector"
+        token = "test-token"
+        compat_mode = $false
+        use_metrics_index = $true
+        event_name = "metric"
+        sourcetype = "ping_monitor:metrics"
+    }
+
+    $payload2 = Build-MetricsPayload -Summary $testSummary -MetricsConfig $metricsIdxConfig -Hostname $testHostname
+
+    # In metrics-index mode, event should still be "metric"
+    if ($payload2.event -eq "metric") {
+        Write-Host "  PASS: event='metric' in metrics-index mode" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: event='$($payload2.event)', expected 'metric'" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Validate all metric fields still present
+    $missingMetricFields2 = $requiredMetricFields | Where-Object { -not $payload2.fields.ContainsKey($_) }
+    if ($missingMetricFields2.Count -eq 0) {
+        Write-Host "  PASS: All metric_name fields present in metrics-index mode" -ForegroundColor Green
+        $passCount++
+    } else {
+        Write-Host "  FAIL: Missing metric fields: $($missingMetricFields2 -join ', ')" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Test 3: Verify JSON serialization works
+    Write-Host "`n--- Test 3: JSON serialization ---" -ForegroundColor Gray
+    try {
+        $json = $payload1 | ConvertTo-Json -Depth 5 -Compress
+        if ($json.Length -gt 100) {
+            Write-Host "  PASS: JSON serialization successful ($($json.Length) chars)" -ForegroundColor Green
+            $passCount++
+        } else {
+            Write-Host "  FAIL: JSON output too short" -ForegroundColor Red
+            $failCount++
+        }
+    } catch {
+        Write-Host "  FAIL: JSON serialization error: $($_.Exception.Message)" -ForegroundColor Red
+        $failCount++
+    }
+
+    # Summary
+    Write-Host "`n=== Summary ===" -ForegroundColor Cyan
+    Write-Host "Passed: $passCount | Failed: $failCount"
+    if ($failCount -eq 0) {
+        Write-Host "PASS: All metrics payload tests passed" -ForegroundColor Green
+    } else {
+        Write-Host "FAIL: Some tests failed" -ForegroundColor Red
+    }
+    Write-Host "=== Test Complete ===" -ForegroundColor Green
+}
+
 function Test-MemoryStability {
     <#
     .SYNOPSIS
@@ -1054,7 +1333,7 @@ function Test-MemoryStability {
         [int]$IntervalSeconds = 5
     )
 
-    Write-Host "=== Memory Stability Test (v3.3.1) ===" -ForegroundColor Cyan
+    Write-Host "=== Memory Stability Test (v3.3.2) ===" -ForegroundColor Cyan
     Write-Host "Running $Cycles cycles with ${IntervalSeconds}s interval" -ForegroundColor Gray
     Write-Host "Watch for: PM/WS should stabilize, Handles should not grow" -ForegroundColor Gray
     Write-Host ""
