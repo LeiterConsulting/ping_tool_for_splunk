@@ -11,8 +11,8 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Current Stable** | Full-featured, memory optimized, metrics batching |
+| `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
 | `PingMonitor.ps1` | v1.x | ⚠️ **Deprecated** | Legacy version, use v3.3.3 for new deployments |
-| `ping_monitor.sh` | v2.x | ✅ Stable | Unix/Linux/macOS POSIX shell version |
 
 ---
 
@@ -97,6 +97,41 @@ Deterministic `event_id` field for Splunk deduplication:
 ### ⚡ Reduced Memory Allocations (v3.2.x)
 - Streaming event emission without intermediate copies
 - Lower GC pressure for high-endpoint deployments
+
+---
+
+## What's New in ping_monitor.sh v2.0.0
+
+The Unix/Linux/macOS shell edition now has feature parity with the PowerShell version:
+
+### 🔄 HEC Batching
+- **Buffer all events** — single POST per cycle instead of per-endpoint
+- **Retry with backoff** — configurable exponential backoff on failures
+- **Buffer caps** — `HEC_MAX_BUFFER_EVENTS` prevents unbounded growth
+
+### 🆔 Event Deduplication
+- **SHA256 event_id** — deterministic hash for Splunk `| dedup event_id`
+- **Platform fallbacks** — uses `sha256sum`, `shasum`, or `openssl` depending on availability
+
+### 📊 Metrics Batching
+- **Single metrics POST** — all metrics buffered and sent at end of cycle
+- **Sourcetype configurable** — `METRICS_SOURCETYPE` setting
+
+### 🛠️ New Configuration Variables
+```bash
+HEC_BATCH_SIZE=100              # Events per batch
+HEC_MAX_BUFFER_EVENTS=5000      # Buffer cap
+HEC_RETRY_ENABLED=true          # Enable retry
+HEC_RETRY_MAX_ATTEMPTS=3        # Total attempts
+HEC_RETRY_BASE_DELAY_MS=250     # Base delay
+HEC_RETRY_BACKOFF=exponential   # or "fixed"
+```
+
+### 📋 New CLI Options
+```bash
+./ping_monitor.sh --version     # Show version
+./ping_monitor.sh -V            # Short form
+```
 
 ---
 

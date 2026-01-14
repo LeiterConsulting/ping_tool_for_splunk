@@ -5,8 +5,16 @@
 # A lightweight, portable ping monitoring tool for *nix systems
 # Compatible with: Linux, macOS, BSD, Alpine, busybox, iSH (iOS), Raspberry Pi
 #
-# Version: 1.0.0
-# Requires: sh/bash, ping, awk, sed (standard POSIX tools)
+# Version: 2.0.0
+# Requires: sh/bash, ping, awk, sed, curl (standard POSIX tools)
+#
+# v2.0.0 CHANGELOG:
+# - HEC batching: Buffer events, single POST per cycle (reduces connections)
+# - HEC retry: Configurable retry with exponential backoff
+# - Metrics batching: Single POST per cycle for all metrics
+# - Event ID: SHA256 hash for Splunk deduplication
+# - Buffer caps: max_buffer_events prevents unbounded growth
+# - Improved cycle summary output
 # ============================================================================
 
 set -e
@@ -32,8 +40,16 @@ HEC_TLS_VERSION="${HEC_TLS_VERSION:-default}"
 RUN_ONCE="${RUN_ONCE:-false}"
 VERBOSE="${VERBOSE:-false}"
 
-# Metrics settings (Phase C)
-EMIT_INDIVIDUAL_PINGS="${EMIT_INDIVIDUAL_PINGS:-true}"
+# v2.0.0: HEC batching and retry settings
+HEC_BATCH_SIZE="${HEC_BATCH_SIZE:-100}"
+HEC_MAX_BUFFER_EVENTS="${HEC_MAX_BUFFER_EVENTS:-5000}"
+HEC_RETRY_ENABLED="${HEC_RETRY_ENABLED:-true}"
+HEC_RETRY_MAX_ATTEMPTS="${HEC_RETRY_MAX_ATTEMPTS:-3}"
+HEC_RETRY_BASE_DELAY_MS="${HEC_RETRY_BASE_DELAY_MS:-250}"
+HEC_RETRY_BACKOFF="${HEC_RETRY_BACKOFF:-exponential}"
+
+# Metrics settings
+EMIT_INDIVIDUAL_PINGS="${EMIT_INDIVIDUAL_PINGS:-false}"
 METRICS_ENABLED="${METRICS_ENABLED:-false}"
 METRICS_MODE="${METRICS_MODE:-dual}"
 METRICS_INDEX="${METRICS_INDEX:-}"
@@ -41,6 +57,18 @@ METRICS_HEC_URL="${METRICS_HEC_URL:-}"
 METRICS_HEC_TOKEN="${METRICS_HEC_TOKEN:-}"
 METRICS_VERIFY_SSL="${METRICS_VERIFY_SSL:-true}"
 METRICS_TLS_VERSION="${METRICS_TLS_VERSION:-default}"
+METRICS_SOURCETYPE="${METRICS_SOURCETYPE:-ping_monitor:metrics}"
+
+# v2.0.0: Buffer variables (initialized in main)
+HEC_BUFFER=""
+HEC_BUFFER_COUNT=0
+HEC_BUFFER_DROPPED=0
+METRICS_BUFFER=""
+METRICS_BUFFER_COUNT=0
+METRICS_BUFFER_DROPPED=0
+
+# Collector hostname (for event_id)
+COLLECTOR_HOST="${COLLECTOR_HOST:-$(hostname)}"
 
 # ANSI color codes (disabled if not a terminal)
 if [ -t 1 ]; then
@@ -87,7 +115,7 @@ log_debug() {
 
 show_help() {
     cat << 'EOF'
-Splunk Ping Monitor - Cross-Platform Edition
+Splunk Ping Monitor - Cross-Platform Edition v2.0.0
 
 Usage: ./ping_monitor.sh [OPTIONS]
 
@@ -96,6 +124,7 @@ Options:
   -e, --endpoints FILE   Path to endpoints CSV (default: ./endpoints.csv)
   -o, --once             Run single cycle and exit
   -v, --verbose          Enable verbose/debug output
+  -V, --version          Show version and exit
   -h, --help             Show this help message
 
 Environment Variables (override config file):
@@ -106,6 +135,8 @@ Environment Variables (override config file):
   LOG_PATH              Log file path (default: ./logs/ping_results.log)
   HEC_URL               Splunk HEC URL (for hec/both modes)
   HEC_TOKEN             Splunk HEC token
+  HEC_BATCH_SIZE        Events per HEC batch (default: 100)
+  HEC_RETRY_ENABLED     Enable HEC retry (default: true)
 
 Examples:
   ./ping_monitor.sh                          # Run with defaults
@@ -114,6 +145,257 @@ Examples:
   PINGS_PER_CYCLE=2 ./ping_monitor.sh        # Override via env
 
 EOF
+}
+
+show_version() {
+    echo "Splunk Ping Monitor (Unix Edition) v2.0.0"
+}
+
+# ============================================================================
+# Event ID Generation (v2.0.0)
+# ============================================================================
+
+generate_event_id() {
+    # Generate SHA256 hash for deduplication: collector|target_ip|record_type|timestamp[|ping_number]
+    input_string="$1"
+    
+    # Try different SHA256 tools (platform compatibility)
+    if command -v sha256sum >/dev/null 2>&1; then
+        echo -n "$input_string" | sha256sum | cut -d' ' -f1
+    elif command -v shasum >/dev/null 2>&1; then
+        echo -n "$input_string" | shasum -a 256 | cut -d' ' -f1
+    elif command -v openssl >/dev/null 2>&1; then
+        echo -n "$input_string" | openssl dgst -sha256 | sed 's/^.* //'
+    else
+        # Fallback: simple hash using awk (not cryptographic, but unique enough)
+        echo -n "$input_string" | awk '{h=0; for(i=1;i<=length($0);i++){h=h*31+ord(substr($0,i,1))}; printf "%x", h}'
+    fi
+}
+
+# ============================================================================
+# HEC Buffer Functions (v2.0.0)
+# ============================================================================
+
+reset_hec_buffer() {
+    HEC_BUFFER=""
+    HEC_BUFFER_COUNT=0
+}
+
+add_to_hec_buffer() {
+    json_event="$1"
+    
+    # Check buffer cap
+    if [ "$HEC_BUFFER_COUNT" -ge "$HEC_MAX_BUFFER_EVENTS" ]; then
+        HEC_BUFFER_DROPPED=$((HEC_BUFFER_DROPPED + 1))
+        log_debug "HEC buffer cap reached, dropping event (total dropped: $HEC_BUFFER_DROPPED)"
+        return 1
+    fi
+    
+    # Build HEC envelope
+    hec_event="{\"index\":\"$HEC_INDEX\",\"sourcetype\":\"$HEC_SOURCETYPE\",\"event\":$json_event}"
+    
+    # Append to buffer (newline-delimited)
+    if [ -z "$HEC_BUFFER" ]; then
+        HEC_BUFFER="$hec_event"
+    else
+        HEC_BUFFER="$HEC_BUFFER
+$hec_event"
+    fi
+    HEC_BUFFER_COUNT=$((HEC_BUFFER_COUNT + 1))
+    
+    return 0
+}
+
+flush_hec_buffer() {
+    if [ "$HEC_BUFFER_COUNT" -eq 0 ]; then
+        return 0
+    fi
+    
+    log_debug "Flushing HEC buffer: $HEC_BUFFER_COUNT events"
+    
+    # Determine curl SSL options
+    ssl_opt=""
+    if [ "$HEC_VERIFY_SSL" = "false" ]; then
+        ssl_opt="$ssl_opt -k"
+    fi
+    
+    case "$HEC_TLS_VERSION" in
+        1.0) ssl_opt="$ssl_opt --tlsv1.0" ;;
+        1.1) ssl_opt="$ssl_opt --tlsv1.1" ;;
+        1.2) ssl_opt="$ssl_opt --tlsv1.2" ;;
+        1.3) ssl_opt="$ssl_opt --tlsv1.3" ;;
+        default|*) ;;
+    esac
+    
+    # Retry logic
+    attempt=0
+    max_attempts=1
+    if [ "$HEC_RETRY_ENABLED" = "true" ]; then
+        max_attempts="$HEC_RETRY_MAX_ATTEMPTS"
+    fi
+    
+    success=false
+    while [ "$attempt" -lt "$max_attempts" ] && [ "$success" = "false" ]; do
+        attempt=$((attempt + 1))
+        
+        # shellcheck disable=SC2086
+        response=$(curl -s -w "\n%{http_code}" $ssl_opt \
+            -X POST "$HEC_URL" \
+            -H "Authorization: Splunk $HEC_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$HEC_BUFFER" 2>/dev/null) || true
+        
+        http_code=$(echo "$response" | tail -1)
+        
+        if [ "$http_code" = "200" ]; then
+            success=true
+            log_debug "HEC batch send successful ($HEC_BUFFER_COUNT events)"
+        else
+            if [ "$attempt" -lt "$max_attempts" ]; then
+                # Calculate delay with backoff
+                delay_ms="$HEC_RETRY_BASE_DELAY_MS"
+                if [ "$HEC_RETRY_BACKOFF" = "exponential" ]; then
+                    # 2^(attempt-1) * base_delay
+                    multiplier=1
+                    i=1
+                    while [ "$i" -lt "$attempt" ]; do
+                        multiplier=$((multiplier * 2))
+                        i=$((i + 1))
+                    done
+                    delay_ms=$((delay_ms * multiplier))
+                fi
+                delay_sec=$(awk "BEGIN {printf \"%.2f\", $delay_ms / 1000}")
+                log_debug "HEC send failed (HTTP $http_code), retrying in ${delay_sec}s (attempt $attempt/$max_attempts)"
+                sleep "$delay_sec"
+            else
+                log_warning "HEC batch send failed after $max_attempts attempts (HTTP $http_code)"
+            fi
+        fi
+    done
+    
+    # Clear buffer regardless of success (no retry-across-cycles in shell version)
+    events_sent="$HEC_BUFFER_COUNT"
+    reset_hec_buffer
+    
+    if [ "$success" = "true" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# ============================================================================
+# Metrics Buffer Functions (v2.0.0)
+# ============================================================================
+
+reset_metrics_buffer() {
+    METRICS_BUFFER=""
+    METRICS_BUFFER_COUNT=0
+}
+
+add_to_metrics_buffer() {
+    # Arguments: timestamp, ip, hostname, group, description, entitytype, device, vendor, notes,
+    #            pings_sent, pings_successful, pings_failed, packet_loss, avg_lat, min_lat, max_lat
+    timestamp="$1"
+    ip="$2"
+    hostname="$3"
+    group="$4"
+    description="$5"
+    entitytype="$6"
+    device="$7"
+    vendor="$8"
+    additional_notes="$9"
+    shift 9
+    pings_sent="$1"
+    pings_successful="$2"
+    pings_failed="$3"
+    packet_loss="$4"
+    avg_latency="$5"
+    min_latency="$6"
+    max_latency="$7"
+    
+    # Check buffer cap
+    if [ "$METRICS_BUFFER_COUNT" -ge "$HEC_MAX_BUFFER_EVENTS" ]; then
+        METRICS_BUFFER_DROPPED=$((METRICS_BUFFER_DROPPED + 1))
+        log_debug "Metrics buffer cap reached, dropping event"
+        return 1
+    fi
+    
+    # Escape strings for JSON
+    desc_escaped=$(printf '%s' "$description" | sed 's/"/\\"/g')
+    entitytype_escaped=$(printf '%s' "$entitytype" | sed 's/"/\\"/g')
+    device_escaped=$(printf '%s' "$device" | sed 's/"/\\"/g')
+    vendor_escaped=$(printf '%s' "$vendor" | sed 's/"/\\"/g')
+    notes_escaped=$(printf '%s' "$additional_notes" | sed 's/"/\\"/g')
+    
+    # Convert ISO timestamp to epoch
+    epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${timestamp%.000Z}" +%s 2>/dev/null || date +%s)
+    
+    # Build metrics payload in HEC format
+    metrics_event=$(printf '{"time":%s,"host":"%s","source":"ping_monitor","index":"%s","sourcetype":"%s","event":"metric","fields":{"metric_name:ping.avg_latency_ms":%s,"metric_name:ping.min_latency_ms":%s,"metric_name:ping.max_latency_ms":%s,"metric_name:ping.packet_loss_pct":%s,"metric_name:ping.pings_sent":%s,"metric_name:ping.pings_successful":%s,"hostname":"%s","target_ip":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s"}}' \
+        "$epoch" "$(hostname)" "$METRICS_INDEX" "$METRICS_SOURCETYPE" \
+        "$avg_latency" "$min_latency" "$max_latency" "$packet_loss" "$pings_sent" "$pings_successful" \
+        "$hostname" "$ip" "$group" "$desc_escaped" \
+        "$entitytype_escaped" "$device_escaped" "$vendor_escaped" "$notes_escaped")
+    
+    # Append to buffer (newline-delimited)
+    if [ -z "$METRICS_BUFFER" ]; then
+        METRICS_BUFFER="$metrics_event"
+    else
+        METRICS_BUFFER="$METRICS_BUFFER
+$metrics_event"
+    fi
+    METRICS_BUFFER_COUNT=$((METRICS_BUFFER_COUNT + 1))
+    
+    return 0
+}
+
+flush_metrics_buffer() {
+    if [ "$METRICS_BUFFER_COUNT" -eq 0 ]; then
+        return 0
+    fi
+    
+    if [ -z "$METRICS_HEC_URL" ] || [ -z "$METRICS_HEC_TOKEN" ]; then
+        log_warning "Metrics HEC URL or token not configured"
+        reset_metrics_buffer
+        return 1
+    fi
+    
+    log_debug "Flushing metrics buffer: $METRICS_BUFFER_COUNT events"
+    
+    # Determine curl SSL options
+    ssl_opt=""
+    if [ "$METRICS_VERIFY_SSL" = "false" ]; then
+        ssl_opt="$ssl_opt -k"
+    fi
+    
+    case "$METRICS_TLS_VERSION" in
+        1.0) ssl_opt="$ssl_opt --tlsv1.0" ;;
+        1.1) ssl_opt="$ssl_opt --tlsv1.1" ;;
+        1.2) ssl_opt="$ssl_opt --tlsv1.2" ;;
+        1.3) ssl_opt="$ssl_opt --tlsv1.3" ;;
+        default|*) ;;
+    esac
+    
+    # shellcheck disable=SC2086
+    response=$(curl -s -w "\n%{http_code}" $ssl_opt \
+        -X POST "$METRICS_HEC_URL" \
+        -H "Authorization: Splunk $METRICS_HEC_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$METRICS_BUFFER" 2>/dev/null) || true
+    
+    http_code=$(echo "$response" | tail -1)
+    
+    events_sent="$METRICS_BUFFER_COUNT"
+    reset_metrics_buffer
+    
+    if [ "$http_code" = "200" ]; then
+        log_debug "Metrics batch send successful ($events_sent events)"
+        return 0
+    else
+        log_warning "Metrics batch send failed (HTTP $http_code)"
+        return 1
+    fi
 }
 
 # ============================================================================
@@ -410,6 +692,9 @@ ping_endpoint() {
     # Generate summary JSON
     summary_timestamp=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
     
+    # v2.0.0: Generate event_id for deduplication
+    event_id=$(generate_event_id "${COLLECTOR_HOST}|${ip}|summary|${summary_timestamp}")
+    
     # Escape strings for JSON
     desc_escaped=$(printf '%s' "$description" | sed 's/"/\\"/g')
     entitytype_escaped=$(printf '%s' "$entitytype" | sed 's/"/\\"/g')
@@ -417,9 +702,9 @@ ping_endpoint() {
     vendor_escaped=$(printf '%s' "$vendor" | sed 's/"/\\"/g')
     notes_escaped=$(printf '%s' "$additional_notes" | sed 's/"/\\"/g')
     
-    # Output JSON (using printf to avoid heredoc line ending issues)
-    printf '{"timestamp":"%s","target_ip":"%s","hostname":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s","record_type":"summary","pings_sent":%d,"pings_successful":%d,"pings_failed":%d,"packet_loss_pct":%s,"avg_latency_ms":%d,"min_latency_ms":%d,"max_latency_ms":%d}\n' \
-        "$summary_timestamp" "$ip" "$hostname" "$group" "$desc_escaped" \
+    # Output JSON with event_id (v2.0.0)
+    printf '{"event_id":"%s","timestamp":"%s","target_ip":"%s","hostname":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s","record_type":"summary","pings_sent":%d,"pings_successful":%d,"pings_failed":%d,"packet_loss_pct":%s,"avg_latency_ms":%d,"min_latency_ms":%d,"max_latency_ms":%d}\n' \
+        "$event_id" "$summary_timestamp" "$ip" "$hostname" "$group" "$desc_escaped" \
         "$entitytype_escaped" "$device_escaped" "$vendor_escaped" "$notes_escaped" \
         "$count" "$success_count" "$failed_count" "$packet_loss" \
         "$avg_latency" "$min_latency" "$max_latency"
@@ -520,86 +805,7 @@ send_to_hec() {
     fi
 }
 
-send_metrics_to_hec() {
-    # Send summary data to Splunk as metrics (Phase C)
-    # Arguments: timestamp, ip, hostname, group, description, entitytype, device, vendor, notes,
-    #            pings_sent, pings_successful, pings_failed, packet_loss, avg_lat, min_lat, max_lat
-    
-    timestamp="$1"
-    ip="$2"
-    hostname="$3"
-    group="$4"
-    description="$5"
-    entitytype="$6"
-    device="$7"
-    vendor="$8"
-    additional_notes="$9"
-    shift 9
-    pings_sent="$1"
-    pings_successful="$2"
-    pings_failed="$3"
-    packet_loss="$4"
-    avg_latency="$5"
-    min_latency="$6"
-    max_latency="$7"
-    
-    if [ "$METRICS_ENABLED" != "true" ]; then
-        return 0
-    fi
-    
-    if [ -z "$METRICS_HEC_URL" ] || [ -z "$METRICS_HEC_TOKEN" ]; then
-        log_warning "Metrics HEC URL or token not configured"
-        return 1
-    fi
-    
-    # Build metrics payload (HEC metrics format)
-    # Escape strings for JSON
-    desc_escaped=$(printf '%s' "$description" | sed 's/"/\\"/g')
-    entitytype_escaped=$(printf '%s' "$entitytype" | sed 's/"/\\"/g')
-    device_escaped=$(printf '%s' "$device" | sed 's/"/\\"/g')
-    vendor_escaped=$(printf '%s' "$vendor" | sed 's/"/\\"/g')
-    notes_escaped=$(printf '%s' "$additional_notes" | sed 's/"/\\"/g')
-    
-    # Convert ISO timestamp to epoch
-    epoch=$(date -d "$timestamp" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${timestamp%.000Z}" +%s 2>/dev/null || date +%s)
-    
-    metrics_payload=$(printf '{"time":%s,"host":"%s","source":"ping_monitor","index":"%s","event":"metric","fields":{"metric_name:ping.avg_latency_ms":%s,"metric_name:ping.min_latency_ms":%s,"metric_name:ping.max_latency_ms":%s,"metric_name:ping.packet_loss_pct":%s,"metric_name:ping.pings_sent":%s,"metric_name:ping.pings_successful":%s,"hostname":"%s","target_ip":"%s","group":"%s","description":"%s","entitytype":"%s","device":"%s","vendor":"%s","additional_notes":"%s"}}' \
-        "$epoch" "$(hostname)" "$METRICS_INDEX" \
-        "$avg_latency" "$min_latency" "$max_latency" "$packet_loss" "$pings_sent" "$pings_successful" \
-        "$hostname" "$ip" "$group" "$desc_escaped" \
-        "$entitytype_escaped" "$device_escaped" "$vendor_escaped" "$notes_escaped")
-    
-    # Determine curl SSL options
-    ssl_opt=""
-    if [ "$METRICS_VERIFY_SSL" = "false" ]; then
-        ssl_opt="$ssl_opt -k"
-    fi
-    
-    case "$METRICS_TLS_VERSION" in
-        1.0) ssl_opt="$ssl_opt --tlsv1.0" ;;
-        1.1) ssl_opt="$ssl_opt --tlsv1.1" ;;
-        1.2) ssl_opt="$ssl_opt --tlsv1.2" ;;
-        1.3) ssl_opt="$ssl_opt --tlsv1.3" ;;
-        default|*) ;;
-    esac
-    
-    # shellcheck disable=SC2086
-    response=$(curl -s -w "\n%{http_code}" $ssl_opt \
-        -X POST "$METRICS_HEC_URL" \
-        -H "Authorization: Splunk $METRICS_HEC_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "$metrics_payload" 2>/dev/null) || true
-    
-    http_code=$(echo "$response" | tail -1)
-    
-    if [ "$http_code" = "200" ]; then
-        log_debug "Metrics HEC send successful"
-        return 0
-    else
-        log_warning "Metrics HEC send failed (HTTP $http_code)"
-        return 1
-    fi
-}
+# NOTE: send_metrics_to_hec() removed in v2.0.0 - now using add_to_metrics_buffer()/flush_metrics_buffer()
 
 # ============================================================================
 # Main Execution
@@ -626,6 +832,10 @@ parse_args() {
                 ;;
             -h|--help)
                 show_help
+                exit 0
+                ;;
+            -V|--version)
+                show_version
                 exit 0
                 ;;
             *)
@@ -687,6 +897,10 @@ main() {
         partial_total=0
         failed_total=0
         
+        # v2.0.0: Reset buffers at cycle start
+        reset_hec_buffer
+        reset_metrics_buffer
+        
         # Check for log rotation
         if [ "$OUTPUT_MODE" = "file" ] || [ "$OUTPUT_MODE" = "both" ]; then
             rotate_log
@@ -707,23 +921,23 @@ main() {
                 emit_events="false"
             fi
             
-            # Output events based on mode
+            # Output events based on mode (v2.0.0: use buffer for HEC)
             if [ -n "$result" ] && [ "$emit_events" = "true" ]; then
                 case "$OUTPUT_MODE" in
                     file)
                         write_to_log "$result"
                         ;;
                     hec)
-                        send_to_hec "$result" || true
+                        add_to_hec_buffer "$result"
                         ;;
                     both)
                         write_to_log "$result"
-                        send_to_hec "$result" || true
+                        add_to_hec_buffer "$result"
                         ;;
                 esac
             fi
             
-            # Send metrics if enabled (Phase C)
+            # Send metrics if enabled (v2.0.0: use buffer for metrics)
             if [ "$METRICS_ENABLED" = "true" ] && [ -n "$result" ]; then
                 # Extract values from JSON result for metrics
                 # Using simple grep/sed since jq may not be available
@@ -736,19 +950,40 @@ main() {
                 min_latency=$(echo "$result" | grep -o '"min_latency_ms":[0-9-]*' | cut -d':' -f2)
                 max_latency=$(echo "$result" | grep -o '"max_latency_ms":[0-9-]*' | cut -d':' -f2)
                 
-                send_metrics_to_hec "$timestamp" "$ip" "$hostname" "$group" "$description" \
+                # Build metrics payload and add to buffer (v2.0.0)
+                add_to_metrics_buffer "$timestamp" "$ip" "$hostname" "$group" "$description" \
                     "$entitytype" "$device" "$vendor" "$additional_notes" \
                     "$pings_sent" "$pings_successful" "$pings_failed" "$packet_loss" \
-                    "$avg_latency" "$min_latency" "$max_latency" || true
+                    "$avg_latency" "$min_latency" "$max_latency"
             fi
         done
+        
+        # v2.0.0: Flush buffers at end of cycle
+        hec_result=""
+        metrics_result=""
+        
+        if [ "$OUTPUT_MODE" = "hec" ] || [ "$OUTPUT_MODE" = "both" ]; then
+            flush_hec_buffer && hec_result="success" || hec_result="failed"
+        fi
+        
+        if [ "$METRICS_ENABLED" = "true" ]; then
+            flush_metrics_buffer && metrics_result="success" || metrics_result="failed"
+        fi
         
         # Simple success message
         if [ "$OUTPUT_MODE" = "file" ] || [ "$OUTPUT_MODE" = "both" ]; then
             log_success "Results written to: $LOG_PATH"
         fi
         
-        printf "Cycle #%d complete\n" "$cycle_count"
+        # v2.0.0: Show batch status
+        printf "Cycle #%d complete" "$cycle_count"
+        if [ -n "$hec_result" ]; then
+            printf " | HEC: %s (%d events)" "$hec_result" "$HEC_BUFFER_COUNT"
+        fi
+        if [ -n "$metrics_result" ]; then
+            printf " | Metrics: %s (%d events)" "$metrics_result" "$METRICS_BUFFER_COUNT"
+        fi
+        printf "\n"
         
         # Exit if run-once mode
         if [ "$RUN_ONCE" = "true" ]; then
