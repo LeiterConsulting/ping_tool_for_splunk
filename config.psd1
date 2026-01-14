@@ -119,6 +119,32 @@
         # Use "Default" to let the system negotiate the best available protocol
         # Most Splunk servers work best with "Tls12"
         ssl_protocol = "Default"
+        
+        # ----------------------------------------
+        # v3.2.0 HEC BATCHING & RETRY SETTINGS (Optional)
+        # ----------------------------------------
+        
+        # Number of events per HEC batch POST (default: 100)
+        # batch_size = 100
+        
+        # If true, drop buffered events on HEC failure (default behavior)
+        # If false and retry.enabled=true, retain events for retry
+        # drop_on_failure = $true
+        
+        # Maximum events to buffer before dropping oldest (memory cap)
+        # max_buffer_events = 5000
+        
+        # Maximum buffer size in bytes (accepts "5MB" or numeric)
+        # max_buffer_bytes = "5MB"
+        
+        # Retry settings for failed HEC batches
+        # retry = @{
+        #     enabled = $false           # Enable retry on HEC failure
+        #     max_attempts = 3           # Max retry attempts before giving up
+        #     base_delay_ms = 250        # Initial delay between retries
+        #     jitter_pct = 20            # Random jitter percentage (0-100)
+        #     backoff = "exponential"    # "fixed" or "exponential"
+        # }
     }
     
     # ----------------------------------------
