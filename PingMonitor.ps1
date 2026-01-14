@@ -516,7 +516,25 @@ function Send-ToSplunkHEC {
             $successCount++
         }
         catch {
-            Write-Warning "Failed to send batch to HEC: $($_.Exception.Message)"
+            $errorMessage = $_.Exception.Message
+
+            # Include response body when available (common for Splunk HEC 4xx)
+            try {
+                if ($_.Exception.PSObject.Properties.Name -contains 'Response' -and $_.Exception.Response) {
+                    $response = $_.Exception.Response
+                    if ($response.PSObject.Properties.Name -contains 'Content' -and $response.Content) {
+                        $responseBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                        if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
+                            $errorMessage = "$errorMessage | HEC response: $responseBody"
+                        }
+                    }
+                }
+            }
+            catch {
+                # Ignore secondary failures while extracting response details
+            }
+
+            Write-Warning "Failed to send batch to HEC: $errorMessage"
             $failCount++
         }
     }
@@ -622,7 +640,25 @@ function Send-ToSplunkMetrics {
         return $true
     }
     catch {
-        Write-Warning "Failed to send metrics to HEC: $($_.Exception.Message)"
+        $errorMessage = $_.Exception.Message
+
+        # Include response body when available (common for Splunk HEC 4xx)
+        try {
+            if ($_.Exception.PSObject.Properties.Name -contains 'Response' -and $_.Exception.Response) {
+                $response = $_.Exception.Response
+                if ($response.PSObject.Properties.Name -contains 'Content' -and $response.Content) {
+                    $responseBody = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult()
+                    if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
+                        $errorMessage = "$errorMessage | HEC response: $responseBody"
+                    }
+                }
+            }
+        }
+        catch {
+            # Ignore secondary failures while extracting response details
+        }
+
+        Write-Warning "Failed to send metrics to HEC: $errorMessage"
         return $false
     }
 }
@@ -721,7 +757,7 @@ function Start-PingMonitor {
         
         # Send metrics if enabled (Phase C)
         if ($Config.metrics.enabled) {
-            Send-ToSplunkMetrics -Summaries $results.summaries -MetricsConfig $Config.metrics
+            $null = Send-ToSplunkMetrics -Summaries $results.summaries -MetricsConfig $Config.metrics
         }
         
         # Output events based on configuration (skip if no events to send)
@@ -733,13 +769,13 @@ function Start-PingMonitor {
                     Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
                 }
                 "hec" {
-                    Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
+                    $null = Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
                 }
                 "both" {
                     Invoke-LogRotation -LogPath $Config.log_path -MaxSizeMB $Config.log_rotation_size_mb
                     Write-ToLogFile -Results $allResults -LogPath $Config.log_path
                     Write-Host "Results written to: $($Config.log_path)" -ForegroundColor Green
-                    Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
+                    $null = Send-ToSplunkHEC -Results $allResults -HecConfig $Config.hec
                 }
                 default {
                     Write-Warning "Unknown output mode: $($Config.output_mode). Defaulting to file."

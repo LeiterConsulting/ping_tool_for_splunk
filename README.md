@@ -1,4 +1,4 @@
-# Splunk Ping Monitor v2.7.0
+# Splunk Ping Monitor v2.7.1
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
@@ -47,6 +47,15 @@ The included Splunk dashboard automatically works with:
 - Historical event data (pre-upgrade)
 - New metrics data (post-upgrade)
 - Mixed data during transition periods
+
+### 🏷️ Multi-Word Filter Support (v2.7.1)
+Dashboard filters now properly support values with spaces:
+- Entity types like "Network Printers" or "File Servers"
+- Device names like "Core Router" or "Access Point"
+- Vendor names like "Palo Alto" or "Juniper Networks"
+- Group names like "Branch Office" or "Data Center"
+
+No special quoting required in your `endpoints.csv` — just use natural names.
 
 ### 🧭 Splunk App (Setup + Drilldowns)
 The included Splunk app provides a KV Store-backed Setup screen and interactive drilldowns from the Overview dashboard.
@@ -290,7 +299,7 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 1. **Install the app**:
    ```
-    Upload ping_monitor_v2.7.0.tar.gz via Splunk Web → Manage Apps → Install from File
+    Upload ping_monitor_v2.7.1.tar.gz via Splunk Web → Manage Apps → Install from File
    ```
 
 2. **Run Setup**:
@@ -355,7 +364,7 @@ label = Ping Monitor
 [launcher]
 author = Your Organization
 description = Network availability monitoring with dual-mode support
-version = 2.5.2
+version = 2.7.1
 EOF
 
 
@@ -542,8 +551,22 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-**v2.7.0** — Consistency update (docs + shipped views) for v2.7.0 features.
+## Changelog
+
+**v2.7.1** — Multi-word filter support
+- Dashboard filters now correctly handle values with spaces (e.g., "Network Printers", "Palo Alto")
+- Fixed SPL token quoting to support exact-match filtering on entitytype, device, vendor, and group fields
+- No changes required to existing `endpoints.csv` files
+
+**v2.7.0** — Metrics enhancements and HEC improvements
+- Enhanced HEC error logging with response body details
+- Improved dual-mode (events + metrics) operation
+- Fixed console output clarity for batch send operations
+
+**v2.6.0** — Asset correlation dashboard and setup wizard
+
+**v2.5.x** — Summary-only mode, endpoint enrichment, dual-mode queries
 
 ---
 
-*Last updated: 0950 12 Jan 2026*
+*Last updated: 14 Jan 2026*

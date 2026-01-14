@@ -2,11 +2,15 @@
 
 Enterprise network availability monitoring with intelligent asset correlation.
 
-## Version 2.5.2
+## Version 2.7.1
+
+### What's New in v2.7.1
+- **Multi-word filter support**: Dashboard filters now correctly handle values with spaces (e.g., "Network Printers", "Palo Alto Networks")
+- No changes required to existing `endpoints.csv` files — just use natural names
 
 ## Quick Start
 
-1. **Install the App**: Upload `ping_monitor_app-2.5.2.tar.gz` via Splunk Web → Manage Apps → Install from File
+1. **Install the App**: Upload `ping_monitor_v2.7.1.tar.gz` via Splunk Web → Manage Apps → Install from File
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your index/sourcetype
 3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
 
