@@ -1,8 +1,18 @@
-# Splunk Ping Monitor v3.2.1
+# Splunk Ping Monitor v3.3.3
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
 A cross-platform ping monitoring tool that sends structured data directly to Splunk for visualization, alerting, and long-term analysis. Designed for airgapped environments and high-scale deployments.
+
+---
+
+## Current Version
+
+| Script | Version | Status | Notes |
+|--------|---------|--------|-------|
+| `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Current Stable** | Full-featured, memory optimized, metrics batching |
+| `PingMonitor.ps1` | v1.x | ⚠️ **Deprecated** | Legacy version, use v3.3.3 for new deployments |
+| `ping_monitor.sh` | v2.x | ✅ Stable | Unix/Linux/macOS POSIX shell version |
 
 ---
 
@@ -20,9 +30,43 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 ---
 
-## What's New in v3.x
+## What's New in v3.3.x
 
-### 🔄 Retry-Safe HEC Batching (v3.2.x)
+### 🚀 Memory & Handle Optimization (v3.3.0-v3.3.3)
+Production-hardened for long-running deployments:
+- **Reusable RunspacePool** — created once at startup, not per-cycle
+- **Persistent HEC buffer** — enables true retry-across-cycles
+- **Metrics batching** — 1 POST per cycle instead of per-endpoint (~98% reduction)
+- **Handle leak fixes** — proper disposal of AsyncWaitHandle and HTTP response streams
+- **Memory diagnostics** — optional per-cycle PM/WS/GC/Handles tracking
+
+```powershell
+# Enable memory diagnostics in config.psd1
+diagnostics = @{
+    enabled = $true
+    handle_probe_mode = "none"  # "none", "hec_only", "metrics_only"
+}
+```
+
+### 📊 Metrics Compatibility Mode (v3.3.2+)
+Seamless upgrade path for existing deployments:
+- **compat_mode=true** (default) — identical payload to v3.3.1, preserves dashboards
+- **Batched transport** — all metrics sent in one POST at end of cycle
+- **New config keys** with safe defaults — existing config.psd1 files work unchanged
+
+```powershell
+metrics = @{
+    enabled = $true
+    compat_mode = $true            # Preserve existing dashboard compatibility
+    batch_size = 100               # Events per batch
+    max_buffer_events = 5000       # Buffer cap
+    max_buffer_bytes = "5MB"       # Buffer cap
+}
+```
+
+## What's New in v3.2.x
+
+### 🔄 Retry-Safe HEC Batching
 Robust HEC delivery with configurable retry logic:
 - **Automatic batching** with configurable batch size
 - **Retry with backoff** (exponential or fixed) on transient failures
@@ -103,7 +147,7 @@ The included Splunk app provides a KV Store-backed Setup screen and interactive 
 
 | Edition | Platform | Script | Config |
 |---------|----------|--------|--------|
-| 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor_v3_2_1.ps1` | `config.psd1` |
+| 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor_v3_3_3.ps1` | `config.psd1` |
 | 🐧 **Unix** | POSIX Shell | `ping_monitor.sh` | `config.conf` |
 
 Both editions share the same summary + enrichment schema. (Windows currently supports optional per-ping events; the Unix edition emits summary events by default.)
@@ -118,11 +162,14 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 # 1. Edit your endpoints
 notepad endpoints.csv
 
-# 2. Test run
-pwsh -File .\PingMonitor_v3_2_1.ps1 -RunOnce
+# 2. Test run (single cycle)
+pwsh -File .\PingMonitor_v3_3_3.ps1 -RunOnce
 
 # 3. Run continuously
-pwsh -File .\PingMonitor_v3_2_1.ps1
+pwsh -File .\PingMonitor_v3_3_3.ps1
+
+# 4. (Optional) Run metrics payload self-test
+pwsh -File .\PingMonitor_v3_3_3.ps1 -TestMetricsPayload
 ```
 
 ### Unix/Linux/macOS

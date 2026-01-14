@@ -1,9 +1,22 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor - Monitors endpoint availability and sends results to Splunk.
+    [DEPRECATED] Splunk Ping Monitor v1.x - Use PingMonitor_v3_3_3.ps1 instead.
 
 .DESCRIPTION
+    ⚠️ DEPRECATED: This is the legacy v1.x version. For new deployments, use PingMonitor_v3_3_3.ps1
+    
+    v3.3.3 includes:
+    - Memory-optimized RunspacePool (reused across cycles)
+    - HEC batching with retry support
+    - Metrics batching (1 POST per cycle)
+    - Handle leak fixes
+    - Diagnostics support
+    
+    This legacy script is preserved for backward compatibility only.
+
+    ---
+    
     This script pings endpoints defined in a CSV file and outputs results either to a log file
     (for Splunk Universal Forwarder ingestion) or directly to Splunk via HTTP Event Collector (HEC).
 
@@ -26,7 +39,7 @@
 
 .NOTES
     Author: Splunk Ping Monitor
-    Version: 2.5.2
+    Version: 1.x (DEPRECATED - use v3.3.3)
     Requires: PowerShell 7.4+ (no external modules - airgap friendly)
 #>
 

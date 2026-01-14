@@ -1,15 +1,30 @@
 #Requires -Version 7.4
 <#
 .SYNOPSIS
-    Splunk Ping Monitor v3.3.2 - Metrics compatibility mode + optional metrics-index mode.
+    Splunk Ping Monitor v3.3.3 - Metrics batching + compatibility mode.
 
 .DESCRIPTION
     Pings endpoints from CSV, outputs to file (UF) or Splunk HEC, with optional metrics.
 
+    VERSION 3.3.3 CHANGELOG:
+    ========================
+    BUG FIX: Metrics batch counter reset at cycle start
+      - BatchSuccessCount/BatchFailCount now reset each cycle (mirrors HEC behavior)
+      - Prevents accumulating batch counts across cycles
+      - Output now correctly shows "1 batches" each cycle instead of incrementing
+
     VERSION 3.3.2 CHANGELOG:
     ========================
+    METRICS BATCHING (reduces handle churn):
+      - Previously: 1 HTTPS POST per endpoint summary (~53 POSTs per cycle)
+      - Now: All metrics buffered, sent in 1 POST at end of cycle
+      - New functions: Initialize-MetricsBuffer, Add-MetricsEventToBuffer, Flush-MetricsBuffer
+      - New config keys: metrics.batch_size, metrics.max_buffer_events, metrics.max_buffer_bytes
+      - Payload per event is IDENTICAL to v3.3.1 (byte-for-byte compatible)
+      - Only transport is batched (newline-delimited JSON)
+
     METRICS COMPATIBILITY MODE (default, preserves existing dashboards):
-      - New config keys: compat_mode, sourcetype, event_name, use_metrics_index
+      - Config keys: compat_mode, sourcetype, event_name, use_metrics_index
       - Default compat_mode=true keeps IDENTICAL payload to v3.3.1
       - Existing config.psd1 files work unchanged (new keys have safe defaults)
       - Refactored: Build-MetricsPayload helper for testability
@@ -19,7 +34,9 @@
       - Designed for true Splunk metrics index ingestion
       - Same field naming scheme, just alternate code path for future enhancements
 
-    DIAGNOSTICS: Metrics config logging at startup when diagnostics.enabled=true
+    DIAGNOSTICS: 
+      - Metrics config logging at startup when diagnostics.enabled=true
+      - handle_probe_mode: none/hec_only/metrics_only to isolate handle sources
 
     NEW SELF-TEST: Test-MetricsPayloadShape validates payload structure without network calls
 
@@ -84,8 +101,11 @@
 .PARAMETER RunOnce
     Run single cycle and exit.
 
+.PARAMETER TestMetricsPayload
+    Run metrics payload shape self-test and exit.
+
 .NOTES
-    Version: 3.3.2
+    Version: 3.3.3
     Requires: PowerShell 7.4+ (no external modules)
 #>
 
@@ -93,7 +113,8 @@
 param(
     [string]$ConfigPath,
     [string]$EndpointsPath,
-    [switch]$RunOnce
+    [switch]$RunOnce,
+    [switch]$TestMetricsPayload  # v3.3.2: Run metrics payload shape test and exit
 )
 
 Set-StrictMode -Version Latest
@@ -155,7 +176,7 @@ function Get-Configuration {
         parallel_threads = 10; output_mode = "file"
         log_path = Join-Path $ScriptDir "logs\ping_results.log"
         log_rotation_size_mb = 50; emit_individual_pings = $true
-        diagnostics = @{ enabled = $false }  # v3.3.0: Memory diagnostics
+        diagnostics = @{ enabled = $false; handle_probe_mode = "none" }  # v3.3.0: Memory diagnostics; handle_probe_mode: none/hec_only/metrics_only
         hec = @{
             enabled = $false; url = ""; token = ""; index = "main"
             sourcetype = "ping_monitor"; verify_ssl = $true; ssl_protocol = "Default"
@@ -171,6 +192,10 @@ function Get-Configuration {
             sourcetype = "ping_monitor:metrics"  # sourcetype for metrics events
             event_name = "metric"          # event field value (Splunk metrics expects "metric")
             use_metrics_index = $false     # opt-in for metrics index mode
+            # v3.3.2: Batching config (reduces handle churn from per-endpoint POSTs)
+            batch_size = 100               # events per batch before auto-flush
+            max_buffer_events = 5000       # cap to prevent unbounded growth
+            max_buffer_bytes = "5MB"       # cap in bytes
         }
     }
 
@@ -395,13 +420,15 @@ function Invoke-HecPost {
     try { Invoke-RestMethod @splat | Out-Null; return $true }
     catch {
         $errorMessage = $_.Exception.Message
-        # Try to extract HEC response body for better diagnostics
-        # v3.3.1: Use try/finally to ensure stream and reader disposal (handle leak prevention)
+
+        $response = $null
         $stream = $null
         $reader = $null
+        $responseBody = $null
         try {
             if ($_.Exception.Response) {
-                $stream = $_.Exception.Response.GetResponseStream()
+                $response = $_.Exception.Response
+                $stream = $response.GetResponseStream()
                 if ($null -ne $stream) {
                     $reader = [System.IO.StreamReader]::new($stream)
                     $responseBody = $reader.ReadToEnd()
@@ -413,9 +440,16 @@ function Invoke-HecPost {
         }
         catch { }
         finally {
-            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
-            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+            # Dispose in reverse order of creation; null refs for GC
+            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }; $reader = $null
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }; $stream = $null
+            if ($null -ne $response) {
+                try { $response.Close() } catch { }
+                if ($response -is [IDisposable]) { try { ($response -as [IDisposable]).Dispose() } catch { } }
+            }; $response = $null
+            $responseBody = $null
         }
+
         Write-Warning "HEC POST failed: $errorMessage"
         return $false
     }
@@ -591,31 +625,176 @@ function Send-ToMetricsSink {
     try { Invoke-RestMethod @splat | Out-Null; return $true }
     catch {
         $errorMessage = $_.Exception.Message
-        # Try to extract HEC response body for better diagnostics
-        # v3.3.1: Use try/finally to ensure stream and reader disposal (handle leak prevention)
+
+        $response = $null
         $stream = $null
         $reader = $null
+        $responseBody = $null
         try {
             if ($_.Exception.Response) {
-                $stream = $_.Exception.Response.GetResponseStream()
+                $response = $_.Exception.Response
+                $stream = $response.GetResponseStream()
                 if ($null -ne $stream) {
                     $reader = [System.IO.StreamReader]::new($stream)
                     $responseBody = $reader.ReadToEnd()
                     if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
-                        $errorMessage = "$errorMessage | HEC response: $responseBody"
+                        $errorMessage = "$errorMessage | Response: $responseBody"
                     }
                 }
             }
         }
         catch { }
         finally {
-            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }
-            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }
+            # Dispose in reverse order of creation; null refs for GC
+            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }; $reader = $null
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }; $stream = $null
+            if ($null -ne $response) {
+                try { $response.Close() } catch { }
+                if ($response -is [IDisposable]) { try { ($response -as [IDisposable]).Dispose() } catch { } }
+            }; $response = $null
+            $responseBody = $null
         }
+
         Write-Warning "Metrics POST failed: $errorMessage"
         return $false
     }
 }
+
+#region Metrics Buffer (v3.3.2: Batching to reduce handle churn)
+
+function Initialize-MetricsBuffer {
+    <# v3.3.2: Create metrics buffer analogous to HEC buffer. Reduces per-endpoint POSTs to 1 POST per cycle. #>
+    param([hashtable]$MetricsConfig)
+    $batchSize = if ($MetricsConfig.batch_size -ge 1) { [int]$MetricsConfig.batch_size } else { 100 }
+    $desiredMaxEvents = [int]$MetricsConfig.max_buffer_events
+    $maxEvents = if ($desiredMaxEvents -lt 1) { 5000 } else { [math]::Max($batchSize, $desiredMaxEvents) }
+    $maxBytes = Convert-SizeToBytes $MetricsConfig.max_buffer_bytes
+    if ($maxBytes -lt 1) { $maxBytes = 5MB }
+
+    return @{
+        Builder = [System.Text.StringBuilder]::new()
+        EventCount = 0
+        BufferBytes = 0
+        BatchSize = $batchSize
+        MaxBufferEvents = $maxEvents
+        MaxBufferBytes = $maxBytes
+        DroppedEvents = 0
+        BuilderCapacityThreshold = 1MB  # Reset StringBuilder if capacity exceeds this
+        # Stats for reporting
+        BatchSuccessCount = 0
+        BatchFailCount = 0
+    }
+}
+
+function Reset-MetricsBufferBuilder {
+    <# v3.3.2: Reset StringBuilder if capacity too large (prevents memory ratcheting) #>
+    param([hashtable]$Buffer)
+    $oldCapacity = $Buffer['Builder'].Capacity
+    if ($oldCapacity -gt $Buffer['BuilderCapacityThreshold']) {
+        $Buffer['Builder'] = [System.Text.StringBuilder]::new()
+        Write-Verbose "Metrics buffer StringBuilder replaced (old capacity: $oldCapacity chars)"
+    } else {
+        [void]$Buffer['Builder'].Clear()
+    }
+    $Buffer['EventCount'] = 0
+    $Buffer['BufferBytes'] = 0
+}
+
+function Add-MetricsEventToBuffer {
+    <# v3.3.2: Add pre-built metrics payload to buffer. Returns whether flush occurred. #>
+    param([hashtable]$Buffer, [hashtable]$MetricsEvent)
+
+    $eventJson = $MetricsEvent | ConvertTo-Json -Compress -Depth 5
+    $eventBytes = [System.Text.Encoding]::UTF8.GetByteCount($eventJson) + 1  # +1 for newline
+
+    # Drop-newest policy if caps exceeded
+    if (($Buffer['EventCount'] + 1) -gt $Buffer['MaxBufferEvents'] -or
+        ($Buffer['BufferBytes'] + $eventBytes) -gt $Buffer['MaxBufferBytes']) {
+        $Buffer['DroppedEvents']++
+        return @{ Flushed = $false; Dropped = $true }
+    }
+
+    if ($Buffer['EventCount'] -gt 0) { [void]$Buffer['Builder'].Append("`n") }
+    [void]$Buffer['Builder'].Append($eventJson)
+    $Buffer['EventCount']++
+    $Buffer['BufferBytes'] += $eventBytes
+
+    return @{ Flushed = $false; Dropped = $false }
+}
+
+function Invoke-MetricsPost {
+    <# v3.3.2: Low-level metrics POST with hardened disposal. No retry (keep simple). #>
+    param([string]$Body, [hashtable]$MetricsConfig)
+
+    $headers = @{ "Authorization" = "Splunk $($MetricsConfig.token)"; "Content-Type" = "application/json" }
+    $splat = @{ Uri = $MetricsConfig.hec_url; Method = "POST"; Headers = $headers; Body = $Body; TimeoutSec = 10; ErrorAction = "Stop" }
+    if (-not $MetricsConfig.verify_ssl) { $splat['SkipCertificateCheck'] = $true }
+    if ($MetricsConfig.ssl_protocol -and $MetricsConfig.ssl_protocol -ne 'Default') { $splat['SslProtocol'] = $MetricsConfig.ssl_protocol }
+
+    try { Invoke-RestMethod @splat | Out-Null; return $true }
+    catch {
+        $errorMessage = $_.Exception.Message
+
+        $response = $null
+        $stream = $null
+        $reader = $null
+        $responseBody = $null
+        try {
+            if ($_.Exception.Response) {
+                $response = $_.Exception.Response
+                $stream = $response.GetResponseStream()
+                if ($null -ne $stream) {
+                    $reader = [System.IO.StreamReader]::new($stream)
+                    $responseBody = $reader.ReadToEnd()
+                    if (-not [string]::IsNullOrWhiteSpace($responseBody)) {
+                        $errorMessage = "$errorMessage | Response: $responseBody"
+                    }
+                }
+            }
+        }
+        catch { }
+        finally {
+            # Dispose in reverse order; null refs for GC
+            if ($null -ne $reader) { try { $reader.Dispose() } catch { } }; $reader = $null
+            if ($null -ne $stream) { try { $stream.Dispose() } catch { } }; $stream = $null
+            if ($null -ne $response) {
+                try { $response.Close() } catch { }
+                if ($response -is [IDisposable]) { try { ($response -as [IDisposable]).Dispose() } catch { } }
+            }; $response = $null
+            $responseBody = $null
+        }
+
+        Write-Warning "Metrics batch POST failed: $errorMessage"
+        return $false
+    }
+}
+
+function Flush-MetricsBuffer {
+    <# v3.3.2: Send all buffered metrics in ONE POST. Updates buffer stats. #>
+    param([hashtable]$Buffer, [hashtable]$MetricsConfig)
+
+    if ($Buffer['EventCount'] -eq 0) {
+        return @{ Flushed = $false; Success = $true; EventsFlushed = 0 }
+    }
+
+    $body = $Buffer['Builder'].ToString()
+    $eventCount = $Buffer['EventCount']
+
+    $success = Invoke-MetricsPost -Body $body -MetricsConfig $MetricsConfig
+
+    # Always reset buffer after attempt (no retry for metrics - keep simple)
+    Reset-MetricsBufferBuilder -Buffer $Buffer
+
+    if ($success) {
+        $Buffer['BatchSuccessCount']++
+    } else {
+        $Buffer['BatchFailCount']++
+    }
+
+    return @{ Flushed = $true; Success = $success; EventsFlushed = if ($success) { $eventCount } else { 0 } }
+}
+
+#endregion
 
 #endregion
 
@@ -651,7 +830,9 @@ function Invoke-StreamingParallelPing {
         [bool]$EmitIndividualPings, [bool]$EmitEventSummaries, [bool]$EmitMetrics,
         [System.IO.StreamWriter]$FileWriter, [hashtable]$HecBuffer,
         [hashtable]$HecConfig, [hashtable]$MetricsConfig,
-        [System.Management.Automation.Runspaces.RunspacePool]$RunspacePool  # v3.3.0: Passed in, not created
+        [hashtable]$MetricsBuffer,  # v3.3.2: Metrics batching buffer
+        [System.Management.Automation.Runspaces.RunspacePool]$RunspacePool,  # v3.3.0: Passed in, not created
+        [string]$HandleProbeMode = "none"  # v3.3.2: none/hec_only/metrics_only for handle leak debugging
     )
 
     $hostname = $env:COMPUTERNAME
@@ -765,8 +946,10 @@ function Invoke-StreamingParallelPing {
         for ($j = $completed.Count - 1; $j -ge 0; $j--) {
             $idx = $completed[$j]
             $rs = $activeRunspaces[$idx]
+            $endInvokeCalled = $false
             try {
                 $raw = $rs.PowerShell.EndInvoke($rs.Handle)
+                $endInvokeCalled = $true
                 $result = if ($raw.Count -gt 0) { $raw[0] } else { $null }
                 if ($null -ne $result) {
                     $summary = $result.Summary
@@ -777,9 +960,13 @@ function Invoke-StreamingParallelPing {
                     else { $stats.TotalFailed++ }
 
                     # v3.2.0: Emit directly without intermediate list
+                    # v3.3.2: HandleProbeMode allows isolating which sink causes handle growth
+                    $skipHec = ($HandleProbeMode -eq "metrics_only")
+                    $skipMetrics = ($HandleProbeMode -eq "hec_only")
+
                     if ($EmitIndividualPings -and $null -ne $individual -and $individual.Count -gt 0) {
                         if ($null -ne $FileWriter) { Write-JsonLinesToWriter -Writer $FileWriter -Results $individual }
-                        if ($null -ne $HecBuffer) {
+                        if (-not $skipHec -and $null -ne $HecBuffer) {
                             $stats.HecEventCount += $individual.Count
                             $fr = Add-EventsToHecBuffer -Buffer $HecBuffer -Events $individual -HecConfig $HecConfig -Hostname $hostname
                             $stats.HecBatchSuccessCount += $fr.SuccessCount; $stats.HecBatchFailCount += $fr.FailCount
@@ -787,7 +974,7 @@ function Invoke-StreamingParallelPing {
                     }
                     if ($EmitEventSummaries) {
                         if ($null -ne $FileWriter) { Write-JsonLineToWriter -Writer $FileWriter -Event $summary }
-                        if ($null -ne $HecBuffer) {
+                        if (-not $skipHec -and $null -ne $HecBuffer) {
                             $stats.HecEventCount++
                             $fr = Add-EventToHecBuffer -Buffer $HecBuffer -Event $summary -HecConfig $HecConfig -Hostname $hostname
                             # FIX 1: Count batch success/failure based on Success flag, not EventsFlushed
@@ -797,26 +984,38 @@ function Invoke-StreamingParallelPing {
                             }
                         }
                     }
-                    if ($EmitMetrics) {
-                        if (Send-ToMetricsSink -Summary $summary -MetricsConfig $MetricsConfig -Hostname $hostname) { $stats.MetricsSuccessCount++ }
-                        else { $stats.MetricsFailCount++ }
+                    if ($EmitMetrics -and -not $skipMetrics -and $null -ne $MetricsBuffer) {
+                        # v3.3.2: Buffer metrics event for end-of-cycle batch POST (reduces handle churn)
+                        $metricsPayload = Build-MetricsPayload -Summary $summary -MetricsConfig $MetricsConfig -Hostname $hostname
+                        $ar = Add-MetricsEventToBuffer -Buffer $MetricsBuffer -MetricsEvent $metricsPayload
+                        if ($ar.Dropped) { $stats.MetricsFailCount++ } else { $stats.MetricsSuccessCount++ }
                     }
                 }
-            } catch { Write-Warning "Runspace error for $($rs.Endpoint.hostname): $($_.Exception.Message)"; $stats.TotalFailed++ }
+            } catch { Write-Warning "Runspace error for $($rs.Endpoint.hostname): $($_.Exception.Message)"; $stats.TotalFailed++; $endInvokeCalled = $true }
             finally {
-                # v3.3.1: Dispose the AsyncWaitHandle created by BeginInvoke() to prevent handle accumulation
-                # This is the PRIMARY fix for per-cycle handle growth. The IAsyncResult.AsyncWaitHandle
-                # is an OS WaitHandle that must be explicitly disposed.
-                try {
-                    if ($null -ne $rs.Handle -and $null -ne $rs.Handle.AsyncWaitHandle) {
-                        $rs.Handle.AsyncWaitHandle.Dispose()
-                    }
-                } catch { }
+                # Only dispose async artifacts if EndInvoke was called (or threw)
+                # This ensures we don't dispose handles for incomplete async operations
+                if ($endInvokeCalled) {
+                    try {
+                        if ($null -ne $rs.Handle) {
+                            # AsyncWaitHandle is an OS handle that must be disposed
+                            try {
+                                $wh = $rs.Handle.AsyncWaitHandle
+                                if ($null -ne $wh) { $wh.Dispose() }
+                            } catch { }
+
+                            # Some IAsyncResult implementations are also IDisposable
+                            if ($rs.Handle -is [IDisposable]) {
+                                try { ($rs.Handle -as [IDisposable]).Dispose() } catch { }
+                            }
+                        }
+                    } catch { }
+                }
 
                 # Dispose the PowerShell instance (but NOT the shared RunspacePool)
-                try { $rs.PowerShell.Dispose() } catch { }
+                try { if ($null -ne $rs.PowerShell) { $rs.PowerShell.Dispose() } } catch { }
 
-                # Nullify references to help GC and prevent accidental reuse
+                # Nullify references
                 $rs.Handle = $null
                 $rs.PowerShell = $null
             }
@@ -899,7 +1098,7 @@ function Start-PingMonitor {
     param([hashtable]$Config, [System.Collections.Generic.List[PSCustomObject]]$Endpoints, [switch]$RunOnce)
 
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor v3.3.2" -ForegroundColor Cyan
+    Write-Host "  Splunk Ping Monitor v3.3.3" -ForegroundColor Cyan
     Write-Host "  (Metrics compat mode + opt-in metrics-index)" -ForegroundColor DarkCyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Endpoints: $($Endpoints.Count) | Pings/cycle: $($Config.pings_per_cycle) | Interval: $($Config.cycle_interval_seconds)s"
@@ -943,12 +1142,21 @@ function Start-PingMonitor {
     # v3.3.0: Create HecBuffer ONCE if needed, persist across cycles for true retry-across-cycles
     $hecBuffer = if ($useHec) { Initialize-HecBuffer -HecConfig $Config.hec } else { $null }
 
+    # v3.3.2: Create MetricsBuffer ONCE if metrics enabled (batches all metrics per cycle into 1 POST)
+    $metricsBuffer = if ($emitMetrics) { Initialize-MetricsBuffer -MetricsConfig $Config.metrics } else { $null }
+
     $cycleCount = 0
 
     try {
         do {
             $cycleCount++
             $cycleStart = Get-Date
+
+            # v3.3.2: Reset metrics batch counters at cycle start (mirrors HEC which uses per-cycle $stats)
+            if ($null -ne $metricsBuffer) {
+                $metricsBuffer['BatchSuccessCount'] = 0
+                $metricsBuffer['BatchFailCount'] = 0
+            }
             
             # v3.3.0: Diagnostics at cycle start
             if ($diagnosticsEnabled) { Write-MemoryDiagnostics -Phase "START" -CycleNum $cycleCount }
@@ -970,11 +1178,13 @@ function Start-PingMonitor {
             $stats = $null
             try {
                 # v3.3.0: Pass the shared RunspacePool instead of ParallelThreads
+                # v3.3.2: Pass handle_probe_mode from diagnostics config; pass MetricsBuffer for batching
+                $handleProbeMode = if ($Config.diagnostics -and $Config.diagnostics.handle_probe_mode) { $Config.diagnostics.handle_probe_mode } else { "none" }
                 $stats = Invoke-StreamingParallelPing -Endpoints $Endpoints `
                     -PingsPerCycle $Config.pings_per_cycle -TimeoutMs $Config.timeout_ms `
                     -EmitIndividualPings $emitIndividual -EmitEventSummaries $emitSummaries -EmitMetrics $emitMetrics `
                     -FileWriter $fileWriter -HecBuffer $hecBuffer -HecConfig $Config.hec -MetricsConfig $Config.metrics `
-                    -RunspacePool $runspacePool
+                    -MetricsBuffer $metricsBuffer -RunspacePool $runspacePool -HandleProbeMode $handleProbeMode
             } finally {
                 if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
             }
@@ -988,6 +1198,11 @@ function Start-PingMonitor {
                 }
             }
 
+            # v3.3.2: Flush metrics buffer at end of cycle (1 POST for all metrics events)
+            if ($null -ne $metricsBuffer -and $metricsBuffer['EventCount'] -gt 0) {
+                $mfr = Flush-MetricsBuffer -Buffer $metricsBuffer -MetricsConfig $Config.metrics
+            }
+
             if ($null -eq $stats) { $stats = @{ TotalSuccess=0; TotalPartial=0; TotalFailed=$Endpoints.Count; HecBatchSuccessCount=0; HecBatchFailCount=0; HecEventCount=0; MetricsSuccessCount=0; MetricsFailCount=0 } }
 
             # Bug fix: Use tracked boolean, not disposed writer reference, for accurate status
@@ -999,7 +1214,12 @@ function Start-PingMonitor {
                 # v3.3.0: Show retained events if any (for retry next cycle)
                 if ($hecBuffer -and $hecBuffer['EventCount'] -gt 0) { Write-Host "HEC: $($hecBuffer['EventCount']) events retained for retry" -ForegroundColor Yellow }
             }
-            if ($emitMetrics) { Write-Host "Metrics: $($stats.MetricsSuccessCount) sent" -ForegroundColor Green }
+            if ($emitMetrics -and $null -ne $metricsBuffer) {
+                # v3.3.2: Report metrics batching stats
+                $mTotalBatches = $metricsBuffer['BatchSuccessCount'] + $metricsBuffer['BatchFailCount']
+                Write-Host "Metrics: $($stats.MetricsSuccessCount) events, $mTotalBatches batches (OK=$($metricsBuffer['BatchSuccessCount']), Failed=$($metricsBuffer['BatchFailCount']))" -ForegroundColor $(if ($metricsBuffer['BatchFailCount'] -eq 0) { "Green" } else { "Yellow" })
+                if ($metricsBuffer['DroppedEvents'] -gt 0) { Write-Host "Metrics: $($metricsBuffer['DroppedEvents']) events dropped (buffer cap)" -ForegroundColor Yellow }
+            }
 
             Write-Host "Cycle #$cycleCount complete: Success=$($stats.TotalSuccess) Partial=$($stats.TotalPartial) Failed=$($stats.TotalFailed)" -ForegroundColor $(if ($stats.TotalFailed -eq 0) { "Green" } elseif ($stats.TotalFailed -lt $Endpoints.Count) { "Yellow" } else { "Red" })
 
@@ -1022,7 +1242,7 @@ function Start-PingMonitor {
         # HecBuffer doesn't need explicit disposal (it's just a hashtable with a StringBuilder)
     }
 
-    Write-Host "Ping Monitor v3.3.2 completed." -ForegroundColor Cyan
+    Write-Host "Ping Monitor v3.3.3 completed." -ForegroundColor Cyan
 }
 
 #endregion
@@ -1190,7 +1410,7 @@ function Test-MetricsPayloadShape {
 
     # Validate top-level keys
     $requiredTopKeys = @('time', 'host', 'source', 'sourcetype', 'index', 'event', 'fields')
-    $missingTopKeys = $requiredTopKeys | Where-Object { -not $payload1.ContainsKey($_) }
+    $missingTopKeys = @($requiredTopKeys | Where-Object { -not $payload1.ContainsKey($_) })
     if ($missingTopKeys.Count -eq 0) {
         Write-Host "  PASS: All required top-level keys present" -ForegroundColor Green
         $passCount++
@@ -1217,7 +1437,7 @@ function Test-MetricsPayloadShape {
         'metric_name:ping.pings_sent',
         'metric_name:ping.pings_successful'
     )
-    $missingMetricFields = $requiredMetricFields | Where-Object { -not $payload1.fields.ContainsKey($_) }
+    $missingMetricFields = @($requiredMetricFields | Where-Object { -not $payload1.fields.ContainsKey($_) })
     if ($missingMetricFields.Count -eq 0) {
         Write-Host "  PASS: All metric_name fields present" -ForegroundColor Green
         $passCount++
@@ -1228,7 +1448,7 @@ function Test-MetricsPayloadShape {
 
     # Validate dimension fields
     $requiredDimensions = @('hostname', 'target_ip', 'group')
-    $missingDimensions = $requiredDimensions | Where-Object { -not $payload1.fields.ContainsKey($_) }
+    $missingDimensions = @($requiredDimensions | Where-Object { -not $payload1.fields.ContainsKey($_) })
     if ($missingDimensions.Count -eq 0) {
         Write-Host "  PASS: All dimension fields present" -ForegroundColor Green
         $passCount++
@@ -1271,7 +1491,7 @@ function Test-MetricsPayloadShape {
     }
 
     # Validate all metric fields still present
-    $missingMetricFields2 = $requiredMetricFields | Where-Object { -not $payload2.fields.ContainsKey($_) }
+    $missingMetricFields2 = @($requiredMetricFields | Where-Object { -not $payload2.fields.ContainsKey($_) })
     if ($missingMetricFields2.Count -eq 0) {
         Write-Host "  PASS: All metric_name fields present in metrics-index mode" -ForegroundColor Green
         $passCount++
@@ -1392,7 +1612,7 @@ function Test-MemoryStability {
                     -PingsPerCycle $testConfig.pings_per_cycle -TimeoutMs $testConfig.timeout_ms `
                     -EmitIndividualPings $false -EmitEventSummaries $true -EmitMetrics $false `
                     -FileWriter $fileWriter -HecBuffer $null -HecConfig $testConfig.hec -MetricsConfig $testConfig.metrics `
-                    -RunspacePool $runspacePool
+                    -MetricsBuffer $null -RunspacePool $runspacePool
             }
             finally {
                 if ($null -ne $fileWriter) { Close-FileWriter -Writer $fileWriter }
@@ -1444,6 +1664,12 @@ function Test-MemoryStability {
 #region Entry Point
 
 try {
+    # v3.3.2: Run metrics payload test and exit if requested
+    if ($TestMetricsPayload) {
+        Test-MetricsPayloadShape
+        exit 0
+    }
+
     if ([string]::IsNullOrEmpty($ConfigPath)) { $ConfigPath = Join-Path $ScriptDir "config.psd1" }
     if ([string]::IsNullOrEmpty($EndpointsPath)) { $EndpointsPath = Join-Path $ScriptDir "endpoints.csv" }
 
