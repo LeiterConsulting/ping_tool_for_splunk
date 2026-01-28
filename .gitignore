@@ -46,3 +46,6 @@ PingMonitor_v3_2_1.ps1
 
 # VS Code workspace file
 Ping Tool for Splunk.code-workspace
+
+# Local prompt/work notes
+GPT5_2_PingMonitor_Refactor_Prompt.md
