@@ -190,6 +190,12 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 
 ---
 
+## Docs
+
+- [Best Practices & Troubleshooting](BEST_PRACTICES.md)
+
+---
+
 ## Quick Start
 
 ### Windows
