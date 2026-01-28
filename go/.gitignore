@@ -1,0 +1,6 @@
+dist/
+logs/
+config.yaml
+*.exe
+*.test
+*.out

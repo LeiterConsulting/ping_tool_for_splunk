@@ -49,3 +49,9 @@ Ping Tool for Splunk.code-workspace
 
 # Local prompt/work notes
 GPT5_2_PingMonitor_Refactor_Prompt.md
+GPT5_2_PingMonitor_v5_Go_Rewrite.md
+
+# Go (v5) build artifacts
+go/dist/
+go/bin/
+go/.cache/

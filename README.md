@@ -10,6 +10,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
+| `go/` (Ping Monitor v5, Go) | **v5.0.0-dev** | 🧪 **In Progress** | Go rewrite for performance/resilience; uses `config.psd1` + `endpoints.csv` |
 | `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Current Stable** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
