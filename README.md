@@ -1,4 +1,4 @@
-# Splunk Ping Monitor v3.3.3
+# Splunk Ping Monitor
 
 **Enterprise-grade network availability monitoring for Splunk — zero dependencies, maximum flexibility.**
 
@@ -10,7 +10,8 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Current Stable** | Full-featured, memory optimized, metrics batching |
+| `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Current Stable** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
+| `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
 | `PingMonitor.ps1` | v1.x | ⚠️ **Deprecated** | Legacy version, use v3.3.3 for new deployments |
 
@@ -198,13 +199,13 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 notepad endpoints.csv
 
 # 2. Test run (single cycle)
-pwsh -File .\PingMonitor_v3_3_3.ps1 -RunOnce
+pwsh -File .\PingMonitor_v4_0_0.ps1 -RunOnce
 
 # 3. Run continuously
-pwsh -File .\PingMonitor_v3_3_3.ps1
+pwsh -File .\PingMonitor_v4_0_0.ps1
 
 # 4. (Optional) Run metrics payload self-test
-pwsh -File .\PingMonitor_v3_3_3.ps1 -TestMetricsPayload
+pwsh -File .\PingMonitor_v4_0_0.ps1 -TestMetricsPayload
 ```
 
 ### Unix/Linux/macOS

@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     This script uses NSSM (Non-Sucking Service Manager) to create a Windows Service
-    that runs the PingMonitor_v3_3_3.ps1 script continuously.
+    that runs the PingMonitor script continuously.
 
 .PARAMETER Install
     Installs the service.
@@ -51,17 +51,37 @@ param(
     [switch]$Stop,
 
     [Parameter(ParameterSetName = 'Status')]
-    [switch]$Status
+    [switch]$Status,
+
+    [Parameter()]
+    [ValidateSet('v4.0.0', 'v3.3.3')]
+    [string]$Version = 'v4.0.0',
+
+    [Parameter()]
+    [string]$PingMonitorScriptName,
+
+    [Parameter()]
+    [string]$ServiceName = "SplunkPingMonitor"
 )
 
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$ServiceName = "SplunkPingMonitor"
-$ServiceDisplayName = "Splunk Ping Monitor v3.3.3"
-$ServiceDescription = "Monitors network endpoints and sends ping results to Splunk (v3.3.3)"
+$ServiceDisplayName = "Splunk Ping Monitor $Version"
+$ServiceDescription = "Monitors network endpoints and sends ping results to Splunk ($Version)"
 $ScriptDir = $PSScriptRoot
-$PingMonitorScript = Join-Path $ScriptDir "PingMonitor_v3_3_3.ps1"
+
+$resolvedScriptName = if ($PingMonitorScriptName) {
+    $PingMonitorScriptName
+}
+else {
+    switch ($Version) {
+        'v3.3.3' { 'PingMonitor_v3_3_3.ps1' }
+        default { 'PingMonitor_v4_0_0.ps1' }
+    }
+}
+
+$PingMonitorScript = Join-Path $ScriptDir $resolvedScriptName
 $NssmPath = Join-Path $ScriptDir "nssm.exe"
 $NssmDownloadUrl = "https://nssm.cc/release/nssm-2.24.zip"
 
