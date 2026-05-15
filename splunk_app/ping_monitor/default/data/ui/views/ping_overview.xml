@@ -1,4 +1,4 @@
-<dashboard version="1.1" theme="dark">
+<dashboard version="1.1">
   <label>Ping Monitor Overview</label>
   <description>Enterprise network endpoint availability and latency monitoring with asset correlation</description>
   
@@ -12,8 +12,8 @@
   <search id="config_loader">
     <query>| inputlookup ping_monitor_settings_lookup
 | head 1
-| eval pm_index=if(isnull(events_index) OR events_index=="", "ping", events_index)
-| eval pm_sourcetype=if(isnull(events_sourcetype) OR events_sourcetype=="", "ping_monitor", events_sourcetype)
+| eval pm_index=if(isnull(index) OR index=="", "ping", index)
+| eval pm_sourcetype=if(isnull(sourcetype) OR sourcetype=="", "ping_monitor", sourcetype)
 | eval pm_metrics_index=if(isnull(metrics_index) OR metrics_index=="", "ping_metrics", metrics_index)</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
@@ -118,14 +118,8 @@
   <row depends="$config_loaded$">
     <panel>
       <html>
-        <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
-          <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
-          <span style="color: #fff; margin-left: 10px;">$data_source|s$</span>
-          <span style="color: #888; margin-left: 20px;">
-            Events Index: <strong>$pm_index$</strong> | 
-            Metrics Index: <strong>$pm_metrics_index$</strong>
-          </span>
-        </div>
+        <p><strong>Viewing:</strong> $data_source|s$</p>
+        <p><strong>Events index:</strong> $pm_index$ | <strong>Sourcetype:</strong> $pm_sourcetype$ | <strong>Metrics index:</strong> $pm_metrics_index$</p>
       </html>
     </panel>
   </row>
@@ -353,19 +347,12 @@
     packet_loss&gt;=50 AND packet_loss&lt;100, "Critical",
     packet_loss==100, "Down"
 )
-| eval status_icon=case(
-    status=="Healthy", "✅",
-    status=="Degraded", "⚠️",
-    status=="Critical", "🔶",
-    status=="Down", "❌"
-)
-| eval display_status=status_icon." ".status
 | eval avg_latency=if(avg_latency&gt;0, round(avg_latency, 2)." ms", "N/A")
 | eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
 | eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
 | eval packet_loss=packet_loss."%"
-| table display_status, hostname, target_ip, group, entitytype, device, vendor, description, packet_loss, avg_latency, min_latency, max_latency, last_check
-| rename display_status as Status
+| table status, hostname, target_ip, group, entitytype, device, vendor, description, packet_loss, avg_latency, min_latency, max_latency, last_check
+| rename status as Status
 | sort status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -424,10 +411,10 @@
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=ping
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
-| eval status_icon=if(status=="success", "✅", "❌")
+| eval status_label=if(status=="success", "Success", "Failed")
 | eval latency_display=if(latency_ms&gt;0, latency_ms." ms", "N/A")
-| table timestamp, status_icon, hostname, target_ip, group, latency_display, ttl, error_message
-| rename status_icon as Status, latency_display as Latency, error_message as "Error Message"
+| table timestamp, status_label, hostname, target_ip, group, latency_display, ttl, error_message
+| rename status_label as Status, latency_display as Latency, error_message as "Error Message"
 | sort -timestamp
 | head 100</query>
           <earliest>$time_range.earliest$</earliest>
@@ -641,19 +628,12 @@
     packet_loss&gt;=50 AND packet_loss&lt;100, "Critical",
     packet_loss==100, "Down"
 )
-| eval status_icon=case(
-    status=="Healthy", "✅",
-    status=="Degraded", "⚠️",
-    status=="Critical", "🔶",
-    status=="Down", "❌"
-)
-| eval display_status=status_icon." ".status
 | eval avg_latency=if(avg_latency&gt;0, round(avg_latency, 2)." ms", "N/A")
 | eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
 | eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
 | eval packet_loss=packet_loss."%"
-| table display_status, hostname, target_ip, group, packet_loss, avg_latency, min_latency, max_latency, last_check
-| rename display_status as Status
+| table status, hostname, target_ip, group, packet_loss, avg_latency, min_latency, max_latency, last_check
+| rename status as Status
 | sort status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -706,13 +686,9 @@
   <!-- Row 1: Key Metrics Side by Side - COMBINED -->
   <row depends="$show_combined$">
     <panel>
-      <title>📊 Events vs Metrics Comparison</title>
+      <title>Events vs Metrics Comparison</title>
       <html>
-        <div style="padding: 10px; background: #1a2a3a; border-radius: 5px; border: 1px solid #2a4a6a;">
-          <p style="color: #6db7c6; margin: 0;">
-            <strong>Combined View:</strong> Showing data from both Events (index: <strong>$pm_index$</strong>) and Metrics (index: <strong>$pm_metrics_index$</strong>) sources side by side for comparison.
-          </p>
-        </div>
+        <p>Compare summary events from <strong>$pm_index$</strong> with metrics data from <strong>$pm_metrics_index$</strong> side by side.</p>
       </html>
     </panel>
   </row>
@@ -720,7 +696,7 @@
   <row depends="$show_combined$">
     <panel>
       <single>
-        <title>📋 Endpoints (Events)</title>
+        <title>Endpoints (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
@@ -737,7 +713,7 @@
     </panel>
     <panel>
       <single>
-        <title>📈 Endpoints (Metrics)</title>
+        <title>Endpoints (Metrics)</title>
         <search>
           <query>| mstats count("ping.pings_sent") as count WHERE index="$pm_metrics_index$" (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*") BY hostname
 | stats dc(hostname) as total_endpoints</query>
@@ -753,7 +729,7 @@
     </panel>
     <panel>
       <single>
-        <title>📋 Availability (Events)</title>
+        <title>Availability (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
@@ -774,7 +750,7 @@
     </panel>
     <panel>
       <single>
-        <title>📈 Availability (Metrics)</title>
+        <title>Availability (Metrics)</title>
         <search>
           <query>| mstats sum("ping.pings_successful") as success, sum("ping.pings_sent") as total WHERE index="$pm_metrics_index$" (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | eval availability=round((success/total)*100, 2)
@@ -796,7 +772,7 @@
   <row depends="$show_combined$">
     <panel>
       <single>
-        <title>📋 Avg Latency (Events)</title>
+        <title>Average Latency (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
@@ -816,7 +792,7 @@
     </panel>
     <panel>
       <single>
-        <title>📈 Avg Latency (Metrics)</title>
+        <title>Average Latency (Metrics)</title>
         <search>
           <query>| mstats avg("ping.avg_latency_ms") as avg_latency WHERE index="$pm_metrics_index$" (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | eval avg_latency=round(avg_latency, 2)</query>
@@ -834,7 +810,7 @@
     </panel>
     <panel>
       <single>
-        <title>📋 Hosts with Issues (Events)</title>
+        <title>Hosts with Issues (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
@@ -853,7 +829,7 @@
     </panel>
     <panel>
       <single>
-        <title>📈 Hosts with Issues (Metrics)</title>
+        <title>Hosts with Issues (Metrics)</title>
         <search>
           <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*") BY hostname
 | where packet_loss &gt; 0
@@ -873,7 +849,7 @@
   <!-- Row 2: Availability Over Time - COMBINED -->
   <row depends="$show_combined$">
     <panel>
-      <title>📊 Availability Over Time - Events vs Metrics Comparison</title>
+      <title>Availability Over Time - Events vs Metrics Comparison</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -899,7 +875,7 @@
   <!-- Row 3: Host Status Comparison Table - COMBINED -->
   <row depends="$show_combined$">
     <panel>
-      <title>📊 Host Status Comparison - Events vs Metrics</title>
+      <title>Host Status Comparison - Events vs Metrics</title>
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -909,23 +885,23 @@
         latest(group) as group
         by hostname, target_ip
 | eval events_status=case(
-    events_loss==0, "✅ Healthy",
-    events_loss&gt;0 AND events_loss&lt;50, "⚠️ Degraded",
-    events_loss&gt;=50 AND events_loss&lt;100, "🔶 Critical",
-    events_loss==100, "❌ Down"
+  events_loss==0, "Healthy",
+  events_loss&gt;0 AND events_loss&lt;50, "Degraded",
+  events_loss&gt;=50 AND events_loss&lt;100, "Critical",
+  events_loss==100, "Down"
 )
 | join type=outer hostname [| mstats latest("ping.packet_loss_pct") as metrics_loss,
         latest("ping.avg_latency_ms") as metrics_latency
         WHERE index="$pm_metrics_index$" BY hostname
 | eval metrics_status=case(
-    metrics_loss==0, "✅ Healthy",
-    metrics_loss&gt;0 AND metrics_loss&lt;50, "⚠️ Degraded",
-    metrics_loss&gt;=50 AND metrics_loss&lt;100, "🔶 Critical",
-    metrics_loss==100, "❌ Down"
+  metrics_loss==0, "Healthy",
+  metrics_loss&gt;0 AND metrics_loss&lt;50, "Degraded",
+  metrics_loss&gt;=50 AND metrics_loss&lt;100, "Critical",
+  metrics_loss==100, "Down"
 )]
 | eval events_latency=round(events_latency, 2)
 | eval metrics_latency=round(metrics_latency, 2)
-| eval match=if(events_status==metrics_status, "✓", "⚠️ Mismatch")
+| eval match=if(events_status==metrics_status, "Match", "Mismatch")
 | table hostname, target_ip, group, events_status, metrics_status, match, events_loss, metrics_loss, events_latency, metrics_latency
 | rename events_status as "Events Status", metrics_status as "Metrics Status", match as "Match", events_loss as "Events Loss %", metrics_loss as "Metrics Loss %", events_latency as "Events Latency (ms)", metrics_latency as "Metrics Latency (ms)"
 | sort hostname</query>
@@ -942,7 +918,7 @@
   <!-- Row 4: Group Availability Comparison - COMBINED -->
   <row depends="$show_combined$">
     <panel>
-      <title>📊 Availability by Group - Events vs Metrics</title>
+      <title>Availability by Group - Events vs Metrics</title>
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
@@ -969,7 +945,7 @@
       </chart>
     </panel>
     <panel>
-      <title>📊 Data Source Statistics</title>
+      <title>Data Source Statistics</title>
       <table>
         <search>
           <query>| makeresults 

@@ -1,2 +1,0 @@
-# Empty placeholder lookup - will be populated by scheduled search
-hostname,target_ip,health_status,packet_loss_pct,avg_latency_ms,group,entitytype

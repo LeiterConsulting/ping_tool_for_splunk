@@ -1,4 +1,4 @@
-<nav color="#5cc05c">
+<nav>
   <view name="ping_overview" default="true"/>
   <view name="asset_correlation"/>
   <view name="setup"/>

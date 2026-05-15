@@ -1,4 +1,4 @@
-<dashboard version="1.1" theme="dark">
+<dashboard version="1.1">
   <label>Asset Health Correlation</label>
   <description>Correlate endpoint availability with other Splunk data sources</description>
   
@@ -67,14 +67,8 @@
   <row>
     <panel>
       <html>
-        <div style="padding: 10px; background: #1a1a2e; border-radius: 5px; text-align: center;">
-          <span style="color: #6db7c6; font-weight: bold;">📊 Data Source:</span>
-          <span style="color: #fff; margin-left: 10px;">$data_source|s$</span>
-          <span style="color: #888; margin-left: 20px;">
-            Events Index: <strong>$pm_index$</strong> | 
-            Metrics Index: <strong>$pm_metrics_index$</strong>
-          </span>
-        </div>
+        <p><strong>Viewing:</strong> $data_source|s$</p>
+        <p><strong>Events index:</strong> $pm_index$ | <strong>Sourcetype:</strong> $pm_sourcetype$ | <strong>Metrics index:</strong> $pm_metrics_index$</p>
       </html>
     </panel>
   </row>
@@ -102,17 +96,10 @@
     packet_loss == 100, "Down",
     true(), "Unknown"
 )
-| eval health_icon = case(
-    health_status == "Healthy", "✅",
-    health_status == "Degraded", "⚠️",
-    health_status == "Critical", "🔶",
-    health_status == "Down", "❌",
-    true(), "❓"
-)
 | eval last_check_human = strftime(last_check, "%Y-%m-%d %H:%M:%S")
 | eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
-| table health_icon, hostname, ip_address, health_status, packet_loss, latency_display, group, entitytype, device, vendor, last_check_human
-| rename health_icon as " ", packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
+| table hostname, ip_address, health_status, packet_loss, latency_display, group, entitytype, device, vendor, last_check_human
+| rename packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
 | sort health_status, hostname</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -140,17 +127,10 @@
     packet_loss == 100, "Down",
     true(), "Unknown"
 )
-| eval health_icon = case(
-    health_status == "Healthy", "✅",
-    health_status == "Degraded", "⚠️",
-    health_status == "Critical", "🔶",
-    health_status == "Down", "❌",
-    true(), "❓"
-)
 | eval last_check_human = strftime(_time, "%Y-%m-%d %H:%M:%S")
 | eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
-| table health_icon, hostname, target_ip, health_status, packet_loss, latency_display, group, last_check_human
-| rename health_icon as " ", target_ip as "IP Address", packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
+| table hostname, target_ip, health_status, packet_loss, latency_display, group, last_check_human
+| rename target_ip as "IP Address", packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
 | sort health_status, hostname</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -268,9 +248,9 @@
         latest(entitytype) as entitytype
         by hostname
 | eval health_status = case(
-    packet_loss > 0 AND packet_loss &lt; 50, "⚠️ Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "🔶 Critical",
-    packet_loss == 100, "❌ Down"
+  packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+  packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
+  packet_loss == 100, "Down"
 )
 | eval latency = round(latency, 2)
 | table health_status, hostname, ip, packet_loss, latency, group, entitytype
@@ -296,9 +276,9 @@
         WHERE index="$pm_metrics_index$" BY hostname, target_ip, group
 | where packet_loss > 0
 | eval health_status = case(
-    packet_loss > 0 AND packet_loss &lt; 50, "⚠️ Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "🔶 Critical",
-    packet_loss == 100, "❌ Down"
+  packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
+  packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
+  packet_loss == 100, "Down"
 )
 | eval latency = round(latency, 2)
 | table health_status, hostname, target_ip, packet_loss, latency, group
@@ -325,11 +305,11 @@
 | eventstats sum(healthy) as healthy_count, sum(asset_count) as total by entitytype
 | eval health_pct = round((healthy_count / total) * 100, 1)
 | eval status = case(
-    health_pct >= 99, "✅ Excellent",
-    health_pct >= 90, "🟢 Good",
-    health_pct >= 75, "⚠️ Degraded",
-    health_pct >= 50, "🔶 Impaired",
-    true(), "❌ Critical"
+  health_pct >= 99, "Excellent",
+  health_pct >= 90, "Good",
+  health_pct >= 75, "Degraded",
+  health_pct >= 50, "Impaired",
+  true(), "Critical"
 )
 | stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by entitytype
 | sort -health_pct
@@ -351,11 +331,11 @@
 | eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
 | eval health_pct = round((healthy_count / total) * 100, 1)
 | eval status = case(
-    health_pct >= 99, "✅ Excellent",
-    health_pct >= 90, "🟢 Good",
-    health_pct >= 75, "⚠️ Degraded",
-    health_pct >= 50, "🔶 Impaired",
-    true(), "❌ Critical"
+  health_pct >= 99, "Excellent",
+  health_pct >= 90, "Good",
+  health_pct >= 75, "Degraded",
+  health_pct >= 50, "Impaired",
+  true(), "Critical"
 )
 | stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
 | sort -health_pct
@@ -381,11 +361,11 @@
 | eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
 | eval health_pct = round((healthy_count / total) * 100, 1)
 | eval status = case(
-    health_pct >= 99, "✅ Excellent",
-    health_pct >= 90, "🟢 Good",
-    health_pct >= 75, "⚠️ Degraded",
-    health_pct >= 50, "🔶 Impaired",
-    true(), "❌ Critical"
+  health_pct >= 99, "Excellent",
+  health_pct >= 90, "Good",
+  health_pct >= 75, "Degraded",
+  health_pct >= 50, "Impaired",
+  true(), "Critical"
 )
 | stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
 | sort -health_pct

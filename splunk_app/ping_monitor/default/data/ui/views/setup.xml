@@ -1,18 +1,16 @@
-<dashboard version="1.1" theme="dark">
+<dashboard version="1.1">
   <label>Ping Monitor Setup</label>
-  <description>Configure global settings for the Ping Monitor application</description>
-  
-  <!-- Initialize defaults - but NOT the form tokens that trigger save -->
+  <description>Configure the indexes and sourcetype used by the Ping Monitor dashboards, reports, and alerts.</description>
+
   <init>
     <set token="default_index">ping</set>
     <set token="default_sourcetype">ping_monitor</set>
     <set token="default_metrics_index">ping_metrics</set>
   </init>
 
-  <!-- Load existing configuration into display tokens (not form tokens) -->
   <search id="load_existing_config">
-    <query>| inputlookup ping_monitor_settings_lookup 
-| search _key="global" 
+    <query>| inputlookup ping_monitor_settings_lookup
+| search _key="global"
 | head 1
 | append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
 | head 1
@@ -44,73 +42,37 @@
     </done>
   </search>
 
-  <!-- ==================== SECTION 1: Header & Overview ==================== -->
   <row>
     <panel>
       <html>
-        <style>
-          .setup-hero {
-            background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%);
-            padding: 30px;
-            border-radius: 10px;
-            border: 1px solid #2a4a6a;
-            text-align: center;
-            margin-bottom: 10px;
-          }
-          .setup-hero h1 { color: #5cc05c; font-size: 32px; margin: 0 0 10px 0; }
-          .setup-hero p { color: #99aabc; font-size: 16px; margin: 0; }
-          .section-header {
-            background: #1a1a2e;
-            padding: 15px 20px;
-            border-radius: 8px 8px 0 0;
-            border-bottom: 2px solid #5cc05c;
-            margin-bottom: -1px;
-          }
-          .section-header h2 { color: #5cc05c; margin: 0; font-size: 18px; }
-          .section-header p { color: #888; margin: 5px 0 0 0; font-size: 13px; }
-          .info-box {
-            padding: 15px;
-            background: #1a2a3a;
-            border-radius: 5px;
-            border-left: 4px solid #6db7c6;
-          }
-          .info-box.success { border-left-color: #5cc05c; }
-          .info-box.warning { border-left-color: #f8be34; }
-        </style>
-        <div class="setup-hero">
-          <h1>🎯 Ping Monitor Setup</h1>
-          <p>Configure your Splunk index settings below. These settings are used by all dashboards and saved searches.</p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <!-- ==================== SECTION 2: Current Configuration Status ==================== -->
-  <row>
-    <panel>
-      <html>
-        <div class="section-header">
-          <h2>📋 Step 1: Review Current Configuration</h2>
-          <p>Check if your settings have been saved. If not configured, default values will be used.</p>
-        </div>
+        <p>Use this page to review the current application settings and update the event index, sourcetype, and metrics index stored in the Ping Monitor KV Store.</p>
       </html>
     </panel>
   </row>
 
   <row>
     <panel>
-      <title>Current Saved Settings (from KV Store)</title>
+      <title>Current saved settings</title>
+      <html>
+        <p>Review the values currently stored in KV Store. If nothing has been saved yet, the app will use the defaults shown below.</p>
+      </html>
+    </panel>
+  </row>
+
+  <row>
+    <panel>
+      <title>Saved settings</title>
       <table>
         <search>
-          <query>| inputlookup ping_monitor_settings_lookup 
-| search _key="global" 
+          <query>| inputlookup ping_monitor_settings_lookup
+| search _key="global"
 | head 1
 | eval found=1
 | append [| makeresults | eval found=0, index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
 | sort - found
 | head 1
-| eval status=if(configured=="true", "✅ Configured", "⚠️ Using Defaults")
-| eval last_updated=if(isnull(last_updated) OR last_updated="", "Never", last_updated)
+| eval status=if(configured=="true", "Configured", "Using defaults")
+| eval last_updated=if(isnull(last_updated) OR last_updated=="", "Never", last_updated)
 | table status, index, sourcetype, metrics_index, last_updated
 | rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated as "Last Updated"</query>
           <earliest>-1m</earliest>
@@ -124,32 +86,24 @@
     </panel>
   </row>
 
-  <!-- ==================== SECTION 3: Configuration Form ==================== -->
   <row>
     <panel>
+      <title>Update settings</title>
       <html>
-        <div class="section-header">
-          <h2>⚙️ Step 2: Configure Index Settings</h2>
-          <p>Enter your Splunk index and sourcetype values, then click <strong>Save Configuration</strong> to save.</p>
-        </div>
+        <p>Enter the values used by your Ping Monitor deployment, then save the configuration. These values are used throughout the app.</p>
       </html>
     </panel>
   </row>
 
   <row>
     <panel>
+      <title>Instructions</title>
       <html>
-        <div class="info-box">
-          <p style="color: #6db7c6; margin: 0;">
-            <strong>💡 Instructions:</strong> Enter your settings below and click "Save Configuration". 
-            The settings will be stored in the KV Store and used by all Ping Monitor dashboards.
-          </p>
-        </div>
+        <p>Changes are written to the <strong>ping_monitor_settings_lookup</strong> KV Store collection and will be used by dashboards and saved searches on the next page load.</p>
       </html>
     </panel>
   </row>
 
-  <!-- Form inputs - Submit button triggers the save -->
   <fieldset submitButton="false" autoRun="false">
     <input type="text" token="form_index" searchWhenChanged="false">
       <label>Events Index</label>
@@ -165,7 +119,7 @@
     </input>
     <input type="link" token="trigger_save">
       <label></label>
-      <choice value="save">💾 Save Configuration</choice>
+      <choice value="save">Save configuration</choice>
       <change>
         <condition value="save">
           <set token="do_save">true</set>
@@ -175,7 +129,7 @@
     </input>
     <input type="link" token="trigger_reset">
       <label></label>
-      <choice value="reset">🔄 Hide Save Result</choice>
+      <choice value="reset">Hide save result</choice>
       <change>
         <condition value="reset">
           <unset token="do_save"/>
@@ -184,22 +138,21 @@
     </input>
   </fieldset>
 
-  <!-- Save Configuration - Only runs when do_save token is set by clicking Save button -->
   <row depends="$do_save$">
     <panel>
-      <title>💾 Save Result</title>
+      <title>Save result</title>
       <table>
         <search>
-          <query>| makeresults 
-| eval _key="global", 
-       index="$form_index$", 
-       sourcetype="$form_sourcetype$", 
+          <query>| makeresults
+| eval _key="global",
+       index="$form_index$",
+       sourcetype="$form_sourcetype$",
        metrics_index="$form_metrics_index$",
        configured="true",
        last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
 | table _key, index, sourcetype, metrics_index, configured, last_updated
 | outputlookup ping_monitor_settings_lookup key_field=_key
-| eval result="✅ Configuration saved successfully at " . last_updated
+| eval result="Configuration saved at " . last_updated
 | eval details="Events Index: " . index . " | Sourcetype: " . sourcetype . " | Metrics Index: " . metrics_index
 | table result, details
 | rename result as "Status", details as "Saved Settings"</query>
@@ -212,66 +165,24 @@
     </panel>
   </row>
 
-  <!-- Refresh instructions -->
   <row>
     <panel>
+      <title>After saving</title>
       <html>
-        <div class="info-box warning" style="border-left-color: #f8be34;">
-          <p style="color: #f8be34; margin: 0;">
-            <strong>⚠️ After Saving:</strong> Refresh this page to see the updated "Current Saved Settings" above.
-            Other dashboards will automatically use the new settings on their next page load.
-          </p>
-        </div>
-      </html>
-    </panel>
-  </row>
-
-  <!-- ==================== SECTION 3: Next Steps ==================== -->
-  <row>
-    <panel>
-      <html>
-        <div class="section-header">
-          <h2>✅ Step 3: Setup Complete - Next Steps</h2>
-          <p>Your Ping Monitor is configured. Visit the Overview dashboard to verify your data is displaying correctly.</p>
-        </div>
+        <p>Refresh this page to confirm the updated values. Other dashboards pick up the saved settings the next time they are opened.</p>
       </html>
     </panel>
   </row>
 
   <row>
     <panel>
+      <title>Next steps</title>
       <html>
-        <div style="padding: 25px; background: linear-gradient(135deg, #1a2a3a 0%, #0d1520 100%); border-radius: 8px; border: 1px solid #2a4a6a;">
-          <table style="width: 100%; border-collapse: separate; border-spacing: 0 15px;">
-            <tr>
-              <td style="width: 60px; vertical-align: top;">
-                <span style="font-size: 28px;">📊</span>
-              </td>
-              <td>
-                <strong style="color: #5cc05c; font-size: 16px;">View Your Dashboard</strong>
-                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Ping Monitor Overview</strong> to see availability, latency, and health status for all monitored endpoints. Choose between Events, Metrics, or Combined view.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="width: 60px; vertical-align: top;">
-                <span style="font-size: 28px;">🔗</span>
-              </td>
-              <td>
-                <strong style="color: #f8be34; font-size: 16px;">Correlate Health Data</strong>
-                <p style="color: #aaa; margin: 5px 0 0 0;">Visit <strong>Asset Health Correlation</strong> to analyze service impact and correlate ping health with other data sources using the lookup table.</p>
-              </td>
-            </tr>
-            <tr>
-              <td style="width: 60px; vertical-align: top;">
-                <span style="font-size: 28px;">⏰</span>
-              </td>
-              <td>
-                <strong style="color: #dc4e41; font-size: 16px;">Enable Scheduled Searches</strong>
-                <p style="color: #aaa; margin: 5px 0 0 0;">Go to <strong>Settings - Saved Searches</strong> to enable alerts for endpoint down, high packet loss, and high latency conditions.</p>
-              </td>
-            </tr>
-          </table>
-        </div>
+        <ol>
+          <li>Open <strong>Ping Monitor Overview</strong> to verify that events and metrics are returning data.</li>
+          <li>Open <strong>Asset Health Correlation</strong> to review the lookup-driven health views.</li>
+          <li>Enable the packaged saved searches and alerts from Splunk settings when you are ready.</li>
+        </ol>
       </html>
     </panel>
   </row>

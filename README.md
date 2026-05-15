@@ -175,8 +175,12 @@ Dashboard filters now properly support values with spaces:
 
 No special quoting required in your `endpoints.csv` — just use natural names.
 
-### 🧭 Splunk App (Setup + Drilldowns)
-The included Splunk app provides a KV Store-backed Setup screen and interactive drilldowns from the Overview dashboard.
+### 🧭 Splunk App 2.7.2
+The included Splunk app now ships with a lighter, native Splunk presentation and a Cloud-ready package layout:
+- **Native-light dashboards** — Overview, correlation, and setup views now align with standard Splunk Web styling
+- **KV Store-backed setup and health state** — setup values and the health lookup are stored in KV Store for Cloud compatibility
+- **Cloud-safe searches** — removed REST-backed macros, removed `map`, and hardened metadata plus reload triggers for app updates
+- **AppInspect status** — the current precert package passes with no errors or failures on actionable checks
 
 ---
 
@@ -194,6 +198,7 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 ## Docs
 
 - [Best Practices & Troubleshooting](BEST_PRACTICES.md)
+- [Splunk App README](splunk_app/ping_monitor/README.md)
 
 ---
 

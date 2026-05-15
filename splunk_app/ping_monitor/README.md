@@ -1,26 +1,28 @@
 # Ping Monitor for Splunk
 
-Enterprise network availability monitoring with intelligent asset correlation.
+Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 2.7.1
+## Version 2.7.2
 
-### What's New in v2.7.1
-- **Multi-word filter support**: Dashboard filters now correctly handle values with spaces (e.g., "Network Printers", "Palo Alto Networks")
-- No changes required to existing `endpoints.csv` files — just use natural names
+### What's New in v2.7.2
+- **Native-light dashboard refresh**: Removed the custom dark presentation and aligned the Overview, Setup, and Asset Correlation views with standard Splunk Web styling
+- **Splunk Cloud hardening**: Reworked searches and packaging for Cloud compatibility, including KV Store-backed health state, Cloud-safe metadata, and app reload triggers for custom config
+- **AppInspect precert validation**: The current release package passes AppInspect precert with no errors or failures; remaining warnings are Windows host capability checks only
 
 ## Quick Start
 
-1. **Install the App**: Upload `ping_monitor_v2.7.1.tar.gz` via Splunk Web → Manage Apps → Install from File
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.2_build30_20260515.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your index/sourcetype
 3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
 
 ## Features
 
-- **Zero-Config Dashboard**: Dashboards read settings from KV store - no XML editing required
+- **Zero-Config Dashboard**: Dashboards read settings from KV Store - no XML editing required
 - **First-Run Setup Wizard**: Configure index/sourcetype via UI on first launch
 - **Real-time Ping Monitoring**: Track endpoint availability and latency
-- **Health Correlation**: Enrich your data with ping health status
+- **Health Correlation**: Enrich your data with ping health status from a KV Store-backed lookup
 - **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency
+- **Splunk Cloud-Ready Package**: AppInspect-clean packaging and app metadata for Cloud deployment
 
 ## Dashboards
 
@@ -47,9 +49,16 @@ Settings are stored in KV Store via the lookup `ping_monitor_settings_lookup`:
 Or directly via search:
 ```spl
 | makeresults 
-| eval _key="global", index="your_index", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="true"
+| eval _key="global", index="your_index", sourcetype="ping_monitor", metrics_index="ping_metrics", configured=true()
 | outputlookup ping_monitor_settings_lookup append=false key_field=_key
 ```
+
+## Cloud Readiness
+
+- Saved searches and macros avoid REST-based configuration lookups and `map`
+- Health correlation state is stored in KV Store instead of a shipped CSV lookup
+- The app includes the metadata and reload triggers needed to avoid restart-only updates for custom config changes
+- Current precert validation result: 0 errors, 0 failures on the packaged release artifact
 
 ## Saved Searches & Alerts
 

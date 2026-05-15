@@ -1,19 +1,42 @@
 # Application-level permissions
 []
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
 export = system
 
-# Grant access to all users for views
-[views]
+# Views are readable by all users; restrict modifications to admin.
+[views/ping_overview]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
 export = system
 
-# Grant access to macros
+[views/asset_correlation]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
+export = system
+
+# Setup writes to KV Store; restrict it to admin.
+[views/setup]
+owner = nobody
+access = read : [ admin, sc_admin ], write : [ admin, sc_admin ]
+export = system
+
 [macros]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
 export = system
 
-# Grant access to lookups
-[lookups]
-export = system
-
-# Grant access to transforms
 [transforms]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
+export = system
+
+[collections/ping_monitor_settings]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
+export = system
+
+[collections/ping_health_lookup]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
 export = system

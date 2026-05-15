@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "2.0.0",
+  "info": {
+    "id": {
+      "name": "ping_monitor",
+      "version": "2.7.2"
+    },
+    "title": "Ping Monitor",
+    "description": "Enterprise network availability monitoring with dashboards, alerts, and health correlation.",
+    "author": [
+      {
+        "name": "Leiter Consulting"
+      }
+    ]
+  }
+}
