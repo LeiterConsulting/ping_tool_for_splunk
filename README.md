@@ -459,7 +459,7 @@ The included Splunk app provides a complete, zero-configuration experience:
 The app includes:
 - **Ping Monitor Overview** - Main availability/latency dashboard
 - **Asset Health Correlation** - Enrich other data with ping health
-- **Setup Wizard** - First-run configuration (no XML editing required)
+- **Setup Page** - In-app configuration for the events index, sourcetype, and metrics index
 - **Pre-built Alerts** - Down, packet loss, latency alerts (disabled by default)
 
 #### Option B: Standalone Dashboard (Manual)

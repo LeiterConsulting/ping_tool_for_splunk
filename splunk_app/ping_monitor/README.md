@@ -12,13 +12,13 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 ## Quick Start
 
 1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.2_build30_20260515.tar.gz`
-2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your index/sourcetype
+2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
 
 ## Features
 
 - **Zero-Config Dashboard**: Dashboards read settings from KV Store - no XML editing required
-- **First-Run Setup Wizard**: Configure index/sourcetype via UI on first launch
+- **Setup Page**: Save the events index, sourcetype, and metrics index from the in-app configuration page
 - **Real-time Ping Monitoring**: Track endpoint availability and latency
 - **Health Correlation**: Enrich your data with ping health status from a KV Store-backed lookup
 - **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency
@@ -28,7 +28,7 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 1. **Ping Monitor Overview** - Main dashboard with availability, latency, and status
 2. **Asset Health Correlation** - Enrich other data sources with ping health
-3. **Setup** - First-run configuration wizard
+3. **Setup** - In-app configuration page for events and metrics data sources
 
 ## Configuration
 

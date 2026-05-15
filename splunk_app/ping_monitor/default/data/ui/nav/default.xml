@@ -3,10 +3,16 @@
   <view name="asset_correlation"/>
   <view name="setup"/>
   <collection label="Reports">
-    <saved source="unclassified" match="Ping Monitor"/>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Current%2520Health%2520Status">Current Health Status</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Daily%2520Availability%2520Report">Daily Availability Report</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Weekly%2520Trend%2520Report">Weekly Trend Report</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Metrics%2520Summary">Metrics Summary</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Endpoint%2520Down%2520Review">Endpoint Down Review</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520High%2520Latency%2520Review">High Latency Review</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520High%2520Packet%2520Loss%2520Review">High Packet Loss Review</a>
+    <a href="/app/ping_monitor/report?s=%2FservicesNS%2Fnobody%2Fping_monitor%2Fsaved%2Fsearches%2FPing%2520Monitor%2520-%2520Health%2520Lookup%2520Status">Health Lookup Status</a>
   </collection>
   <collection label="Help">
-    <a href="/app/ping_monitor/setup">Run Setup Wizard</a>
     <a href="https://github.com/LeiterConsulting/ping_tool_for_splunk" target="_blank">GitHub Repository</a>
   </collection>
 </nav>

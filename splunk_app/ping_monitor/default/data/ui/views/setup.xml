@@ -12,10 +12,13 @@
     <query>| inputlookup ping_monitor_settings_lookup
 | search _key="global"
 | head 1
-| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured=0, last_updated="Never"]
 | head 1
+| eval refresh_token="$config_refresh$"
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")
-| eval is_configured=if(configured=="true", "yes", "no")</query>
+| eval configured_text=lower(tostring(configured))
+| eval is_configured=if(configured_text=="true" OR configured_text=="1", "yes", "no")
+| fields - refresh_token, configured_text</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
@@ -25,9 +28,9 @@
         <set token="current_metrics_index">$result.metrics_index$</set>
         <set token="current_last_updated">$result.last_updated$</set>
         <set token="is_configured">true</set>
-        <set token="form.form_index">$result.index$</set>
-        <set token="form.form_sourcetype">$result.sourcetype$</set>
-        <set token="form.form_metrics_index">$result.metrics_index$</set>
+        <set token="form_index">$result.index$</set>
+        <set token="form_sourcetype">$result.sourcetype$</set>
+        <set token="form_metrics_index">$result.metrics_index$</set>
       </condition>
       <condition>
         <set token="current_index">ping</set>
@@ -35,54 +38,50 @@
         <set token="current_metrics_index">ping_metrics</set>
         <set token="current_last_updated">Never</set>
         <unset token="is_configured"/>
-        <set token="form.form_index">ping</set>
-        <set token="form.form_sourcetype">ping_monitor</set>
-        <set token="form.form_metrics_index">ping_metrics</set>
+        <set token="form_index">ping</set>
+        <set token="form_sourcetype">ping_monitor</set>
+        <set token="form_metrics_index">ping_metrics</set>
       </condition>
     </done>
   </search>
 
   <row>
-    <panel>
+    <panel depends="$is_configured$">
+      <title>Configuration status</title>
       <html>
-        <p>Use this page to review the current application settings and update the event index, sourcetype, and metrics index stored in the Ping Monitor KV Store.</p>
+        <p><strong>Setup complete.</strong> Ping Monitor is currently reading events from <strong>$current_index$</strong> with sourcetype <strong>$current_sourcetype$</strong> and metrics from <strong>$current_metrics_index$</strong>.</p>
+        <p>Only change these values if your deployment writes data to a different index, sourcetype, or metrics index.</p>
+      </html>
+    </panel>
+    <panel rejects="$is_configured$">
+      <title>Configuration status</title>
+      <html>
+        <p><strong>Setup not saved yet.</strong> Ping Monitor is using the defaults shown below until you save a configuration record.</p>
+        <p>If your deployment already uses these defaults, save once so the rest of the app has an explicit configuration to read.</p>
       </html>
     </panel>
   </row>
 
   <row>
-    <panel>
-      <title>Current saved settings</title>
+    <panel depends="$is_configured$">
+      <title>Effective settings</title>
       <html>
-        <p>Review the values currently stored in KV Store. If nothing has been saved yet, the app will use the defaults shown below.</p>
+        <p><strong>Status:</strong> Configured</p>
+        <p><strong>Events Index:</strong> $current_index$</p>
+        <p><strong>Sourcetype:</strong> $current_sourcetype$</p>
+        <p><strong>Metrics Index:</strong> $current_metrics_index$</p>
+        <p><strong>Last Updated:</strong> $current_last_updated$</p>
       </html>
     </panel>
-  </row>
-
-  <row>
-    <panel>
-      <title>Saved settings</title>
-      <table>
-        <search>
-          <query>| inputlookup ping_monitor_settings_lookup
-| search _key="global"
-| head 1
-| eval found=1
-| append [| makeresults | eval found=0, index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics", configured="false", last_updated="Never"]
-| sort - found
-| head 1
-| eval status=if(configured=="true", "Configured", "Using defaults")
-| eval last_updated=if(isnull(last_updated) OR last_updated=="", "Never", last_updated)
-| table status, index, sourcetype, metrics_index, last_updated
-| rename status as "Status", index as "Events Index", sourcetype as "Sourcetype", metrics_index as "Metrics Index", last_updated as "Last Updated"</query>
-          <earliest>-1m</earliest>
-          <latest>now</latest>
-          <refresh>5s</refresh>
-          <refreshType>delay</refreshType>
-        </search>
-        <option name="drilldown">none</option>
-        <option name="count">1</option>
-      </table>
+    <panel rejects="$is_configured$">
+      <title>Effective settings</title>
+      <html>
+        <p><strong>Status:</strong> Using defaults</p>
+        <p><strong>Events Index:</strong> ping</p>
+        <p><strong>Sourcetype:</strong> ping_monitor</p>
+        <p><strong>Metrics Index:</strong> ping_metrics</p>
+        <p><strong>Last Updated:</strong> Never</p>
+      </html>
     </panel>
   </row>
 
@@ -90,16 +89,8 @@
     <panel>
       <title>Update settings</title>
       <html>
-        <p>Enter the values used by your Ping Monitor deployment, then save the configuration. These values are used throughout the app.</p>
-      </html>
-    </panel>
-  </row>
-
-  <row>
-    <panel>
-      <title>Instructions</title>
-      <html>
-        <p>Changes are written to the <strong>ping_monitor_settings_lookup</strong> KV Store collection and will be used by dashboards and saved searches on the next page load.</p>
+        <p>Only three values drive the app: the event index, the event sourcetype, and the metrics index. Blank values are converted back to the documented defaults when you save.</p>
+        <p>Changes are written to the <strong>ping_monitor_settings_lookup</strong> KV Store collection and become available to dashboards and saved searches on the next page load.</p>
       </html>
     </panel>
   </row>
@@ -118,21 +109,32 @@
       <default>ping_metrics</default>
     </input>
     <input type="link" token="trigger_save">
-      <label></label>
+      <label>Actions</label>
       <choice value="save">Save configuration</choice>
       <change>
         <condition value="save">
+          <unset token="save_completed"/>
+          <unset token="save_message"/>
+          <unset token="save_details"/>
           <set token="do_save">true</set>
-          <set token="save_time">$time$</set>
+          <unset token="trigger_reset"/>
         </condition>
       </change>
     </input>
     <input type="link" token="trigger_reset">
       <label></label>
-      <choice value="reset">Hide save result</choice>
+      <choice value="reset">Reset form</choice>
       <change>
         <condition value="reset">
+          <set token="form_index">$current_index$</set>
+          <set token="form_sourcetype">$current_sourcetype$</set>
+          <set token="form_metrics_index">$current_metrics_index$</set>
+          <unset token="save_completed"/>
+          <unset token="save_message"/>
+          <unset token="save_details"/>
           <unset token="do_save"/>
+          <unset token="trigger_save"/>
+          <unset token="trigger_reset"/>
         </condition>
       </change>
     </input>
@@ -140,36 +142,48 @@
 
   <row depends="$do_save$">
     <panel>
-      <title>Save result</title>
+      <title>Applying configuration</title>
       <table>
         <search>
           <query>| makeresults
 | eval _key="global",
-       index="$form_index$",
-       sourcetype="$form_sourcetype$",
-       metrics_index="$form_metrics_index$",
-       configured="true",
+       index=if(trim("$form_index$")=="", "ping", trim("$form_index$")),
+       sourcetype=if(trim("$form_sourcetype$")=="", "ping_monitor", trim("$form_sourcetype$")),
+       metrics_index=if(trim("$form_metrics_index$")=="", "ping_metrics", trim("$form_metrics_index$")),
+  configured=1,
        last_updated=strftime(now(), "%Y-%m-%d %H:%M:%S")
-| table _key, index, sourcetype, metrics_index, configured, last_updated
 | outputlookup ping_monitor_settings_lookup key_field=_key
-| eval result="Configuration saved at " . last_updated
-| eval details="Events Index: " . index . " | Sourcetype: " . sourcetype . " | Metrics Index: " . metrics_index
-| table result, details
-| rename result as "Status", details as "Saved Settings"</query>
+| eval save_message="Configuration saved at " . last_updated
+| eval save_details="Events Index: " . index . " | Sourcetype: " . sourcetype . " | Metrics Index: " . metrics_index
+| fields index, sourcetype, metrics_index, last_updated, save_message, save_details</query>
           <earliest>-1m</earliest>
           <latest>now</latest>
+          <done>
+            <set token="config_refresh">$job.sid$</set>
+            <set token="form_index">$result.index$</set>
+            <set token="form_sourcetype">$result.sourcetype$</set>
+            <set token="form_metrics_index">$result.metrics_index$</set>
+            <set token="save_completed">true</set>
+            <set token="save_message">$result.save_message$</set>
+            <set token="save_details">$result.save_details$</set>
+            <unset token="do_save"/>
+            <unset token="trigger_save"/>
+            <unset token="trigger_reset"/>
+          </done>
         </search>
         <option name="drilldown">none</option>
-        <option name="count">1</option>
+        <option name="count">0</option>
       </table>
     </panel>
   </row>
 
-  <row>
+  <row depends="$save_completed$">
     <panel>
-      <title>After saving</title>
+      <title>Save status</title>
       <html>
-        <p>Refresh this page to confirm the updated values. Other dashboards pick up the saved settings the next time they are opened.</p>
+        <p><strong>$save_message$</strong></p>
+        <p>$save_details$</p>
+        <p>The Effective settings section above refreshes from KV Store and should now match these values.</p>
       </html>
     </panel>
   </row>
@@ -179,9 +193,9 @@
       <title>Next steps</title>
       <html>
         <ol>
-          <li>Open <strong>Ping Monitor Overview</strong> to verify that events and metrics are returning data.</li>
-          <li>Open <strong>Asset Health Correlation</strong> to review the lookup-driven health views.</li>
-          <li>Enable the packaged saved searches and alerts from Splunk settings when you are ready.</li>
+          <li>Open <strong>Ping Monitor Overview</strong> and confirm that event or metrics data is appearing with the values above.</li>
+          <li>Open <strong>Asset Health Correlation</strong> to confirm it resolves the same configuration.</li>
+          <li>Enable packaged saved searches and alerts only after these settings match your deployment.</li>
         </ol>
       </html>
     </panel>
