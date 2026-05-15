@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 )
@@ -27,6 +28,9 @@ type Writer struct {
 	bufferBytes   int
 	droppedEvents int
 	capThreshold  int // bytes
+	lastWarn      time.Time
+	nextAttempt   time.Time
+	failures      int
 }
 
 func New(cfg config.HEC, hostname string) (*Writer, error) {
@@ -105,7 +109,9 @@ func (w *Writer) add(event interface{}) error {
 	w.bufferBytes += bytesToAdd
 
 	if w.eventCount >= w.cfg.BatchSize {
-		return w.Flush(context.Background())
+		flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		return w.Flush(flushCtx)
 	}
 	return nil
 }
@@ -114,14 +120,69 @@ func (w *Writer) Flush(ctx context.Context) error {
 	if w.eventCount == 0 {
 		return nil
 	}
+	// Avoid tight retry loops when Add triggers Flush on every event after BatchSize.
+	if !w.nextAttempt.IsZero() && time.Now().Before(w.nextAttempt) {
+		return nil
+	}
 	body := w.buf.Bytes()
 	ok := w.postWithRetry(ctx, body)
-	if ok || w.cfg.DropOnFailure {
+	if ok {
+		w.failures = 0
+		w.nextAttempt = time.Time{}
 		w.resetBuffer()
 		return nil
 	}
-	// keep buffer for next cycle
-	return errors.New("hec flush failed; retaining buffer")
+
+	w.failures++
+	w.nextAttempt = time.Now().Add(w.nextAttemptDelay())
+	w.warnRateLimited("hec delivery failed; will retry", map[string]interface{}{
+		"hec_url":          w.cfg.URL,
+		"buffer_events":    w.eventCount,
+		"buffer_bytes":     w.bufferBytes,
+		"drop_on_failure":  w.cfg.DropOnFailure,
+		"consec_failures":  w.failures,
+		"next_attempt_sec": int(w.nextAttempt.Sub(time.Now()).Seconds()),
+	})
+
+	if w.cfg.DropOnFailure {
+		w.resetBuffer()
+		return nil
+	}
+	// Keep buffer for a later retry, but do not fail the whole process.
+	return nil
+}
+
+func (w *Writer) nextAttemptDelay() time.Duration {
+	baseDelayMs := 1000
+	if w.cfg.Retry.Enabled {
+		baseDelayMs = max(100, w.cfg.Retry.BaseDelayMs)
+	} else if w.cfg.RetryDelayMs > 0 {
+		baseDelayMs = max(100, w.cfg.RetryDelayMs)
+	}
+
+	d := time.Duration(baseDelayMs) * time.Millisecond
+	// Exponential backoff between flush calls, capped.
+	shift := w.failures - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 6 {
+		shift = 6
+	}
+	d = d * time.Duration(1<<shift)
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+func (w *Writer) warnRateLimited(msg string, fields map[string]interface{}) {
+	// Keep logs helpful during outages without spamming.
+	if time.Since(w.lastWarn) < 30*time.Second {
+		return
+	}
+	w.lastWarn = time.Now()
+	diagnostics.LogWarn(msg, fields)
 }
 
 func (w *Writer) postWithRetry(ctx context.Context, body []byte) bool {

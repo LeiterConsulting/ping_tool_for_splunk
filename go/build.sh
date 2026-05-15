@@ -2,7 +2,7 @@
 set -euo pipefail
 
 OUTDIR=${1:-dist}
-VERSION=${VERSION:-v5.0.0-dev}
+VERSION=${VERSION:-v5.1.0}
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT_DIR/$OUTDIR"

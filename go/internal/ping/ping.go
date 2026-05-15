@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-ping/ping"
@@ -27,8 +28,9 @@ type Pinger interface {
 }
 
 type GoPinger struct {
-	fallback Pinger
-	onFallback func(ip string, from string, to string, reason string)
+	fallback    Pinger
+	onFallback  func(ip string, from string, to string, reason string)
+	rawDisabled atomic.Bool
 }
 
 func NewPinger(mode string, onFallback func(ip string, from string, to string, reason string)) Pinger {
@@ -47,6 +49,12 @@ func NewPinger(mode string, onFallback func(ip string, from string, to string, r
 }
 
 func (p *GoPinger) Ping(ctx context.Context, ip string, count int, perPingTimeout time.Duration) ([]PingResult, error) {
+	// If raw ICMP is known to be unavailable in this runtime environment,
+	// short-circuit directly to exec mode (when configured).
+	if p.fallback != nil && p.rawDisabled.Load() {
+		return p.fallback.Ping(ctx, ip, count, perPingTimeout)
+	}
+
 	pg, err := ping.NewPinger(ip)
 	if err != nil {
 		return nil, err
@@ -90,8 +98,11 @@ func (p *GoPinger) Ping(ctx context.Context, ip string, count int, perPingTimeou
 		if err != nil {
 			// Common on Windows or locked-down environments: no ICMP socket support.
 			if p.fallback != nil && looksLikeICMPUnavailable(err) {
-				if p.onFallback != nil {
-					p.onFallback(ip, "raw", "exec", err.Error())
+				// Only announce the fallback once; after that we run purely in exec mode.
+				if p.rawDisabled.CompareAndSwap(false, true) {
+					if p.onFallback != nil {
+						p.onFallback(ip, "raw", "exec", err.Error())
+					}
 				}
 				return p.fallback.Ping(ctx, ip, count, perPingTimeout)
 			}
@@ -134,8 +145,8 @@ func looksLikeICMPUnavailable(err error) bool {
 type ExecPinger struct{}
 
 var (
-	winTimeRe = regexp.MustCompile(`(?i)time[=<]\s*(\d+)\s*ms`)
-	winTTLRe  = regexp.MustCompile(`(?i)ttl=(\d+)`)
+	winTimeRe  = regexp.MustCompile(`(?i)time[=<]\s*(\d+)\s*ms`)
+	winTTLRe   = regexp.MustCompile(`(?i)ttl=(\d+)`)
 	unixTimeRe = regexp.MustCompile(`(?i)time=\s*([0-9.]+)\s*ms`)
 	unixTTLRe  = regexp.MustCompile(`(?i)ttl=\s*(\d+)`)
 )

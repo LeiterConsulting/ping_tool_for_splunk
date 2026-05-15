@@ -16,8 +16,10 @@ import (
 )
 
 type Options struct {
-	RunOnce   bool
-	MaxCycles int
+	RunOnce         bool
+	MaxCycles       int
+	EndpointsPath   string
+	ReloadEndpoints func() ([]models.Endpoint, bool, error)
 }
 
 type pingResult struct {
@@ -31,6 +33,9 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 	if collectorHost == "" {
 		collectorHost = "unknown"
 	}
+	activeEndpoints := append([]models.Endpoint(nil), endpoints...)
+	lastReloadWarn := time.Time{}
+	lastReloadErr := ""
 
 	// Output manager is single-threaded: avoids locking and prevents buffer races.
 	out, err := output.NewManager(cfg, collectorHost)
@@ -76,15 +81,41 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		if opts.MaxCycles > 0 && cycle > opts.MaxCycles {
 			break
 		}
+		if cycle > 1 && opts.ReloadEndpoints != nil {
+			reloaded, changed, err := opts.ReloadEndpoints()
+			if err != nil {
+				msg := err.Error()
+				if msg != lastReloadErr || time.Since(lastReloadWarn) >= 30*time.Second {
+					diagnostics.LogWarn("endpoints reload failed; using previous set", map[string]interface{}{
+						"path":      opts.EndpointsPath,
+						"error":     msg,
+						"endpoints": len(activeEndpoints),
+					})
+					lastReloadWarn = time.Now()
+					lastReloadErr = msg
+				}
+			} else if changed && len(reloaded) > 0 {
+				previous := len(activeEndpoints)
+				activeEndpoints = append([]models.Endpoint(nil), reloaded...)
+				lastReloadErr = ""
+				diagnostics.LogInfo("endpoints reloaded", map[string]interface{}{
+					"path":               opts.EndpointsPath,
+					"cycle":              cycle,
+					"previous_endpoints": previous,
+					"current_endpoints":  len(activeEndpoints),
+				})
+			}
+		}
 
 		cycleStart := time.Now()
 		success := 0
 		failed := 0
 		partial := 0
+		cycleEndpoints := append([]models.Endpoint(nil), activeEndpoints...)
 
 		// Feed jobs for this cycle.
-		go func() {
-			for _, ep := range endpoints {
+		go func(batch []models.Endpoint) {
+			for _, ep := range batch {
 				select {
 				case jobs <- ep:
 				case <-ctx.Done():
@@ -92,10 +123,10 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 				}
 			}
 			// sentinel: close results by letting collector count
-		}()
+		}(cycleEndpoints)
 
 		// Collect exactly len(endpoints) results.
-		for i := 0; i < len(endpoints); i++ {
+		for i := 0; i < len(cycleEndpoints); i++ {
 			select {
 			case r := <-results:
 				if r.Status == "success" {

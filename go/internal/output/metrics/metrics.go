@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 )
@@ -24,6 +25,9 @@ type Buffer struct {
 	count        int
 	bytes        int
 	capThreshold int
+	lastWarn     time.Time
+	nextAttempt  time.Time
+	failures     int
 }
 
 func New(cfg config.Metrics, hostname string) *Buffer {
@@ -73,26 +77,73 @@ func (b *Buffer) Flush(ctx context.Context) error {
 		b.reset()
 		return errors.New("metrics enabled but hec_url/token not configured")
 	}
+	if !b.nextAttempt.IsZero() && time.Now().Before(b.nextAttempt) {
+		return nil
+	}
 
 	body := b.buf.Bytes()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.cfg.HECURL, bytes.NewReader(body))
 	if err != nil {
-		b.reset()
 		return err
 	}
 	req.Header.Set("Authorization", "Splunk "+b.cfg.Token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := b.client.Do(req)
 	if err != nil {
-		b.reset()
-		return err
+		b.failures++
+		b.nextAttempt = time.Now().Add(b.nextAttemptDelay())
+		b.warnRateLimited("metrics delivery failed; will retry", map[string]interface{}{
+			"hec_url":          b.cfg.HECURL,
+			"buffer_events":    b.count,
+			"buffer_bytes":     b.bytes,
+			"consec_failures":  b.failures,
+			"next_attempt_sec": int(b.nextAttempt.Sub(time.Now()).Seconds()),
+		})
+		return nil
 	}
 	defer resp.Body.Close()
-	b.reset()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return errors.New("metrics batch POST failed")
+		b.failures++
+		b.nextAttempt = time.Now().Add(b.nextAttemptDelay())
+		b.warnRateLimited("metrics delivery failed (non-2xx); will retry", map[string]interface{}{
+			"hec_url":          b.cfg.HECURL,
+			"status":           resp.StatusCode,
+			"buffer_events":    b.count,
+			"buffer_bytes":     b.bytes,
+			"consec_failures":  b.failures,
+			"next_attempt_sec": int(b.nextAttempt.Sub(time.Now()).Seconds()),
+		})
+		return nil
 	}
+	b.failures = 0
+	b.nextAttempt = time.Time{}
+	b.reset()
 	return nil
+}
+
+func (b *Buffer) nextAttemptDelay() time.Duration {
+	baseDelayMs := 1000
+	d := time.Duration(baseDelayMs) * time.Millisecond
+	shift := b.failures - 1
+	if shift < 0 {
+		shift = 0
+	}
+	if shift > 6 {
+		shift = 6
+	}
+	d = d * time.Duration(1<<shift)
+	if d > 30*time.Second {
+		d = 30 * time.Second
+	}
+	return d
+}
+
+func (b *Buffer) warnRateLimited(msg string, fields map[string]interface{}) {
+	if time.Since(b.lastWarn) < 30*time.Second {
+		return
+	}
+	b.lastWarn = time.Now()
+	diagnostics.LogWarn(msg, fields)
 }
 
 func (b *Buffer) Close() error {

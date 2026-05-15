@@ -38,22 +38,22 @@ type Retry struct {
 }
 
 type HEC struct {
-	Enabled         bool   `json:"enabled" yaml:"enabled"`
-	URL             string `json:"url" yaml:"url"`
-	Token           string `json:"token" yaml:"token"`
-	Index           string `json:"index" yaml:"index"`
-	SourceType      string `json:"sourcetype" yaml:"sourcetype"`
-	VerifySSL       bool   `json:"verify_ssl" yaml:"verify_ssl"`
-	SSLProtocol     string `json:"ssl_protocol" yaml:"ssl_protocol"`
-	BatchSize       int    `json:"batch_size" yaml:"batch_size"`
-	DropOnFailure   bool   `json:"drop_on_failure" yaml:"drop_on_failure"`
-	MaxBufferEvents int    `json:"max_buffer_events" yaml:"max_buffer_events"`
-	MaxBufferBytes  string `json:"max_buffer_bytes" yaml:"max_buffer_bytes"`
-	Retry           Retry  `json:"retry" yaml:"retry"`
-	RetryCount      int    `json:"retry_count" yaml:"retry_count"`
-	RetryDelayMs    int    `json:"retry_delay_ms" yaml:"retry_delay_ms"`
-	DeadLetterPath  string `json:"dead_letter_path" yaml:"dead_letter_path"`
-	DeadLetterRotationSizeMB int `json:"dead_letter_rotation_size_mb" yaml:"dead_letter_rotation_size_mb"`
+	Enabled                  bool   `json:"enabled" yaml:"enabled"`
+	URL                      string `json:"url" yaml:"url"`
+	Token                    string `json:"token" yaml:"token"`
+	Index                    string `json:"index" yaml:"index"`
+	SourceType               string `json:"sourcetype" yaml:"sourcetype"`
+	VerifySSL                bool   `json:"verify_ssl" yaml:"verify_ssl"`
+	SSLProtocol              string `json:"ssl_protocol" yaml:"ssl_protocol"`
+	BatchSize                int    `json:"batch_size" yaml:"batch_size"`
+	DropOnFailure            bool   `json:"drop_on_failure" yaml:"drop_on_failure"`
+	MaxBufferEvents          int    `json:"max_buffer_events" yaml:"max_buffer_events"`
+	MaxBufferBytes           string `json:"max_buffer_bytes" yaml:"max_buffer_bytes"`
+	Retry                    Retry  `json:"retry" yaml:"retry"`
+	RetryCount               int    `json:"retry_count" yaml:"retry_count"`
+	RetryDelayMs             int    `json:"retry_delay_ms" yaml:"retry_delay_ms"`
+	DeadLetterPath           string `json:"dead_letter_path" yaml:"dead_letter_path"`
+	DeadLetterRotationSizeMB int    `json:"dead_letter_rotation_size_mb" yaml:"dead_letter_rotation_size_mb"`
 }
 
 type Metrics struct {
@@ -103,21 +103,21 @@ func Defaults(root string) Config {
 		Diagnostics:          Diagnostics{Enabled: false, HandleProbeMode: "none"},
 		Debug:                Debug{EmitMemoryStats: false},
 		HEC: HEC{
-			Enabled:         false,
-			URL:             "",
-			Token:           "",
-			Index:           "main",
-			SourceType:      "ping_monitor",
-			VerifySSL:       true,
-			SSLProtocol:     "Default",
-			BatchSize:       100,
-			DropOnFailure:   true,
-			MaxBufferEvents: 5000,
-			MaxBufferBytes:  "5MB",
-			Retry:           Retry{Enabled: false, MaxAttempts: 3, BaseDelayMs: 250, JitterPct: 20, Backoff: "exponential"},
-			RetryCount:      0,
-			RetryDelayMs:    250,
-			DeadLetterPath:  "",
+			Enabled:                  false,
+			URL:                      "",
+			Token:                    "",
+			Index:                    "main",
+			SourceType:               "ping_monitor",
+			VerifySSL:                true,
+			SSLProtocol:              "Default",
+			BatchSize:                100,
+			DropOnFailure:            true,
+			MaxBufferEvents:          5000,
+			MaxBufferBytes:           "5MB",
+			Retry:                    Retry{Enabled: false, MaxAttempts: 3, BaseDelayMs: 250, JitterPct: 20, Backoff: "exponential"},
+			RetryCount:               0,
+			RetryDelayMs:             250,
+			DeadLetterPath:           "",
 			DeadLetterRotationSizeMB: 0,
 		},
 		Metrics: Metrics{
@@ -232,24 +232,26 @@ func writeYAML(path string, cfg Config) error {
 }
 
 func loadFromPSD1(ctx context.Context, path string, root string) (Config, error) {
-	// Use pwsh Import-PowerShellDataFile to avoid implementing a full psd1 parser.
-	pwsh, err := exec.LookPath("pwsh")
-	if err != nil {
-		return Config{}, errors.New("pwsh not found; cannot parse config.psd1")
-	}
-
-	// Import-PowerShellDataFile reads data safely (no arbitrary code execution).
-	cmd := exec.CommandContext(ctx, pwsh, "-NoProfile", "-NonInteractive", "-Command",
-		fmt.Sprintf("Import-PowerShellDataFile -Path '%s' | ConvertTo-Json -Depth 50 -Compress", strings.ReplaceAll(path, "'", "''")),
-	)
-	out, err := cmd.Output()
-	if err != nil {
-		return Config{}, fmt.Errorf("psd1 parse failed: %w", err)
-	}
-
+	// Prefer pwsh Import-PowerShellDataFile when available; it is strict and battle-tested.
+	// On macOS/Linux, pwsh might not be installed; fall back to our native, non-executing parser.
 	var raw map[string]interface{}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return Config{}, fmt.Errorf("psd1 json decode failed: %w", err)
+	if pwsh, err := exec.LookPath("pwsh"); err == nil {
+		cmd := exec.CommandContext(ctx, pwsh, "-NoProfile", "-NonInteractive", "-Command",
+			fmt.Sprintf("Import-PowerShellDataFile -Path '%s' | ConvertTo-Json -Depth 50 -Compress", strings.ReplaceAll(path, "'", "''")),
+		)
+		out, err := cmd.Output()
+		if err != nil {
+			return Config{}, fmt.Errorf("psd1 parse failed: %w", err)
+		}
+		if err := json.Unmarshal(out, &raw); err != nil {
+			return Config{}, fmt.Errorf("psd1 json decode failed: %w", err)
+		}
+	} else {
+		m, err := parsePSD1File(path)
+		if err != nil {
+			return Config{}, fmt.Errorf("psd1 parse failed (native): %w", err)
+		}
+		raw = m
 	}
 
 	cfg := Defaults(root)

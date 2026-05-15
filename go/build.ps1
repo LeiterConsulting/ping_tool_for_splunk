@@ -1,6 +1,6 @@
 param(
   [string]$OutDir = "dist",
-  [string]$Version = "v5.0.0-dev"
+  [string]$Version = "v5.1.0"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -11,6 +11,10 @@ New-Item -ItemType Directory -Path $dist -Force | Out-Null
 
 Push-Location $goDir
 try {
+  $prevGOOS = $env:GOOS
+  $prevGOARCH = $env:GOARCH
+  $prevCGO = $env:CGO_ENABLED
+
   $env:CGO_ENABLED = "0"
 
   $targets = @(
@@ -29,5 +33,8 @@ try {
   }
 }
 finally {
+  if ($null -ne $prevGOOS) { $env:GOOS = $prevGOOS } else { Remove-Item Env:GOOS -ErrorAction SilentlyContinue }
+  if ($null -ne $prevGOARCH) { $env:GOARCH = $prevGOARCH } else { Remove-Item Env:GOARCH -ErrorAction SilentlyContinue }
+  if ($null -ne $prevCGO) { $env:CGO_ENABLED = $prevCGO } else { Remove-Item Env:CGO_ENABLED -ErrorAction SilentlyContinue }
   Pop-Location
 }

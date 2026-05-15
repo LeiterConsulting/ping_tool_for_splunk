@@ -1,12 +1,21 @@
 # Ping Monitor v5 (Go)
 
-v5 is a Go rewrite of the PowerShell Ping Monitor (v4) focused on long-running stability and bounded resource usage.
+v5.1.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
 
 ## Compatibility
 
 - Uses `config.psd1` and `endpoints.csv` with the same keys/fields as v4.
 - Emits the same event schema (`record_type=ping` and `record_type=summary`) and the same HEC envelope.
 - Metrics payload structure matches v4 compat mode.
+- Reloads `endpoints.csv` automatically between ping cycles; replacing the binary and restarting the service is enough to enable it.
+
+## Runtime behavior
+
+- Loads `config.psd1` at startup using `pwsh` when present, or a native `.psd1` parser when `pwsh` is unavailable.
+- Reloads `endpoints.csv` at the start of each new cycle; changes apply on the next cycle, not mid-cycle.
+- If `endpoints.csv` is temporarily invalid, v5 keeps using the last known good endpoint set and logs a warning.
+- If Splunk HEC or the metrics endpoint is unavailable, v5 continues running and retries delivery with backoff instead of exiting.
+- If raw ICMP is unavailable on the host, `ping.mode=auto` falls back once to the OS `ping` command and stays there for the rest of the run.
 
 ## Run
 
@@ -50,5 +59,5 @@ hec = @{
 
 ## Build all platforms
 
-- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.0.0-dev`
+- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.1.0`
 - Bash: `./go/build.sh dist` (set `VERSION` env var if desired)

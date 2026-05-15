@@ -10,7 +10,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `go/` (Ping Monitor v5, Go) | **v5.0.0-dev** | 🧪 **In Progress** | Go rewrite for performance/resilience; uses `config.psd1` + `endpoints.csv` |
+| `go/` (Ping Monitor v5, Go) | **v5.1.0** | ✅ **Released** | Go runtime with native `config.psd1` parsing, resilient HEC retry, and `endpoints.csv` hot reload |
 | `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Current Stable** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
@@ -693,6 +693,12 @@ MIT License — free to use, modify, and distribute.
 
 ## Changelog
 
+**v5.1.0** — Go runtime resilience and endpoint hot reload
+- Automatic `endpoints.csv` reload between cycles with last-known-good fallback on invalid CSV edits
+- HEC and metrics delivery now keep retrying across Splunk restarts instead of terminating the process
+- Native `.psd1` parser fallback when `pwsh` is unavailable on macOS/Linux
+- Raw ICMP fallback now logs once and then stays in exec mode on restricted hosts
+
 **v3.2.1** — HEC reliability and correctness fixes
 - Retry-safe HEC batching with configurable retry/backoff
 - Buffer caps with drop-newest policy (prevents memory bloat)
@@ -717,4 +723,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-*Last updated: 14 Jan 2026*
+*Last updated: 15 May 2026*

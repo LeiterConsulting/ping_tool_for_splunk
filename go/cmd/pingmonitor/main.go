@@ -28,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("Ping Monitor v5 (Go) - v5.0.0-dev")
+		fmt.Println("Ping Monitor v5 (Go) - v5.1.0")
 		return
 	}
 
@@ -54,7 +54,7 @@ func main() {
 		cfg.Ping.Mode = *pingMode
 	}
 
-	endpoints, err := config.LoadEndpoints(*endpointsPath)
+	endpointReloader, endpoints, err := config.NewEndpointReloader(*endpointsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "endpoints load failed: %v\n", err)
 		os.Exit(2)
@@ -66,8 +66,10 @@ func main() {
 	}
 
 	opts := engine.Options{
-		RunOnce:   *runOnce,
-		MaxCycles: *maxCycles,
+		RunOnce:         *runOnce,
+		MaxCycles:       *maxCycles,
+		EndpointsPath:   *endpointsPath,
+		ReloadEndpoints: endpointReloader.ReloadIfChanged,
 	}
 
 	if err := engine.Run(ctx, cfg, endpoints, opts); err != nil {

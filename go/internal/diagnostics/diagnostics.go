@@ -17,7 +17,7 @@ func LogStartup(configSource string, cfg config.Config, endpointCount int) {
 		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
 		"level":      "info",
 		"msg":        "pingmonitor starting",
-		"version":    "v5.0.0-dev",
+		"version":    "v5.1.0",
 		"config_src": configSource,
 		"endpoints":  endpointCount,
 		"output":     cfg.OutputMode,
@@ -52,6 +52,14 @@ func LogCycleSummary(cycle int, success int, failed int, partial int, durationMs
 		"failed":      failed,
 		"partial":     partial,
 		"duration_ms": durationMs,
+	}
+	write(ll)
+}
+
+func LogInfo(msg string, fields map[string]interface{}) {
+	ll := logLine{"ts": time.Now().UTC().Format(time.RFC3339Nano), "level": "info", "msg": msg}
+	for k, v := range fields {
+		ll[k] = v
 	}
 	write(ll)
 }
