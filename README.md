@@ -244,10 +244,12 @@ nano endpoints.csv
 
 **Minimal format:**
 ```csv
-ip,hostname
-192.168.1.1,router
-10.0.0.50,app-server
+ip,hostname,dev
+192.168.1.1,router,false
+10.0.0.50,app-server,false
 ```
+
+Legacy two-column files (`ip,hostname`) are still accepted; `dev` remains optional and defaults to `false`.
 
 **Full format with enrichment:**
 ```csv

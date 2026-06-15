@@ -6,7 +6,7 @@
 .DESCRIPTION
     This companion tool scans your local IP subnet to discover active hosts,
     resolves hostnames via DNS, and attempts to classify devices into groups.
-    Output is an endpoints.csv file compatible with PingMonitor.ps1 v2.x
+    Output is an endpoints.csv file compatible with the current Go v5 runtime and legacy PowerShell runtimes.
 
 .PARAMETER OutputPath
     Path for the generated CSV file. Defaults to discovered_endpoints.csv
@@ -34,7 +34,7 @@
 .NOTES
     Author: Network Discovery Tool
     Version: 2.5.2
-    Compatible with PingMonitor.ps1 v2.x endpoint schema
+    Compatible with the current endpoint schema, including the optional trailing dev column.
 #>
 
 [CmdletBinding()]
@@ -68,7 +68,7 @@ function Get-LocalIPInfo {
     
     # Get the primary network adapter with a default gateway (most likely the main network)
     $adapters = Get-NetIPConfiguration | Where-Object { 
-        $_.IPv4DefaultGateway -ne $null -and 
+        $null -ne $_.IPv4DefaultGateway -and
         $_.NetAdapter.Status -eq 'Up' 
     }
     
@@ -534,9 +534,6 @@ Write-Host ""
 
 $startTime = Get-Date
 $discoveredHosts = [System.Collections.Concurrent.ConcurrentBag[PSCustomObject]]::new()
-$scannedCount = 0
-$foundCount = 0
-
 $ipRange | ForEach-Object -Parallel {
     $ip = $_
     $timeout = $using:Timeout
@@ -601,6 +598,7 @@ foreach ($host_ in ($onlineHosts | Sort-Object { [version]($_.IP -replace '(\d+)
         device           = $classification.DeviceType
         vendor           = $classification.Vendor
         additional_notes = ""
+        dev              = if ($group -eq 'development') { $true } else { $false }
         latency_ms       = $host_.Latency
     }
 }
@@ -647,8 +645,8 @@ if ($vendorEndpoints.Count -gt 0) {
 # Export to CSV
 Write-Host "Exporting to $OutputPath..." -ForegroundColor Yellow
 
-# Create CSV with all columns for PingMonitor v2.x
-$csvData = $endpoints | Select-Object ip, hostname, group, description, entitytype, device, vendor, additional_notes
+# Create CSV with all columns for the current endpoint schema
+$csvData = $endpoints | Select-Object ip, hostname, group, description, entitytype, device, vendor, additional_notes, dev
 $csvData | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
 
 Write-Host ""
@@ -657,17 +655,17 @@ Write-Host "  Discovery Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Output file: $OutputPath" -ForegroundColor White
-Write-Host "CSV Columns: ip, hostname, group, description, entitytype, device, vendor, additional_notes" -ForegroundColor Gray
+Write-Host "CSV Columns: ip, hostname, group, description, entitytype, device, vendor, additional_notes, dev" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Review the generated CSV file" -ForegroundColor Gray
 Write-Host "  2. Edit hostnames/groups/descriptions as needed" -ForegroundColor Gray
 Write-Host "  3. Add vendor info where it wasn't auto-detected" -ForegroundColor Gray
-Write-Host "  4. Rename to endpoints.csv for use with PingMonitor.ps1" -ForegroundColor Gray
+Write-Host "  4. Rename to endpoints.csv for use with pingmonitor.exe or legacy PingMonitor scripts" -ForegroundColor Gray
 Write-Host ""
 
 # Show preview
 Write-Host "Preview (first 10 entries):" -ForegroundColor Cyan
-$endpoints | Select-Object ip, hostname, group, entitytype, device, vendor | Select-Object -First 10 | Format-Table -AutoSize
+$endpoints | Select-Object ip, hostname, group, entitytype, device, vendor, dev | Select-Object -First 10 | Format-Table -AutoSize
 
 #endregion
