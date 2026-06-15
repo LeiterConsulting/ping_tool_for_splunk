@@ -1,6 +1,6 @@
 # Ping Monitor v5 (Go)
 
-v5.2.1 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
+v5.3.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, drop-in compatibility with existing deployments, and the first embedded admin UI preview.
 
 ## Compatibility
 
@@ -31,6 +31,7 @@ From repo root:
 - Build: `go -C .\\go build -o pingmonitor.exe .\\go\\cmd\\pingmonitor`
 - Run one cycle: `./pingmonitor.exe --run-once`
 - Launch local UI only: `./pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only`
+- Run monitor plus UI together: `./pingmonitor.exe --ui-listen 127.0.0.1:8080`
 
 By default it looks for `config.psd1` and `endpoints.csv` in the working directory.
 
@@ -86,7 +87,7 @@ hec = @{
 
 ## Build all platforms
 
-- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.2.1`
+- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.3.0`
 - Bash: `./go/build.sh dist` (set `VERSION` env var if desired)
 
 ## Windows service

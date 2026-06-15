@@ -1,5 +1,5 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.2.1)
+# Splunk Ping Monitor Configuration (Go v5.3.0)
 # ============================================
 # Preferred configuration file for pingmonitor.exe.
 # Relative paths are resolved from the directory containing this file.

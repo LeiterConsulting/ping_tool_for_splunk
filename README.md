@@ -10,7 +10,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `go/` (Ping Monitor v5, Go) | **v5.2.1** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, and `endpoints.csv` hot reload |
+| `go/` (Ping Monitor v5, Go) | **v5.3.0** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, `endpoints.csv` hot reload, and an embedded local admin UI preview |
 | `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Supported (Legacy Runtime)** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
@@ -225,7 +225,7 @@ notepad endpoints.csv
 
 ### Local Admin UI Preview
 
-The current branch includes the first embedded web UI slice for the Go runtime:
+The current Go v5.3.0 build includes the first embedded web UI slice for the runtime:
 
 - local-only HTTP shell served by `pingmonitor.exe`
 - read-only endpoint inventory backed by the active `endpoints.csv`
@@ -235,6 +235,12 @@ Preview command:
 
 ```powershell
 .\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
+```
+
+Run monitoring and the local UI together:
+
+```powershell
+.\pingmonitor.exe --config .\config.psd1 --endpoints .\endpoints.csv --ui-listen 127.0.0.1:8080
 ```
 
 Then open `http://127.0.0.1:8080` in a browser.
@@ -753,6 +759,12 @@ MIT License — free to use, modify, and distribute.
 ---
 
 ## Changelog
+
+**v5.3.0** — Embedded admin UI preview
+- Added the first embedded local web UI preview to the Go runtime
+- Exposed read-only `healthz`, `api/status`, and `api/endpoints` routes from `pingmonitor.exe`
+- Added a clean-room Ping Monitor shell aligned with the SNMP app's layout language while keeping a distinct color palette
+- Centralized the in-code Go runtime version marker and updated build defaults/documentation to `v5.3.0`
 
 **v5.2.1** — Endpoint schema compatibility hotfix
 - Preserved backward compatibility by moving optional `dev` back to the final `endpoints.csv` column position

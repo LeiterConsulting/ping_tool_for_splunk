@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/buildinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 )
 
@@ -17,7 +18,7 @@ func LogStartup(configSource string, cfg config.Config, endpointCount int) {
 		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
 		"level":      "info",
 		"msg":        "pingmonitor starting",
-		"version":    "v5.2.1",
+		"version":    buildinfo.Version,
 		"config_src": configSource,
 		"endpoints":  endpointCount,
 		"output":     cfg.OutputMode,

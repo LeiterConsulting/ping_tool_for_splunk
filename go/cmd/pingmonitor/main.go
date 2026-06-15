@@ -11,13 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/buildinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/engine"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/webui"
 )
-
-const versionString = "v5.2.1"
 
 func main() {
 	var (
@@ -33,7 +32,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("Ping Monitor v5 (Go) - " + versionString)
+		fmt.Println("Ping Monitor v5 (Go) - " + buildinfo.Version)
 		return
 	}
 	if *uiOnly && *uiListen == "" {
@@ -78,7 +77,7 @@ func main() {
 		err := webui.Start(ctx, webui.Options{
 			ListenAddr:    *uiListen,
 			EndpointsPath: *endpointsPath,
-			Version:       versionString,
+			Version:       buildinfo.Version,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
