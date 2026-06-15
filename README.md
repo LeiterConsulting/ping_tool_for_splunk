@@ -251,11 +251,11 @@ ip,hostname
 
 **Full format with enrichment:**
 ```csv
-ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes
-192.168.1.1,router,false,network,Core Router,infrastructure,router,Cisco,Primary site
-10.0.0.50,app-server,false,servers,Production App,server,vm,VMware,Critical
-10.0.50.10,lab-api,true,dev,Dev API Node,service,vm,VMware,Excluded from production summary stats
-8.8.8.8,google-dns,false,external,Google DNS,external,dns,Google,Baseline
+ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev
+192.168.1.1,router,network,Core Router,infrastructure,router,Cisco,Primary site,false
+10.0.0.50,app-server,servers,Production App,server,vm,VMware,Critical,false
+10.0.50.10,lab-api,dev,Dev API Node,service,vm,VMware,Excluded from production summary stats,true
+8.8.8.8,google-dns,external,Google DNS,external,dns,Google,Baseline,false
 ```
 
 `dev` behavior (Go v5):

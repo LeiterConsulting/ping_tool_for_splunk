@@ -503,8 +503,8 @@ func writeEndpointsTemplate(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	content := "ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes\n" +
-		"127.0.0.1,localhost,false,default,loopback,,, ,\n"
+	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev\n" +
+		"127.0.0.1,localhost,default,loopback,,, ,false\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

@@ -10,9 +10,9 @@ func TestLoadEndpoints_ParsesDevColumn(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "endpoints.csv")
-	content := "ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes\n" +
-		"10.0.0.1,dev-api,true,dev,Development API,service,api,Acme,internal\n" +
-		"10.0.0.2,prod-api,false,prod,Production API,service,api,Acme,customer-facing\n"
+	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev\n" +
+		"10.0.0.1,dev-api,dev,Development API,service,api,Acme,internal,true\n" +
+		"10.0.0.2,prod-api,prod,Production API,service,api,Acme,customer-facing,false\n"
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("os.WriteFile() error = %v", err)
 	}

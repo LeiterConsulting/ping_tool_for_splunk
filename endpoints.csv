@@ -1,7 +1,7 @@
-ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes
-8.8.8.8,google-dns-primary,false,dns,Google Public DNS Primary,external,dns-resolver,Google,
-8.8.4.4,google-dns-secondary,false,dns,Google Public DNS Secondary,external,dns-resolver,Google,
-1.1.1.1,cloudflare-dns,false,dns,Cloudflare DNS,external,dns-resolver,Cloudflare,
-208.67.222.222,opendns-primary,false,dns,OpenDNS Primary,external,dns-resolver,OpenDNS,
-192.168.1.1,local-gateway,false,network,Local Network Gateway,network,gateway,,
-10.0.0.1,core-router,false,network,Core Router,network,router,,
+"ip","hostname","group","description","entitytype","device","vendor","additional_notes","dev"
+"8.8.8.8","google-dns-primary","dns","Google Public DNS Primary","external","dns-resolver","Google","","false"
+"8.8.4.4","google-dns-secondary","dns","Google Public DNS Secondary","external","dns-resolver","Google","","false"
+"1.1.1.1","cloudflare-dns","dns","Cloudflare DNS","external","dns-resolver","Cloudflare","","false"
+"208.67.222.222","opendns-primary","dns","OpenDNS Primary","external","dns-resolver","OpenDNS","","false"
+"192.168.1.1","local-gateway","network","Local Network Gateway","network","gateway","","","false"
+"10.0.0.1","core-router","network","Core Router","network","router","","","false"
