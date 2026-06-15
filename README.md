@@ -5,8 +5,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 ## Latest Published Release
 
 - Go runtime: `v5.3.1`
-- Splunk app: `2.7.4` build `32`
-- Current release notes: [RELEASE_NOTES_v5.3.1.md](RELEASE_NOTES_v5.3.1.md)
+- Splunk app: `2.7.5` build `33`
+- Current runtime release notes: [RELEASE_NOTES_v5.3.1.md](RELEASE_NOTES_v5.3.1.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.7.5.md](RELEASE_NOTES_splunk_app_2.7.5.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
 ## Current Runtime Options
@@ -23,7 +24,7 @@ The top-level README now describes the current published release only. Older Pow
 - Embedded local admin UI for live endpoint CRUD, discovery, dev/prod marking, settings editing, and HEC connectivity tests.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
 - Automatic `endpoints.csv` hot reload between monitoring cycles with last-known-good protection on invalid edits.
-- Dev/test endpoint segmentation with dedicated Splunk app visibility that does not pollute production rollups.
+- Dev/test endpoint segmentation with dedicated Prod Devices and Dev Devices dashboards that keep platform and pool-specific views separate.
 - Cross-platform Go release binaries for Windows amd64, Linux amd64/arm64, and macOS amd64/arm64.
 
 ## Quick Start
