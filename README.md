@@ -265,6 +265,8 @@ ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev
 
 ### Windows (config.psd1)
 
+The checked-in [config.psd1](d:/vscode%20projects/ping_tool_for_splunk/config.psd1) is the authoritative full Go v5 sample and includes the current `ping.mode`, diagnostics/debug, HEC retry/dead-letter, and metrics compatibility settings.
+
 ```powershell
 @{
     pings_per_cycle = 4
@@ -278,45 +280,60 @@ ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev
     # Output mode: "file", "hec", or "both"
     output_mode = "file"
     log_path = "./logs/ping_results.log"
+    ping = @{ mode = "auto" }
+    diagnostics = @{ enabled = $false; handle_probe_mode = "none" }
+    debug = @{ emit_memory_stats = $false }
     
     # Splunk HEC (direct ingestion) with retry support
     hec = @{
         enabled = $false
         url = "https://splunk:8088/services/collector/event"
         token = "your-token"
-        index = "network"
+        index = "main"
         sourcetype = "ping_monitor"
         verify_ssl = $true
-        ssl_protocol = "Tls12"
+        ssl_protocol = "Default"
         
-        # v3.2+ batching and retry
         batch_size = 100
         drop_on_failure = $true
         max_buffer_events = 5000
         max_buffer_bytes = "5MB"
         retry = @{
-            enabled = $true
+            enabled = $false
             max_attempts = 3
             base_delay_ms = 250
             jitter_pct = 20
             backoff = "exponential"
         }
+        retry_count = 0
+        retry_delay_ms = 250
+        dead_letter_path = ""
+        dead_letter_rotation_size_mb = 0
     }
     
-    # Splunk Metrics (high-efficiency storage)
+    # Splunk metrics (high-efficiency storage)
     metrics = @{
         enabled = $false
-        mode = "dual"  # "dual" or "metrics_only"
-        index = "ping_metrics"
+        mode = "dual"
+        index = ""
         hec_url = "https://splunk:8088/services/collector"
         token = "your-token"
         verify_ssl = $true
-        ssl_protocol = "Tls12"
+        ssl_protocol = "Default"
+        compat_mode = $true
+        sourcetype = "ping_monitor:metrics"
+        event_name = "metric"
+        use_metrics_index = $false
+        batch_size = 100
+        max_buffer_events = 5000
+        max_buffer_bytes = "5MB"
     }
 }
 ```
 
 ### Unix (config.conf)
+
+The checked-in [config.conf](d:/vscode%20projects/ping_tool_for_splunk/config.conf) is the current shell-runtime sample for [ping_monitor.sh](d:/vscode%20projects/ping_tool_for_splunk/ping_monitor.sh). Go v5 does not load `config.conf`.
 
 ```bash
 PINGS_PER_CYCLE=4
@@ -329,17 +346,22 @@ LOG_PATH="./logs/ping_results.log"
 # Splunk HEC
 HEC_URL="https://splunk:8088/services/collector/event"
 HEC_TOKEN="your-token"
-HEC_INDEX="network"
+HEC_INDEX="main"
 HEC_SOURCETYPE="ping_monitor"
 HEC_VERIFY_SSL="true"
-HEC_TLS_VERSION="1.2"
+HEC_TLS_VERSION="default"
+HEC_BATCH_SIZE=100
+HEC_MAX_BUFFER_EVENTS=5000
+HEC_RETRY_ENABLED="true"
+HEC_RETRY_MAX_ATTEMPTS=3
 
 # Metrics
 METRICS_ENABLED="false"
 METRICS_MODE="dual"
-METRICS_INDEX="ping_metrics"
+METRICS_INDEX=""
 METRICS_HEC_URL="https://splunk:8088/services/collector"
 METRICS_HEC_TOKEN="your-token"
+METRICS_SOURCETYPE="ping_monitor:metrics"
 ```
 
 ---

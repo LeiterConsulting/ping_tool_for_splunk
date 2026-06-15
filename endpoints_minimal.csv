@@ -1,5 +1,5 @@
-ip,hostname,dev
-8.8.8.8,google-dns-primary,false
-8.8.4.4,google-dns-secondary,false
-1.1.1.1,cloudflare-dns,false
-192.168.1.1,local-gateway,false
+ip,hostname
+8.8.8.8,google-dns-primary
+1.1.1.1,cloudflare-dns
+192.168.1.1,site-gateway
+10.0.1.20,erp-app-prod
