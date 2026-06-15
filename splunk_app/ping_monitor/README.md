@@ -2,19 +2,22 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 2.7.4
+## Version 2.7.5
 
-### What's New in v2.7.4
-- **Current-mode dev dashboarding**: The Dev Devices dashboard now follows each endpoint's latest `dev` state instead of lingering on historical `summary_dev` events after a device is moved back to production
+### What's New in v2.7.5
+- **Production devices dashboard**: Added a dedicated Prod Devices page immediately to the right of Ping Monitor Overview so production-only health can be reviewed separately from the whole-platform overview
+- **Prod/dev parity**: Prod Devices and Dev Devices now share the same device-pool breakdown tiles, including endpoint count, availability, average latency, packet-loss count, health table, and trend charts
+- **Overview clarified**: Ping Monitor Overview remains the whole-platform view rather than a production-only slice
+- **Current-mode dev dashboarding**: The Dev Devices dashboard follows each endpoint's latest `dev` state instead of lingering on historical `summary_dev` events after a device is moved back to production
 - **Runtime guidance refresh**: Updated operator documentation for the Go v5.3.1 service flow, local admin UI port selection, and drop-in reuse of existing `config.psd1` and `endpoints.csv` files
 - **Dev devices support**: Added a dedicated Dev Devices dashboard and dev-specific summary stream (`record_type=summary_dev`) so development/test endpoints are visible without skewing production stats
 - **Native-light dashboard refresh**: Removed the custom dark presentation and aligned the Overview, Setup, and Asset Correlation views with standard Splunk Web styling
 - **Splunk Cloud hardening**: Reworked searches and packaging for Cloud compatibility, including KV Store-backed health state, Cloud-safe metadata, and app reload triggers for custom config
-- **AppInspect precert validation**: `ping_monitor_2.7.4_build32_20260615.tar.gz` passes AppInspect precert with 0 errors, 0 failures, 4 warnings, and 103 successful checks. The warnings are the expected Windows-host capability checks plus the informational `collections.conf` notice.
+- **AppInspect precert validation**: `ping_monitor_2.7.5_build33_20260615.tar.gz` passes AppInspect precert with 0 errors, 0 failures, 4 warnings, and 103 successful checks. The warnings remain the expected Windows-host capability checks plus the informational `collections.conf` notice.
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.4_build32_20260615.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.7.5_build33_20260615.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
@@ -37,10 +40,11 @@ This Splunk app is intended to pair with the current Go runtime release, `v5.3.1
 
 ## Dashboards
 
-1. **Ping Monitor Overview** - Main dashboard with availability, latency, and status
-2. **Dev Devices** - Dedicated view for endpoints flagged as development/test (`record_type=summary_dev`)
-3. **Asset Health Correlation** - Enrich other data sources with ping health
-4. **Setup** - In-app configuration page for events and metrics data sources
+1. **Ping Monitor Overview** - Whole-platform dashboard across production and dev/test devices
+2. **Prod Devices** - Dedicated production-only view for devices whose latest mode is not dev
+3. **Dev Devices** - Dedicated dev/test view for endpoints currently flagged as development/test
+4. **Asset Health Correlation** - Enrich other data sources with ping health
+5. **Setup** - In-app configuration page for events and metrics data sources
 
 ## Configuration
 

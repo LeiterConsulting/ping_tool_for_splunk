@@ -3,7 +3,7 @@
   "info": {
     "id": {
       "name": "ping_monitor",
-      "version": "2.7.4"
+      "version": "2.7.5"
     },
     "title": "Ping Monitor",
     "description": "Enterprise network availability monitoring with dashboards, alerts, and health correlation.",

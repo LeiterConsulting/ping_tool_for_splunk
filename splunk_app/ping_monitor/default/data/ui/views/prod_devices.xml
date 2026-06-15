@@ -1,12 +1,12 @@
 <dashboard version="1.1">
-  <label>Dev Devices</label>
-  <description>Development and test endpoints (marked dev=true) are shown here and excluded from production summary statistics.</description>
+  <label>Prod Devices</label>
+  <description>Current production endpoints are shown here. Devices currently marked as dev/test are excluded from this production-specific breakdown.</description>
 
   <init>
-    <set token="dev_config_loaded">true</set>
+    <set token="prod_config_loaded">true</set>
   </init>
 
-  <search id="dev_config_loader">
+  <search id="prod_config_loader">
     <query>| inputlookup ping_monitor_settings_lookup
 | head 1
 | eval pm_index=if(isnull(index) OR index=="", "ping", index)
@@ -34,11 +34,11 @@
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
-        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+      | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+      | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | stats count by group | fields group | sort group</query>
@@ -48,39 +48,39 @@
     </input>
   </fieldset>
 
-  <row depends="$dev_config_loaded$">
+  <row depends="$prod_config_loaded$">
     <panel>
       <single>
-        <title>Dev Endpoints</title>
+        <title>Prod Endpoints</title>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
-| stats dc(target_ip) as total_dev</query>
+| stats dc(target_ip) as total_prod</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
         </search>
         <option name="colorMode">block</option>
         <option name="drilldown">none</option>
-        <option name="rangeColors">["0x006d77","0x006d77"]</option>
+        <option name="rangeColors">["0x53a051","0x53a051"]</option>
         <option name="rangeValues">[0]</option>
         <option name="useColors">1</option>
       </single>
     </panel>
     <panel>
       <single>
-        <title>Availability (Dev Only)</title>
+        <title>Availability (Prod Only)</title>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
@@ -103,11 +103,11 @@
       <single>
         <title>Average Latency</title>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
@@ -129,11 +129,11 @@
       <single>
         <title>Hosts With Packet Loss</title>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
@@ -152,16 +152,16 @@
     </panel>
   </row>
 
-  <row depends="$dev_config_loaded$">
+  <row depends="$prod_config_loaded$">
     <panel>
-      <title>Dev Endpoint Health</title>
+      <title>Prod Endpoint Health</title>
       <table>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
@@ -195,16 +195,16 @@
     </panel>
   </row>
 
-  <row depends="$dev_config_loaded$">
+  <row depends="$prod_config_loaded$">
     <panel>
-      <title>Dev Availability Trend</title>
+      <title>Prod Availability Trend</title>
       <chart>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
@@ -217,14 +217,14 @@
       </chart>
     </panel>
     <panel>
-      <title>Dev Latency Trend</title>
+      <title>Prod Latency Trend</title>
       <chart>
         <search>
-            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev avg_latency_ms&gt;0
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
 | search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
     | stats latest(dev) as dev by target_ip
-    | eval current_dev=lower(tostring(dev))
-    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+        | eval current_dev=if(isnull(dev) OR tostring(dev)=="", "false", lower(tostring(dev)))
+        | where current_dev!="true" AND current_dev!="1" AND current_dev!="t"
     | fields target_ip
     | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")

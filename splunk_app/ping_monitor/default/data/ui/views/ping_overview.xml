@@ -1,6 +1,6 @@
 <dashboard version="1.1">
   <label>Ping Monitor Overview</label>
-  <description>Enterprise network endpoint availability and latency monitoring with asset correlation</description>
+  <description>Whole-platform endpoint availability and latency monitoring across both production and dev/test devices.</description>
   
   <!-- Load configuration from KV Store -->
   <init>

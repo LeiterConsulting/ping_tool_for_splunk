@@ -155,13 +155,13 @@ Default/current sample values live in [config.psd1](config.psd1).
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_2.7.4_build32_20260615.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_2.7.5_build33_20260615.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.
-3. Use **Ping Monitor Overview**, **Dev Devices**, and **Asset Health Correlation**.
+3. Use **Ping Monitor Overview** for whole-platform statistics, **Prod Devices** for current production-only breakdowns, **Dev Devices** for current dev/test devices, and **Asset Health Correlation** for enrichment workflows.
 
-The current app package is AppInspect-validated for this release and includes the current Dev Devices behavior for latest dev-mode membership.
+The current app package is AppInspect-validated for this release and includes the separate Prod Devices dashboard plus current-mode Dev Devices membership behavior.
 
 ### File-Based Ingestion
 
