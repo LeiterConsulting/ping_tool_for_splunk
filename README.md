@@ -10,7 +10,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `go/` (Ping Monitor v5, Go) | **v5.2.0** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, and `endpoints.csv` hot reload |
+| `go/` (Ping Monitor v5, Go) | **v5.2.1** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, and `endpoints.csv` hot reload |
 | `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Supported (Legacy Runtime)** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
@@ -708,6 +708,11 @@ MIT License — free to use, modify, and distribute.
 ---
 
 ## Changelog
+
+**v5.2.1** — Endpoint schema compatibility hotfix
+- Preserved backward compatibility by moving optional `dev` back to the final `endpoints.csv` column position
+- Kept `dev` parsing optional so existing endpoint files continue to load unchanged
+- Rebuilt and documented current runtime artifacts as `v5.2.1`
 
 **v5.2.0** — Dev endpoint segmentation and service/install modernization
 - Added optional `dev` endpoint flag in `endpoints.csv` for Go runtime

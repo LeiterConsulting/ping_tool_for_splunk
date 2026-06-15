@@ -28,7 +28,7 @@ func main() {
 	flag.Parse()
 
 	if *version {
-		fmt.Println("Ping Monitor v5 (Go) - v5.2.0")
+		fmt.Println("Ping Monitor v5 (Go) - v5.2.1")
 		return
 	}
 

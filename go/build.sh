@@ -2,7 +2,7 @@
 set -euo pipefail
 
 OUTDIR=${1:-dist}
-VERSION=${VERSION:-v5.1.0}
+VERSION=${VERSION:-v5.2.1}
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DIST="$ROOT_DIR/$OUTDIR"
@@ -21,5 +21,6 @@ build() {
 
 build windows amd64 "pingmonitor_${VERSION}_windows_amd64.exe"
 build linux amd64   "pingmonitor_${VERSION}_linux_amd64"
+build linux arm64   "pingmonitor_${VERSION}_linux_arm64"
 build darwin amd64  "pingmonitor_${VERSION}_darwin_amd64"
 build darwin arm64  "pingmonitor_${VERSION}_darwin_arm64"

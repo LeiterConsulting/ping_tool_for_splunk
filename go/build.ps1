@@ -1,6 +1,6 @@
 param(
   [string]$OutDir = "dist",
-  [string]$Version = "v5.2.0"
+  [string]$Version = "v5.2.1"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +20,7 @@ try {
   $targets = @(
     @{ GOOS='windows'; GOARCH='amd64'; OUT="pingmonitor_${Version}_windows_amd64.exe" },
     @{ GOOS='linux';   GOARCH='amd64'; OUT="pingmonitor_${Version}_linux_amd64" },
+    @{ GOOS='linux';   GOARCH='arm64'; OUT="pingmonitor_${Version}_linux_arm64" },
     @{ GOOS='darwin';  GOARCH='amd64'; OUT="pingmonitor_${Version}_darwin_amd64" },
     @{ GOOS='darwin';  GOARCH='arm64'; OUT="pingmonitor_${Version}_darwin_arm64" }
   )

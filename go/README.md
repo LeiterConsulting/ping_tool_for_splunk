@@ -1,6 +1,6 @@
 # Ping Monitor v5 (Go)
 
-v5.2.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
+v5.2.1 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
 
 ## Compatibility
 
@@ -65,7 +65,7 @@ hec = @{
 
 ## Build all platforms
 
-- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.2.0`
+- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.2.1`
 - Bash: `./go/build.sh dist` (set `VERSION` env var if desired)
 
 ## Windows service
