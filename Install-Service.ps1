@@ -28,7 +28,11 @@
 
 .EXAMPLE
     .\Install-Service.ps1 -Install
-    Installs Ping Monitor as a Windows Service (Go v5 runtime by default)
+    Installs Ping Monitor as a Windows Service (Go v5 runtime by default, local admin UI enabled on 127.0.0.1:8080)
+
+.EXAMPLE
+    .\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
+    Installs Ping Monitor with the embedded admin UI bound to a custom local address
 
 .EXAMPLE
     .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
@@ -81,10 +85,17 @@ param(
     [string]$EndpointsPath,
 
     [Parameter()]
+    [string]$UIListen = "127.0.0.1:8080",
+
+    [Parameter()]
+    [switch]$DisableUI,
+
+    [Parameter()]
     [string]$ServiceName = "SplunkPingMonitor"
 )
 
 $ErrorActionPreference = "Stop"
+$uiListenWasBound = $PSBoundParameters.ContainsKey('UIListen')
 
 # Configuration
 $ScriptDir = $PSScriptRoot
@@ -245,10 +256,19 @@ function Install-PingMonitorService {
         $effectiveConfigPath = if ($ConfigPath) { $ConfigPath } else { Join-Path $ScriptDir "config.psd1" }
         $effectiveEndpointsPath = if ($EndpointsPath) { $EndpointsPath } else { Join-Path $ScriptDir "endpoints.csv" }
         $arguments = "--config `"$effectiveConfigPath`" --endpoints `"$effectiveEndpointsPath`""
+        if (-not $DisableUI -and -not [string]::IsNullOrWhiteSpace($UIListen)) {
+            $arguments += " --ui-listen `"$UIListen`""
+        }
 
         Write-Host "Using Go binary: $applicationPath" -ForegroundColor Gray
         Write-Host "Using config: $effectiveConfigPath" -ForegroundColor Gray
         Write-Host "Using endpoints: $effectiveEndpointsPath" -ForegroundColor Gray
+        if (-not $DisableUI -and -not [string]::IsNullOrWhiteSpace($UIListen)) {
+            Write-Host "Using admin UI: http://$UIListen" -ForegroundColor Gray
+        }
+        else {
+            Write-Host "Using admin UI: disabled" -ForegroundColor Gray
+        }
     }
     else {
         # Verify selected legacy script exists
@@ -282,6 +302,9 @@ function Install-PingMonitorService {
         $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PingMonitorScript`""
         Write-Host "Using PowerShell: $applicationPath" -ForegroundColor Gray
         Write-Host "Using script: $PingMonitorScript" -ForegroundColor Gray
+        if ($DisableUI -or $uiListenWasBound) {
+            Write-Warning "UI parameters are ignored when -Runtime powershell is selected."
+        }
     }
 
     Write-Host "Using NSSM: $nssm" -ForegroundColor Gray
@@ -330,6 +353,14 @@ To start the service:
 To reinstall targeting Go v5 (default):
     .\Install-Service.ps1 -Uninstall
     .\Install-Service.ps1 -Install -Runtime go
+
+To change the embedded admin UI bind address:
+    .\Install-Service.ps1 -Uninstall
+    .\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
+
+To disable the embedded admin UI for the Go runtime:
+    .\Install-Service.ps1 -Uninstall
+    .\Install-Service.ps1 -Install -Runtime go -DisableUI
 
 To install legacy PowerShell runtime:
     .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0

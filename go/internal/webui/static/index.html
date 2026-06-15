@@ -13,19 +13,19 @@
         <div class="brand-mark">PM</div>
         <div>
           <p class="brand-title">Ping Monitor</p>
-          <p class="brand-subtitle" id="version-text">Read-only shell</p>
+          <p class="brand-subtitle" id="version-text">Loading deployment...</p>
         </div>
       </div>
       <nav class="nav-list">
         <a class="nav-item active" href="#overview">Overview</a>
         <a class="nav-item" href="#inventory">Endpoints</a>
         <a class="nav-item" href="#devices">Dev Devices</a>
-        <a class="nav-item" href="#roadmap">Discovery</a>
-        <a class="nav-item" href="#roadmap">Settings</a>
+        <a class="nav-item" href="#discovery">Discovery</a>
+        <a class="nav-item" href="#settings">Settings</a>
       </nav>
       <div class="sidebar-footer">
-        <p>Clean-room shell</p>
-        <p>Blue/teal Ping Monitor palette</p>
+        <p id="sidebar-config-source">Config source loading...</p>
+        <p id="sidebar-discovery-status">Discovery availability loading...</p>
       </div>
     </aside>
 
@@ -33,12 +33,12 @@
       <header class="page-header">
         <div>
           <p class="eyebrow">Ping Monitor Admin</p>
-          <h1>Endpoint Control Surface</h1>
-          <p class="page-copy">First implementation slice: embedded UI shell and read-only endpoint inventory over the current CSV schema.</p>
+          <h1>Deployment Control Surface</h1>
+          <p class="page-copy">Drop this binary into an existing deployment, load the current config and endpoint files, and manage parity through the same runtime surfaces the service already uses.</p>
         </div>
         <div class="header-actions">
-          <span class="status-pill" id="mode-pill">Read-only</span>
-          <button class="primary-button" id="refresh-button" type="button">Refresh Data</button>
+          <span class="status-pill" id="mode-pill">Loading...</span>
+          <button class="primary-button" id="refresh-button" type="button">Reload From Disk</button>
         </div>
       </header>
 
@@ -47,16 +47,19 @@
           <div class="section-heading">
             <div>
               <h2>Overview</h2>
-              <p>Operational summary from the active endpoint file.</p>
+              <p>Runtime-facing summary from the active deployment files.</p>
             </div>
-            <div class="meta-chip" id="endpoint-path">Loading endpoint path...</div>
+            <div class="meta-stack">
+              <div class="meta-chip" id="config-path-chip">Loading config path...</div>
+              <div class="meta-chip" id="endpoint-path">Loading endpoint path...</div>
+            </div>
           </div>
 
           <div class="summary-grid">
             <article class="summary-card">
               <p class="summary-label">Total Endpoints</p>
               <p class="summary-value" id="summary-total">--</p>
-              <p class="summary-note">All rows recognized by the current loader</p>
+              <p class="summary-note">All rows in the current endpoint draft</p>
             </article>
             <article class="summary-card accent-teal">
               <p class="summary-label">Production</p>
@@ -74,57 +77,165 @@
               <p class="summary-note">Distinct endpoint groups in the current file</p>
             </article>
           </div>
+
+          <div class="info-grid">
+            <article class="panel info-card section-stack">
+              <p class="summary-label">Config Source</p>
+              <p class="info-value" id="config-source-label">Loading...</p>
+              <p class="summary-note" id="config-source-copy">Runtime settings are loaded from the current deployment folder.</p>
+            </article>
+            <article class="panel info-card section-stack">
+              <p class="summary-label">Discovery</p>
+              <p class="info-value" id="discovery-status-label">Checking...</p>
+              <p class="summary-note" id="discovery-status-copy">Discovery uses the companion workflow when it is available in the current deployment.</p>
+            </article>
+            <article class="panel info-card section-stack">
+              <p class="summary-label">Parity Goal</p>
+              <p class="info-value">Drop-In Management</p>
+              <p class="summary-note">The UI edits the same files an operator would otherwise edit manually.</p>
+            </article>
+          </div>
         </section>
 
-        <section id="inventory" class="panel section-stack">
+        <section id="inventory" class="section-stack">
           <div class="section-heading">
             <div>
               <h2>Endpoint Inventory</h2>
-              <p>Familiar table-first workflow, aligned with the SNMP app shell without sharing its code.</p>
+              <p>Full CRUD over the live endpoint file. Changes stay local until you save them back to disk.</p>
             </div>
-            <div class="toolbar-row">
-              <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor">
-              <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
-                <button class="segment active" type="button" data-filter="all">All</button>
-                <button class="segment" type="button" data-filter="production">Production</button>
-                <button class="segment" type="button" data-filter="dev">Dev</button>
-              </div>
+            <div class="section-actions">
+              <span class="meta-chip" id="endpoint-dirty-pill">In sync</span>
+              <button class="secondary-button" id="reset-endpoints-button" type="button">Reset Draft</button>
+              <button class="primary-button" id="save-endpoints-button" type="button">Save Endpoints</button>
             </div>
           </div>
 
-          <div id="error-banner" class="error-banner hidden"></div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>IP</th>
-                  <th>Hostname</th>
-                  <th>Group</th>
-                  <th>Type</th>
-                  <th>Device</th>
-                  <th>Vendor</th>
-                  <th>Mode</th>
-                </tr>
-              </thead>
-              <tbody id="endpoint-rows">
-                <tr>
-                  <td colspan="7" class="empty-cell">Loading endpoints...</td>
-                </tr>
-              </tbody>
-            </table>
+          <div id="endpoint-banner" class="message-banner hidden"></div>
+
+          <div class="editor-grid">
+            <article class="panel section-stack">
+              <div class="toolbar-row">
+                <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor">
+                <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
+                  <button class="segment active" type="button" data-filter="all">All</button>
+                  <button class="segment" type="button" data-filter="production">Production</button>
+                  <button class="segment" type="button" data-filter="dev">Dev</button>
+                </div>
+              </div>
+
+              <div class="button-row">
+                <button class="secondary-button" id="add-endpoint-button" type="button">Add Endpoint</button>
+                <button class="secondary-button" id="select-all-endpoints-button" type="button">Select All</button>
+                <button class="secondary-button" id="deselect-all-endpoints-button" type="button">Deselect All</button>
+                <button class="secondary-button" id="mark-selected-dev-button" type="button">Mark Selected Dev</button>
+                <button class="secondary-button" id="mark-selected-production-button" type="button">Mark Selected Prod</button>
+                <button class="danger-button" id="delete-endpoint-button" type="button">Delete Selected</button>
+              </div>
+
+              <div class="table-meta-row">
+                <span class="table-status" id="endpoint-selection-status">0 selected</span>
+                <label class="inline-field">
+                  <span>Devices per page</span>
+                  <select id="endpoint-page-size" class="text-input text-input-compact">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <div class="pager">
+                  <button class="secondary-button pager-button" id="endpoint-prev-page" type="button">Previous</button>
+                  <span class="meta-chip" id="endpoint-page-status">Page 1 of 1</span>
+                  <button class="secondary-button pager-button" id="endpoint-next-page" type="button">Next</button>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="table-select-col">Select</th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="ip">IP</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="hostname">Hostname</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="group">Group</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="entitytype">Type</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="device">Device</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="vendor">Vendor</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="dev">Mode</button></th>
+                    </tr>
+                  </thead>
+                  <tbody id="endpoint-rows">
+                    <tr>
+                      <td colspan="8" class="empty-cell">Loading endpoints...</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+
+            <article class="panel section-stack">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title">Endpoint Editor</h3>
+                  <p class="summary-note" id="endpoint-selection-label">Select an endpoint to edit its live CSV fields.</p>
+                </div>
+              </div>
+
+              <form id="endpoint-form" class="form-stack" autocomplete="off">
+                <div class="field-grid">
+                  <label class="field-group">
+                    <span>IP Address</span>
+                    <input id="endpoint-ip" class="text-input" type="text" placeholder="10.0.0.10">
+                  </label>
+                  <label class="field-group">
+                    <span>Hostname</span>
+                    <input id="endpoint-hostname" class="text-input" type="text" placeholder="core-switch-a">
+                  </label>
+                  <label class="field-group">
+                    <span>Group</span>
+                    <input id="endpoint-group" class="text-input" type="text" placeholder="network">
+                  </label>
+                  <label class="field-group">
+                    <span>Entity Type</span>
+                    <input id="endpoint-entitytype" class="text-input" type="text" placeholder="infrastructure">
+                  </label>
+                  <label class="field-group">
+                    <span>Device</span>
+                    <input id="endpoint-device" class="text-input" type="text" placeholder="switch">
+                  </label>
+                  <label class="field-group">
+                    <span>Vendor</span>
+                    <input id="endpoint-vendor" class="text-input" type="text" placeholder="Cisco">
+                  </label>
+                  <label class="field-group field-span-2">
+                    <span>Description</span>
+                    <input id="endpoint-description" class="text-input" type="text" placeholder="Primary core switch">
+                  </label>
+                  <label class="field-group field-span-2">
+                    <span>Additional Notes</span>
+                    <textarea id="endpoint-notes" class="text-input text-area" rows="4" placeholder="Change notes, owner, exception reason, or rollout context"></textarea>
+                  </label>
+                </div>
+
+                <label class="checkbox-row">
+                  <input id="endpoint-dev" type="checkbox">
+                  <span>Treat this endpoint as development or test and exclude it from production summary rollups.</span>
+                </label>
+              </form>
+            </article>
           </div>
         </section>
 
-        <section id="devices" class="two-column-grid">
-          <article class="panel section-stack">
-            <div class="section-heading compact">
-              <div>
-                <h2>Dev Devices</h2>
-                <p>Dedicated visibility for systems excluded from customer-facing production summaries.</p>
-              </div>
-              <span class="meta-chip" id="dev-refresh">Awaiting data</span>
+        <section id="devices" class="section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Dev Devices</h2>
+              <p>Dedicated visibility for systems excluded from customer-facing production summaries.</p>
             </div>
+            <span class="meta-chip" id="dev-refresh">Awaiting data</span>
+          </div>
 
+          <article class="panel section-stack">
             <div class="table-wrap dev-table-wrap">
               <table>
                 <thead>
@@ -143,30 +254,417 @@
               </table>
             </div>
           </article>
+        </section>
 
-          <article id="roadmap" class="panel section-stack roadmap-panel">
-            <div class="section-heading compact">
-              <div>
-                <h2>Next Slice</h2>
-                <p>The shell is live. These are the next interactive surfaces to add.</p>
+        <section id="discovery" class="section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Discovery</h2>
+              <p>Run the companion discovery workflow, review the discovered endpoints, and load them into the endpoint draft before saving.</p>
+            </div>
+            <div class="section-actions">
+              <span class="meta-chip" id="discovery-availability">Checking discovery...</span>
+              <span class="meta-chip" id="discovery-run-state">Idle</span>
+            </div>
+          </div>
+
+          <div id="discovery-banner" class="message-banner hidden"></div>
+
+          <div class="editor-grid">
+            <article class="panel section-stack">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title">Discovery Controls</h3>
+                  <p class="summary-note">These values map to the existing discovery script parameters.</p>
+                </div>
+              </div>
+
+              <div class="field-grid field-grid-third">
+                <label class="field-group">
+                  <span>Target Network</span>
+                  <input id="discovery-target-network" class="text-input" type="text" placeholder="Leave blank for local subnet, or use 192.168.1.0 or 192.168.1.0/24">
+                </label>
+                <label class="field-group">
+                  <span>Subnet Mask</span>
+                  <input id="discovery-subnet-mask" class="text-input" type="number" min="16" max="30" value="24">
+                </label>
+                <label class="field-group">
+                  <span>Timeout (ms)</span>
+                  <input id="discovery-timeout-ms" class="text-input" type="number" min="100" value="500">
+                </label>
+                <label class="field-group">
+                  <span>Throttle Limit</span>
+                  <input id="discovery-throttle-limit" class="text-input" type="number" min="1" value="50">
+                </label>
+              </div>
+
+              <div class="button-row">
+                <button class="primary-button" id="run-discovery-button" type="button">Run Discovery</button>
+                <button class="secondary-button" id="select-all-discovery-button" type="button">Select All</button>
+                <button class="secondary-button" id="deselect-all-discovery-button" type="button">Deselect All</button>
+                <button class="secondary-button" id="mark-discovery-dev-button" type="button">Mark Selected Dev</button>
+                <button class="secondary-button" id="mark-discovery-production-button" type="button">Mark Selected Prod</button>
+                <button class="secondary-button" id="add-discovery-selected-button" type="button">Add Selected to Device List</button>
+              </div>
+
+              <div class="table-meta-row">
+                <span class="table-status" id="discovery-selection-status">0 selected</span>
+                <label class="inline-field inline-field-wide">
+                  <span>Duplicate Handling</span>
+                  <select id="discovery-merge-mode" class="text-input text-input-compact">
+                    <option value="skip_existing">Skip duplicate IPs</option>
+                    <option value="fill_blanks">Fill blank fields</option>
+                    <option value="overwrite">Overwrite existing fields</option>
+                  </select>
+                </label>
+              </div>
+
+              <article class="panel info-card section-stack compact-info-grid">
+                <p class="summary-label">Discovery Summary</p>
+                <p class="info-value" id="discovery-summary">No discovery run yet.</p>
+                <p class="summary-note">Runs are staged into the editor and only persist after saving endpoints.</p>
+              </article>
+
+              <div class="log-surface" id="discovery-logs">Discovery logs will appear here after a run.</div>
+            </article>
+
+            <article class="panel section-stack">
+              <div class="panel-header">
+                <div>
+                  <h3 class="panel-title">Discovery Results</h3>
+                  <p class="summary-note">Review the discovered set before you merge it into the working endpoint draft.</p>
+                </div>
+              </div>
+
+              <div class="table-meta-row">
+                <span class="table-status" id="discovery-table-status">0 results</span>
+                <label class="inline-field">
+                  <span>Devices per page</span>
+                  <select id="discovery-page-size" class="text-input text-input-compact">
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <div class="pager">
+                  <button class="secondary-button pager-button" id="discovery-prev-page" type="button">Previous</button>
+                  <span class="meta-chip" id="discovery-page-status">Page 1 of 1</span>
+                  <button class="secondary-button pager-button" id="discovery-next-page" type="button">Next</button>
+                </div>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th class="table-select-col">Select</th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="ip">IP</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="hostname">Hostname</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="group">Group</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="entitytype">Type</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="device">Device</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="vendor">Vendor</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dev">Mode</button></th>
+                    </tr>
+                  </thead>
+                  <tbody id="discovery-rows">
+                    <tr>
+                      <td colspan="8" class="empty-cell">Discovery results will appear here after a run.</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="settings" class="section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Settings</h2>
+              <p>Parity with the manual config workflow. These fields write back to the live config file the runtime loads at startup.</p>
+            </div>
+            <div class="section-actions">
+              <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
+              <button class="secondary-button" id="test-hec-button" type="button">Test Event HEC</button>
+              <button class="secondary-button" id="test-metrics-button" type="button">Test Metrics HEC</button>
+              <button class="secondary-button" id="reload-config-button" type="button">Reload Config</button>
+              <button class="secondary-button" id="reset-config-button" type="button">Reset Changes</button>
+              <button class="primary-button" id="save-config-button" type="button">Save Config</button>
+            </div>
+          </div>
+
+          <div id="settings-banner" class="message-banner hidden"></div>
+          <div id="output-test-details" class="log-surface hidden"></div>
+
+          <form id="settings-form" class="settings-stack" autocomplete="off">
+            <div class="settings-grid">
+              <div class="settings-stack">
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Core Runtime</h3>
+                      <p class="summary-note">Cycle timing and concurrency.</p>
+                    </div>
+                  </div>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Pings Per Cycle</span>
+                      <input id="cfg-pings-per-cycle" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Cycle Interval (s)</span>
+                      <input id="cfg-cycle-interval" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Timeout (ms)</span>
+                      <input id="cfg-timeout-ms" class="text-input" type="number" min="100">
+                    </label>
+                    <label class="field-group">
+                      <span>Parallel Threads</span>
+                      <input id="cfg-parallel-threads" class="text-input" type="number" min="1">
+                    </label>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-emit-individual-pings" type="checkbox">
+                    <span>Emit per-ping events in addition to summary events.</span>
+                  </label>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Output and Ping Engine</h3>
+                      <p class="summary-note">File or HEC mode, log path, and ping execution strategy.</p>
+                    </div>
+                  </div>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Output Mode</span>
+                      <select id="cfg-output-mode" class="text-input">
+                        <option value="file">file</option>
+                        <option value="hec">hec</option>
+                        <option value="both">both</option>
+                      </select>
+                    </label>
+                    <label class="field-group">
+                      <span>Ping Mode</span>
+                      <select id="cfg-ping-mode" class="text-input">
+                        <option value="auto">auto</option>
+                        <option value="raw">raw</option>
+                        <option value="exec">exec</option>
+                      </select>
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>Log Path</span>
+                      <input id="cfg-log-path" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Log Rotation (MB)</span>
+                      <input id="cfg-log-rotation" class="text-input" type="number" min="1">
+                    </label>
+                  </div>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Diagnostics</h3>
+                      <p class="summary-note">Runtime diagnostics and memory instrumentation.</p>
+                    </div>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-diagnostics-enabled" type="checkbox">
+                    <span>Enable runtime diagnostics output.</span>
+                  </label>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Handle Probe Mode</span>
+                      <select id="cfg-handle-probe-mode" class="text-input">
+                        <option value="none">none</option>
+                        <option value="hec_only">hec_only</option>
+                        <option value="metrics_only">metrics_only</option>
+                      </select>
+                    </label>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-emit-memory-stats" type="checkbox">
+                    <span>Emit memory stats snapshots from the runtime.</span>
+                  </label>
+                </article>
+              </div>
+
+              <div class="settings-stack">
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">HEC Events</h3>
+                      <p class="summary-note">Primary event delivery settings and retry controls.</p>
+                    </div>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-hec-enabled" type="checkbox">
+                    <span>Enable Splunk HEC event delivery.</span>
+                  </label>
+                  <div class="field-grid">
+                    <label class="field-group field-span-2">
+                      <span>HEC URL</span>
+                      <input id="cfg-hec-url" class="text-input" type="text">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>HEC Token</span>
+                      <input id="cfg-hec-token" class="text-input" type="password" autocomplete="new-password" spellcheck="false">
+                    </label>
+                    <label class="field-group">
+                      <span>Index</span>
+                      <input id="cfg-hec-index" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Sourcetype</span>
+                      <input id="cfg-hec-sourcetype" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>SSL Protocol</span>
+                      <input id="cfg-hec-ssl-protocol" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Batch Size</span>
+                      <input id="cfg-hec-batch-size" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Max Buffer Events</span>
+                      <input id="cfg-hec-max-buffer-events" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Max Buffer Bytes</span>
+                      <input id="cfg-hec-max-buffer-bytes" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Retry Count</span>
+                      <input id="cfg-hec-retry-count" class="text-input" type="number" min="0">
+                    </label>
+                    <label class="field-group">
+                      <span>Retry Delay (ms)</span>
+                      <input id="cfg-hec-retry-delay-ms" class="text-input" type="number" min="0">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>Dead Letter Path</span>
+                      <input id="cfg-hec-dead-letter-path" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Dead Letter Rotation (MB)</span>
+                      <input id="cfg-hec-dead-letter-rotation" class="text-input" type="number" min="0">
+                    </label>
+                  </div>
+                  <div class="checkbox-stack">
+                    <label class="checkbox-row">
+                      <input id="cfg-hec-verify-ssl" type="checkbox">
+                      <span>Verify TLS certificates.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-hec-drop-on-failure" type="checkbox">
+                      <span>Drop event batches when delivery fails.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-hec-retry-enabled" type="checkbox">
+                      <span>Enable structured retry policy.</span>
+                    </label>
+                  </div>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Retry Max Attempts</span>
+                      <input id="cfg-hec-max-attempts" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Retry Base Delay (ms)</span>
+                      <input id="cfg-hec-base-delay-ms" class="text-input" type="number" min="0">
+                    </label>
+                    <label class="field-group">
+                      <span>Retry Jitter %</span>
+                      <input id="cfg-hec-jitter-pct" class="text-input" type="number" min="0">
+                    </label>
+                    <label class="field-group">
+                      <span>Retry Backoff</span>
+                      <input id="cfg-hec-backoff" class="text-input" type="text">
+                    </label>
+                  </div>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Metrics Output</h3>
+                      <p class="summary-note">Metrics path settings, compatibility, and batching.</p>
+                    </div>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-metrics-enabled" type="checkbox">
+                    <span>Enable metrics delivery.</span>
+                  </label>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Metrics Mode</span>
+                      <select id="cfg-metrics-mode" class="text-input">
+                        <option value="dual">dual</option>
+                        <option value="metrics_only">metrics_only</option>
+                      </select>
+                    </label>
+                    <label class="field-group">
+                      <span>Index</span>
+                      <input id="cfg-metrics-index" class="text-input" type="text">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>Metrics HEC URL</span>
+                      <input id="cfg-metrics-hec-url" class="text-input" type="text">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>Metrics Token</span>
+                      <input id="cfg-metrics-token" class="text-input" type="password" autocomplete="new-password" spellcheck="false">
+                    </label>
+                    <label class="field-group">
+                      <span>SSL Protocol</span>
+                      <input id="cfg-metrics-ssl-protocol" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Sourcetype</span>
+                      <input id="cfg-metrics-sourcetype" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Event Name</span>
+                      <input id="cfg-metrics-event-name" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Batch Size</span>
+                      <input id="cfg-metrics-batch-size" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Max Buffer Events</span>
+                      <input id="cfg-metrics-max-buffer-events" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Max Buffer Bytes</span>
+                      <input id="cfg-metrics-max-buffer-bytes" class="text-input" type="text">
+                    </label>
+                  </div>
+                  <div class="checkbox-stack">
+                    <label class="checkbox-row">
+                      <input id="cfg-metrics-verify-ssl" type="checkbox">
+                      <span>Verify TLS certificates for the metrics sink.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-metrics-compat-mode" type="checkbox">
+                      <span>Preserve legacy metrics payload compatibility.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-metrics-use-metrics-index" type="checkbox">
+                      <span>Use Splunk metrics index semantics.</span>
+                    </label>
+                  </div>
+                </article>
               </div>
             </div>
-
-            <div class="roadmap-list">
-              <div class="roadmap-card">
-                <p class="roadmap-label">Editable Endpoint Forms</p>
-                <p class="roadmap-copy">CSV-backed CRUD with validation, backups, and atomic save.</p>
-              </div>
-              <div class="roadmap-card">
-                <p class="roadmap-label">Discovery Workflow</p>
-                <p class="roadmap-copy">Scan, preview, and merge discovered hosts into the existing schema.</p>
-              </div>
-              <div class="roadmap-card">
-                <p class="roadmap-label">Settings and Outputs</p>
-                <p class="roadmap-copy">Expose config.psd1 and HEC settings through the same shell language.</p>
-              </div>
-            </div>
-          </article>
+          </form>
         </section>
       </div>
     </main>

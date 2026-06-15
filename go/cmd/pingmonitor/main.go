@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +47,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	resolvedConfigPath := resolveRuntimePath(*configPath, root, "config.psd1")
+	resolvedEndpointsPath := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
+
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -53,7 +57,7 @@ func main() {
 		cancel()
 	}()
 
-	cfg, cfgSource, err := config.Load(ctx, *configPath, root)
+	cfg, cfgSource, err := config.Load(ctx, resolvedConfigPath, root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config load failed: %v\n", err)
 		os.Exit(2)
@@ -62,7 +66,7 @@ func main() {
 		cfg.Ping.Mode = *pingMode
 	}
 
-	endpointReloader, endpoints, err := config.NewEndpointReloader(*endpointsPath)
+	endpointReloader, endpoints, err := config.NewEndpointReloader(resolvedEndpointsPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "endpoints load failed: %v\n", err)
 		os.Exit(2)
@@ -76,7 +80,9 @@ func main() {
 	if *uiListen != "" {
 		err := webui.Start(ctx, webui.Options{
 			ListenAddr:    *uiListen,
-			EndpointsPath: *endpointsPath,
+			ConfigPath:    resolvedConfigPath,
+			EndpointsPath: resolvedEndpointsPath,
+			RootDir:       root,
 			Version:       buildinfo.Version,
 		})
 		if err != nil {
@@ -97,7 +103,7 @@ func main() {
 	opts := engine.Options{
 		RunOnce:         *runOnce,
 		MaxCycles:       *maxCycles,
-		EndpointsPath:   *endpointsPath,
+		EndpointsPath:   resolvedEndpointsPath,
 		ReloadEndpoints: endpointReloader.ReloadIfChanged,
 	}
 
@@ -115,4 +121,32 @@ func main() {
 	}
 
 	time.Sleep(25 * time.Millisecond) // allow log flush in some environments
+}
+
+func resolveRuntimePath(path string, root string, defaultName string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return filepath.Join(root, defaultName)
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed)
+	}
+	cwdCandidate := filepath.Clean(trimmed)
+	rootCandidate := filepath.Join(root, trimmed)
+	if trimmed == defaultName {
+		if _, err := os.Stat(rootCandidate); err == nil {
+			return rootCandidate
+		}
+		if _, err := os.Stat(cwdCandidate); err == nil {
+			return cwdCandidate
+		}
+		return rootCandidate
+	}
+	if _, err := os.Stat(cwdCandidate); err == nil {
+		return cwdCandidate
+	}
+	if _, err := os.Stat(rootCandidate); err == nil {
+		return rootCandidate
+	}
+	return rootCandidate
 }

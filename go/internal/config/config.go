@@ -438,6 +438,14 @@ func getInt(m map[string]interface{}, key string, def int) int {
 }
 
 func LoadEndpoints(path string) ([]models.Endpoint, error) {
+	return loadEndpoints(path, false)
+}
+
+func LoadEditableEndpoints(path string) ([]models.Endpoint, error) {
+	return loadEndpoints(path, true)
+}
+
+func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -493,7 +501,7 @@ func LoadEndpoints(path string) ([]models.Endpoint, error) {
 		}
 		eps = append(eps, ep)
 	}
-	if len(eps) == 0 {
+	if len(eps) == 0 && !allowEmpty {
 		return nil, errors.New("no valid endpoints found in CSV")
 	}
 	return eps, nil

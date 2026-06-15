@@ -10,7 +10,7 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `go/` (Ping Monitor v5, Go) | **v5.3.0** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, `endpoints.csv` hot reload, and an embedded local admin UI preview |
+| `go/` (Ping Monitor v5, Go) | **v5.3.1** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, `endpoints.csv` hot reload, drop-in reuse of existing deployment files, and an embedded local admin UI for live CRUD, discovery, and output validation |
 | `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Supported (Legacy Runtime)** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
@@ -175,7 +175,7 @@ Dashboard filters now properly support values with spaces:
 
 No special quoting required in your `endpoints.csv` — just use natural names.
 
-### 🧭 Splunk App 2.7.3
+### 🧭 Splunk App 2.7.4
 The included Splunk app now ships with a lighter, native Splunk presentation and a Cloud-ready package layout:
 - **Native-light dashboards** — Overview, correlation, and setup views now align with standard Splunk Web styling
 - **KV Store-backed setup and health state** — setup values and the health lookup are stored in KV Store for Cloud compatibility
@@ -210,42 +210,44 @@ Both editions share the same summary + enrichment schema. (Windows/Go supports o
 # 1. Build the current runtime
 go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor
 
-# 2. Edit your endpoints
-notepad endpoints.csv
+# 2. Copy pingmonitor.exe into an existing deployment folder if you are upgrading in place.
+#    With the default file names, the binary will use the co-located config.psd1 and endpoints.csv first.
 
 # 3. Test run (single cycle)
 .\pingmonitor.exe --run-once
 
-# 4. Run continuously
-.\pingmonitor.exe
+# 4. Run monitoring and the local admin UI together
+.\pingmonitor.exe --ui-listen 127.0.0.1:8080
 
-# 5. Optional: launch the local admin UI preview only
+# 5. Optional: launch the local admin UI only
 .\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
 ```
 
-### Local Admin UI Preview
+### Local Admin UI
 
-The current Go v5.3.0 build includes the first embedded web UI slice for the runtime:
+The current Go v5.3.1 build includes an embedded local admin UI for the live deployment files:
 
 - local-only HTTP shell served by `pingmonitor.exe`
-- read-only endpoint inventory backed by the active `endpoints.csv`
-- production vs `dev` summary cards and a dedicated dev-device table
+- full endpoint CRUD backed by the active `endpoints.csv`, including `dev` devices
+- live config editing that writes back to `config.psd1`, `config.yaml`, or `config.json`
+- bundled discovery execution with replace/merge workflows against the current endpoint inventory
+- HEC event and metrics endpoint test actions from the Settings page before saving
 
-Preview command:
+Recommended launch against an existing deployment folder:
+
+```powershell
+.\pingmonitor.exe --ui-listen 127.0.0.1:8080
+```
+
+If you only want to edit settings and endpoints without starting the monitoring engine:
 
 ```powershell
 .\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
-```
-
-Run monitoring and the local UI together:
-
-```powershell
-.\pingmonitor.exe --config .\config.psd1 --endpoints .\endpoints.csv --ui-listen 127.0.0.1:8080
 ```
 
 Then open `http://127.0.0.1:8080` in a browser.
 
-Current limitation: this first slice is read-only. Endpoint editing, config editing, and discovery workflows are the next implementation steps.
+The UI operates against the same active files the runtime uses. If `pingmonitor.exe` starts in a folder that already contains `config.psd1` and `endpoints.csv`, those files are loaded on startup and surfaced in the UI immediately, so an existing deployment can be managed in place without recreating settings.
 
 ### Unix/Linux/macOS
 
@@ -501,7 +503,7 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 1. **Install the app**:
    ```
-    Upload ping_monitor_2.7.3_build31_20260615.tar.gz via Splunk Web → Manage Apps → Install from File
+    Upload ping_monitor_2.7.4_build32_20260615.tar.gz via Splunk Web → Manage Apps → Install from File
    ```
 
 2. **Run Setup**:
@@ -566,7 +568,7 @@ label = Ping Monitor
 [launcher]
 author = Your Organization
 description = Network availability monitoring with dual-mode support
-version = 2.7.3
+version = 2.7.4
 EOF
 
 
@@ -624,12 +626,23 @@ After restarting Splunk (or running `| rest /services/admin/macros`), test:
 # 1. Build the Go runtime (current)
 go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor
 
-# 2. Install service (defaults to Go runtime)
+# 2. Copy pingmonitor.exe into the existing deployment folder if you are upgrading in place.
+#    The service/runtime will pick up the co-located config.psd1 and endpoints.csv automatically.
+
+# 3. Install service (defaults to Go runtime and enables the local admin UI on 127.0.0.1:8080)
 .\Install-Service.ps1 -Install -Runtime go
+
+# Optional: choose a different local UI bind/port for the embedded admin UI
+.\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
+
+# Optional: disable the local UI for the service
+# .\Install-Service.ps1 -Install -Runtime go -DisableUI
 
 # Optional: install legacy PowerShell runtime instead
 # .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
 ```
+
+When the service starts, the embedded UI uses the same active deployment files as the monitor itself. That means an existing customer can replace the binary, restart the service, open the chosen `http://host:port`, and edit the imported runtime configuration/endpoints directly from the UI.
 
 ### Unix (systemd/launchd/OpenRC)
 
@@ -760,11 +773,17 @@ MIT License — free to use, modify, and distribute.
 
 ## Changelog
 
-**v5.3.0** — Embedded admin UI preview
-- Added the first embedded local web UI preview to the Go runtime
-- Exposed read-only `healthz`, `api/status`, and `api/endpoints` routes from `pingmonitor.exe`
-- Added a clean-room Ping Monitor shell aligned with the SNMP app's layout language while keeping a distinct color palette
-- Centralized the in-code Go runtime version marker and updated build defaults/documentation to `v5.3.0`
+**v5.3.1** — Service/UI documentation and current-mode dev dashboarding
+- Documented the Go runtime service flow with explicit `-UIListen` examples and the default local admin UI port
+- Clarified that co-located `config.psd1` and `endpoints.csv` are picked up automatically and loaded into the UI at startup for in-place upgrades
+- Updated the Splunk app Dev Devices queries so endpoints moved back to production stop lingering on the dev page once current-mode data arrives
+- Bumped the packaged Splunk app artifact to `2.7.4` build `32`
+
+**v5.3.0** — Embedded admin UI and deployment parity
+- Added an embedded local admin UI to the Go runtime for live endpoint CRUD, `dev` device management, discovery, and config editing
+- Exposed `healthz`, `api/status`, editable `api/endpoints`, editable `api/config`, discovery execution, and output connectivity test routes from `pingmonitor.exe`
+- Added HEC event and metrics endpoint validation from the Settings page and preserved drop-in compatibility with existing deployment files
+- Updated service/install guidance and runtime path behavior so co-located `config.psd1` and `endpoints.csv` remain the default control surface
 
 **v5.2.1** — Endpoint schema compatibility hotfix
 - Preserved backward compatibility by moving optional `dev` back to the final `endpoints.csv` column position

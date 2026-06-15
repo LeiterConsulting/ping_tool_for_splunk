@@ -3,7 +3,6 @@ package hec
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,7 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 )
 
@@ -38,11 +38,7 @@ func New(cfg config.HEC, hostname string) (*Writer, error) {
 		return nil, errors.New("hec enabled but url/token not configured")
 	}
 
-	tr := &http.Transport{}
-	if !cfg.VerifySSL {
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-	}
-	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+	client := httpcfg.NewClient(cfg.VerifySSL, cfg.SSLProtocol, 10*time.Second)
 
 	w := &Writer{cfg: cfg, hostname: hostname, client: client, capThreshold: 2 * 1024 * 1024}
 	return w, nil

@@ -2,20 +2,29 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 2.7.3
+## Version 2.7.4
 
-### What's New in v2.7.3
+### What's New in v2.7.4
+- **Current-mode dev dashboarding**: The Dev Devices dashboard now follows each endpoint's latest `dev` state instead of lingering on historical `summary_dev` events after a device is moved back to production
+- **Runtime guidance refresh**: Updated operator documentation for the Go v5.3.1 service flow, local admin UI port selection, and drop-in reuse of existing `config.psd1` and `endpoints.csv` files
 - **Dev devices support**: Added a dedicated Dev Devices dashboard and dev-specific summary stream (`record_type=summary_dev`) so development/test endpoints are visible without skewing production stats
-- **Service/runtime guidance refresh**: Updated release guidance and installer defaults to align with the Go v5 runtime flow
 - **Native-light dashboard refresh**: Removed the custom dark presentation and aligned the Overview, Setup, and Asset Correlation views with standard Splunk Web styling
 - **Splunk Cloud hardening**: Reworked searches and packaging for Cloud compatibility, including KV Store-backed health state, Cloud-safe metadata, and app reload triggers for custom config
-- **AppInspect precert validation**: The current release package passes AppInspect precert with no errors or failures; remaining warnings are Windows host capability checks only
+- **AppInspect precert validation**: `ping_monitor_2.7.4_build32_20260615.tar.gz` passes AppInspect precert with 0 errors, 0 failures, 4 warnings, and 103 successful checks. The warnings are the expected Windows-host capability checks plus the informational `collections.conf` notice.
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.3_build31_20260615.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.4_build32_20260615.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
-3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
+3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
+
+## Paired Go Runtime
+
+This Splunk app is intended to pair with the current Go runtime release, `v5.3.1`.
+
+- Drop `pingmonitor.exe` into an existing deployment folder and it will pick up the co-located `config.psd1` and `endpoints.csv` on startup.
+- If the embedded admin UI is enabled, those active files are loaded into the UI immediately so the existing deployment can be managed without rebuilding configuration by hand.
+- The local admin UI bind can be chosen with `--ui-listen` on direct launches or `-UIListen` when installing the Windows service.
 
 ## Features
 

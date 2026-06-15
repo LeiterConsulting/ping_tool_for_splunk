@@ -34,7 +34,13 @@
       <fieldForLabel>group</fieldForLabel>
       <fieldForValue>group</fieldForValue>
       <search>
-        <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+        <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | stats count by group | fields group | sort group</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -47,7 +53,13 @@
       <single>
         <title>Dev Endpoints</title>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | stats dc(target_ip) as total_dev</query>
           <earliest>$time_range.earliest$</earliest>
@@ -64,7 +76,13 @@
       <single>
         <title>Availability (Dev Only)</title>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=if(total&gt;0, round((success/total)*100, 2), 0)
@@ -85,7 +103,13 @@
       <single>
         <title>Hosts With Packet Loss</title>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss &gt; 0
@@ -107,7 +131,13 @@
       <title>Dev Endpoint Health</title>
       <table>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | stats latest(_time) as last_seen,
         latest(target_ip) as target_ip,
@@ -144,7 +174,13 @@
       <title>Dev Availability Trend</title>
       <chart>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | timechart span=5m avg(eval(100-packet_loss_pct)) as availability</query>
           <earliest>$time_range.earliest$</earliest>
@@ -158,7 +194,13 @@
       <title>Dev Latency Trend</title>
       <chart>
         <search>
-          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)` avg_latency_ms&gt;0
+            <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary_dev avg_latency_ms&gt;0
+| search [ search index=$pm_index$ sourcetype=$pm_sourcetype$ (record_type=summary OR record_type=summary_dev)
+    | stats latest(dev) as dev by target_ip
+    | eval current_dev=lower(tostring(dev))
+    | where current_dev="true" OR current_dev="1" OR current_dev="t"
+    | fields target_ip
+    | format ]
 | search (group="$group_filter$" OR "$group_filter$"="*")
 | timechart span=5m avg(avg_latency_ms) as avg_latency_ms</query>
           <earliest>$time_range.earliest$</earliest>
