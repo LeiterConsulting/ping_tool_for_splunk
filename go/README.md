@@ -22,6 +22,7 @@ v5.2.1 is the current Go release of the PowerShell Ping Monitor rewrite, focused
 - If `endpoints.csv` is temporarily invalid, v5 keeps using the last known good endpoint set and logs a warning.
 - If Splunk HEC or the metrics endpoint is unavailable, v5 continues running and retries delivery with backoff instead of exiting.
 - If raw ICMP is unavailable on the host, `ping.mode=auto` falls back once to the OS `ping` command and stays there for the rest of the run.
+- An optional local web UI can be enabled with `--ui-listen`; the current slice is read-only and serves endpoint inventory from `endpoints.csv`.
 
 ## Run
 
@@ -29,8 +30,28 @@ From repo root:
 
 - Build: `go -C .\\go build -o pingmonitor.exe .\\go\\cmd\\pingmonitor`
 - Run one cycle: `./pingmonitor.exe --run-once`
+- Launch local UI only: `./pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only`
 
 By default it looks for `config.psd1` and `endpoints.csv` in the working directory.
+
+### Embedded web UI preview
+
+The current embedded UI slice provides:
+
+- a local admin shell served by the Go binary
+- `GET /healthz`
+- `GET /api/status`
+- `GET /api/endpoints`
+
+Recommended local launch:
+
+- `./pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only`
+
+Or run the monitor and UI together:
+
+- `./pingmonitor.exe --ui-listen 127.0.0.1:8080`
+
+The UI currently reads `endpoints.csv` through the same loader used by the monitor runtime. Editing and discovery workflows are not implemented yet.
 
 ### Ping mode
 

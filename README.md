@@ -218,7 +218,28 @@ notepad endpoints.csv
 
 # 4. Run continuously
 .\pingmonitor.exe
+
+# 5. Optional: launch the local admin UI preview only
+.\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
 ```
+
+### Local Admin UI Preview
+
+The current branch includes the first embedded web UI slice for the Go runtime:
+
+- local-only HTTP shell served by `pingmonitor.exe`
+- read-only endpoint inventory backed by the active `endpoints.csv`
+- production vs `dev` summary cards and a dedicated dev-device table
+
+Preview command:
+
+```powershell
+.\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
+```
+
+Then open `http://127.0.0.1:8080` in a browser.
+
+Current limitation: this first slice is read-only. Endpoint editing, config editing, and discovery workflows are the next implementation steps.
 
 ### Unix/Linux/macOS
 

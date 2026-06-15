@@ -14,7 +14,10 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/engine"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/webui"
 )
+
+const versionString = "v5.2.1"
 
 func main() {
 	var (
@@ -23,13 +26,19 @@ func main() {
 		runOnce       = flag.Bool("run-once", false, "Run a single cycle and exit")
 		maxCycles     = flag.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
 		pingMode      = flag.String("ping-mode", "", "Ping mode: auto|raw|exec (empty = use config)")
+		uiListen      = flag.String("ui-listen", "", "Listen address for optional local web UI (for example 127.0.0.1:8080)")
+		uiOnly        = flag.Bool("ui-only", false, "Serve the web UI without starting the monitoring engine (requires -ui-listen)")
 		version       = flag.Bool("version", false, "Print version and exit")
 	)
 	flag.Parse()
 
 	if *version {
-		fmt.Println("Ping Monitor v5 (Go) - v5.2.1")
+		fmt.Println("Ping Monitor v5 (Go) - " + versionString)
 		return
+	}
+	if *uiOnly && *uiListen == "" {
+		fmt.Fprintln(os.Stderr, "ui-only requires -ui-listen")
+		os.Exit(2)
 	}
 
 	exe, _ := os.Executable()
@@ -63,6 +72,27 @@ func main() {
 	diagnostics.LogStartup(cfgSource, cfg, len(endpoints))
 	if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
 		diagnostics.LogRuntimeSnapshot("startup", runtime.NumGoroutine())
+	}
+
+	if *uiListen != "" {
+		err := webui.Start(ctx, webui.Options{
+			ListenAddr:    *uiListen,
+			EndpointsPath: *endpointsPath,
+			Version:       versionString,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
+			os.Exit(2)
+		}
+	}
+
+	if *uiOnly {
+		diagnostics.LogInfo("web ui only mode enabled", map[string]interface{}{
+			"listen_addr": *uiListen,
+			"ui_only":     true,
+		})
+		<-ctx.Done()
+		return
 	}
 
 	opts := engine.Options{

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ping Monitor</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-block">
+        <div class="brand-mark">PM</div>
+        <div>
+          <p class="brand-title">Ping Monitor</p>
+          <p class="brand-subtitle" id="version-text">Read-only shell</p>
+        </div>
+      </div>
+      <nav class="nav-list">
+        <a class="nav-item active" href="#overview">Overview</a>
+        <a class="nav-item" href="#inventory">Endpoints</a>
+        <a class="nav-item" href="#devices">Dev Devices</a>
+        <a class="nav-item" href="#roadmap">Discovery</a>
+        <a class="nav-item" href="#roadmap">Settings</a>
+      </nav>
+      <div class="sidebar-footer">
+        <p>Clean-room shell</p>
+        <p>Blue/teal Ping Monitor palette</p>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="page-header">
+        <div>
+          <p class="eyebrow">Ping Monitor Admin</p>
+          <h1>Endpoint Control Surface</h1>
+          <p class="page-copy">First implementation slice: embedded UI shell and read-only endpoint inventory over the current CSV schema.</p>
+        </div>
+        <div class="header-actions">
+          <span class="status-pill" id="mode-pill">Read-only</span>
+          <button class="primary-button" id="refresh-button" type="button">Refresh Data</button>
+        </div>
+      </header>
+
+      <div class="content-scroll">
+        <section id="overview" class="section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Overview</h2>
+              <p>Operational summary from the active endpoint file.</p>
+            </div>
+            <div class="meta-chip" id="endpoint-path">Loading endpoint path...</div>
+          </div>
+
+          <div class="summary-grid">
+            <article class="summary-card">
+              <p class="summary-label">Total Endpoints</p>
+              <p class="summary-value" id="summary-total">--</p>
+              <p class="summary-note">All rows recognized by the current loader</p>
+            </article>
+            <article class="summary-card accent-teal">
+              <p class="summary-label">Production</p>
+              <p class="summary-value" id="summary-production">--</p>
+              <p class="summary-note">Endpoints included in production summary stats</p>
+            </article>
+            <article class="summary-card accent-amber">
+              <p class="summary-label">Dev Devices</p>
+              <p class="summary-value" id="summary-dev">--</p>
+              <p class="summary-note">Endpoints marked with the trailing dev flag</p>
+            </article>
+            <article class="summary-card accent-slate">
+              <p class="summary-label">Groups</p>
+              <p class="summary-value" id="summary-groups">--</p>
+              <p class="summary-note">Distinct endpoint groups in the current file</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="inventory" class="panel section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Endpoint Inventory</h2>
+              <p>Familiar table-first workflow, aligned with the SNMP app shell without sharing its code.</p>
+            </div>
+            <div class="toolbar-row">
+              <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor">
+              <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
+                <button class="segment active" type="button" data-filter="all">All</button>
+                <button class="segment" type="button" data-filter="production">Production</button>
+                <button class="segment" type="button" data-filter="dev">Dev</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="error-banner" class="error-banner hidden"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>IP</th>
+                  <th>Hostname</th>
+                  <th>Group</th>
+                  <th>Type</th>
+                  <th>Device</th>
+                  <th>Vendor</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody id="endpoint-rows">
+                <tr>
+                  <td colspan="7" class="empty-cell">Loading endpoints...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="devices" class="two-column-grid">
+          <article class="panel section-stack">
+            <div class="section-heading compact">
+              <div>
+                <h2>Dev Devices</h2>
+                <p>Dedicated visibility for systems excluded from customer-facing production summaries.</p>
+              </div>
+              <span class="meta-chip" id="dev-refresh">Awaiting data</span>
+            </div>
+
+            <div class="table-wrap dev-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Hostname</th>
+                    <th>Group</th>
+                    <th>Description</th>
+                    <th>Vendor</th>
+                  </tr>
+                </thead>
+                <tbody id="dev-rows">
+                  <tr>
+                    <td colspan="4" class="empty-cell">Loading dev endpoints...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
+
+          <article id="roadmap" class="panel section-stack roadmap-panel">
+            <div class="section-heading compact">
+              <div>
+                <h2>Next Slice</h2>
+                <p>The shell is live. These are the next interactive surfaces to add.</p>
+              </div>
+            </div>
+
+            <div class="roadmap-list">
+              <div class="roadmap-card">
+                <p class="roadmap-label">Editable Endpoint Forms</p>
+                <p class="roadmap-copy">CSV-backed CRUD with validation, backups, and atomic save.</p>
+              </div>
+              <div class="roadmap-card">
+                <p class="roadmap-label">Discovery Workflow</p>
+                <p class="roadmap-copy">Scan, preview, and merge discovered hosts into the existing schema.</p>
+              </div>
+              <div class="roadmap-card">
+                <p class="roadmap-label">Settings and Outputs</p>
+                <p class="roadmap-copy">Expose config.psd1 and HEC settings through the same shell language.</p>
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
