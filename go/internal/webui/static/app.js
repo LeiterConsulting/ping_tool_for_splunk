@@ -10,6 +10,7 @@ const elements = {
   modePill: document.getElementById('mode-pill'),
   endpointPath: document.getElementById('endpoint-path'),
   devRefresh: document.getElementById('dev-refresh'),
+  contentScroll: document.querySelector('.content-scroll'),
   errorBanner: document.getElementById('error-banner'),
   summaryTotal: document.getElementById('summary-total'),
   summaryProduction: document.getElementById('summary-production'),
@@ -20,7 +21,11 @@ const elements = {
   searchInput: document.getElementById('search-input'),
   refreshButton: document.getElementById('refresh-button'),
   filterButtons: Array.from(document.querySelectorAll('[data-filter]')),
+  navLinks: Array.from(document.querySelectorAll('.nav-item[href^="#"]')),
 };
+
+const sectionHashes = ['#overview', '#inventory', '#devices', '#roadmap'];
+const trackedSectionHashes = ['#overview', '#inventory', '#devices'];
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -112,6 +117,69 @@ function renderStatus() {
   elements.endpointPath.textContent = state.status.endpoints_path;
 }
 
+function usesInnerScroll() {
+  if (!elements.contentScroll) {
+    return false;
+  }
+
+  return getComputedStyle(elements.contentScroll).overflowY !== 'visible';
+}
+
+function setActiveNav(hash, preferredLink = null) {
+  const fallbackLink = elements.navLinks.find((link) => link.getAttribute('href') === '#overview') || null;
+  const resolvedLink = preferredLink
+    || elements.navLinks.find((link) => link.getAttribute('href') === hash)
+    || fallbackLink;
+
+  elements.navLinks.forEach((link) => {
+    link.classList.toggle('active', link === resolvedLink);
+  });
+}
+
+function scrollSectionIntoView(hash, behavior = 'smooth') {
+  if (!hash) {
+    return;
+  }
+
+  const target = document.querySelector(hash);
+  if (!(target instanceof HTMLElement)) {
+    setActiveNav(hash);
+    return;
+  }
+
+  if (usesInnerScroll()) {
+    const contentTop = elements.contentScroll.getBoundingClientRect().top;
+    const targetTop = target.getBoundingClientRect().top;
+    const nextTop = elements.contentScroll.scrollTop + (targetTop - contentTop) - 24;
+    elements.contentScroll.scrollTo({
+      top: Math.max(0, nextTop),
+      behavior,
+    });
+  } else {
+    target.scrollIntoView({ behavior, block: 'start' });
+  }
+
+  setActiveNav(hash);
+}
+
+function updateActiveNavFromScroll() {
+  const threshold = 140;
+  const activeHash = trackedSectionHashes.reduce((current, hash) => {
+    const target = document.querySelector(hash);
+    if (!(target instanceof HTMLElement)) {
+      return current;
+    }
+
+    const top = usesInnerScroll()
+      ? target.getBoundingClientRect().top - elements.contentScroll.getBoundingClientRect().top
+      : target.getBoundingClientRect().top;
+
+    return top <= threshold ? hash : current;
+  }, '#overview');
+
+  setActiveNav(activeHash);
+}
+
 function setError(message) {
   if (!message) {
     elements.errorBanner.classList.add('hidden');
@@ -168,6 +236,20 @@ elements.refreshButton.addEventListener('click', () => {
   refreshData();
 });
 
+elements.navLinks.forEach((link) => {
+  link.addEventListener('click', (event) => {
+    const hash = link.getAttribute('href');
+    if (!hash) {
+      return;
+    }
+
+    event.preventDefault();
+    history.replaceState(null, '', hash);
+    setActiveNav(hash, link);
+    scrollSectionIntoView(hash);
+  });
+});
+
 elements.filterButtons.forEach((button) => {
   button.addEventListener('click', () => {
     state.filter = button.dataset.filter || 'all';
@@ -176,4 +258,19 @@ elements.filterButtons.forEach((button) => {
   });
 });
 
+elements.contentScroll?.addEventListener('scroll', updateActiveNavFromScroll, { passive: true });
+window.addEventListener('scroll', () => {
+  if (!usesInnerScroll()) {
+    updateActiveNavFromScroll();
+  }
+}, { passive: true });
+window.addEventListener('resize', updateActiveNavFromScroll);
+window.addEventListener('hashchange', () => {
+  scrollSectionIntoView(location.hash || '#overview', 'auto');
+});
+
 refreshData();
+requestAnimationFrame(() => {
+  scrollSectionIntoView(location.hash || '#overview', 'auto');
+  updateActiveNavFromScroll();
+});

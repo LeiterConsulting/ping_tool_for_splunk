@@ -28,6 +28,7 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
   background:
     radial-gradient(circle at top right, rgba(57, 148, 230, 0.18), transparent 22%),
@@ -54,13 +55,17 @@ a {
 .app-shell {
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  min-height: 0;
+  overflow: auto;
   padding: 1.5rem;
   background: linear-gradient(180deg, rgba(17, 22, 28, 0.98), rgba(14, 19, 25, 0.96));
   border-right: 1px solid rgba(42, 54, 66, 0.92);
@@ -150,6 +155,8 @@ a {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .page-header {
@@ -242,8 +249,26 @@ td,
 }
 
 .content-scroll {
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 1.8rem 2rem 2rem;
+  scroll-behavior: smooth;
+  scrollbar-gutter: stable both-edges;
+}
+
+.content-scroll::after {
+  content: "";
+  display: block;
+  height: max(2rem, 45vh);
+}
+
+#overview,
+#inventory,
+#devices,
+#roadmap {
+  scroll-margin-top: 1.5rem;
 }
 
 .section-stack {
@@ -290,6 +315,7 @@ td,
 .summary-card,
 .panel,
 .roadmap-card {
+  min-width: 0;
   border: 1px solid rgba(42, 54, 66, 0.9);
   background: linear-gradient(180deg, rgba(26, 34, 43, 0.96), rgba(20, 27, 34, 0.94));
   border-radius: var(--radius-lg);
@@ -390,7 +416,9 @@ td,
 }
 
 .table-wrap {
-  overflow: auto;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid rgba(42, 54, 66, 0.82);
   border-radius: var(--radius-md);
   background: rgba(12, 17, 22, 0.5);
@@ -505,17 +533,32 @@ td {
   }
 
   .app-shell {
+    height: auto;
     grid-template-columns: 1fr;
+    overflow: visible;
   }
 
   .sidebar {
-    position: sticky;
-    top: 0;
-    z-index: 20;
+    position: static;
+    top: auto;
+    z-index: auto;
+    overflow: visible;
+  }
+
+  .main-shell {
+    min-height: auto;
+    overflow: visible;
   }
 
   .content-scroll {
+    flex: initial;
+    min-height: auto;
     overflow: visible;
+    scrollbar-gutter: auto;
+  }
+
+  .content-scroll::after {
+    height: 0;
   }
 
   .summary-grid,
