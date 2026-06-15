@@ -10,8 +10,8 @@ A cross-platform ping monitoring tool that sends structured data directly to Spl
 
 | Script | Version | Status | Notes |
 |--------|---------|--------|-------|
-| `go/` (Ping Monitor v5, Go) | **v5.1.0** | ✅ **Released** | Go runtime with native `config.psd1` parsing, resilient HEC retry, and `endpoints.csv` hot reload |
-| `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Current Stable** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
+| `go/` (Ping Monitor v5, Go) | **v5.2.0** | ✅ **Primary Runtime** | Go runtime with native `config.psd1` parsing, resilient HEC retry, endpoint `dev` routing, and `endpoints.csv` hot reload |
+| `PingMonitor_v4_0_0.ps1` | **v4.0.0** | ✅ **Supported (Legacy Runtime)** | Bounded parallel scheduler (memory stability), HEC timestamp hardening, optional dead-letter |
 | `PingMonitor_v3_3_3.ps1` | **v3.3.3** | ✅ **Supported (Legacy)** | Previous stable line; kept for compatibility |
 | `ping_monitor.sh` | **v2.0.0** | ✅ **Current Stable** | Unix/Linux/macOS with HEC batching, event_id, retry |
 | `PingMonitor.ps1` | v1.x | ⚠️ **Deprecated** | Legacy version, use v3.3.3 for new deployments |
@@ -175,7 +175,7 @@ Dashboard filters now properly support values with spaces:
 
 No special quoting required in your `endpoints.csv` — just use natural names.
 
-### 🧭 Splunk App 2.7.2
+### 🧭 Splunk App 2.7.3
 The included Splunk app now ships with a lighter, native Splunk presentation and a Cloud-ready package layout:
 - **Native-light dashboards** — Overview, correlation, and setup views now align with standard Splunk Web styling
 - **KV Store-backed setup and health state** — setup values and the health lookup are stored in KV Store for Cloud compatibility
@@ -188,10 +188,10 @@ The included Splunk app now ships with a lighter, native Splunk presentation and
 
 | Edition | Platform | Script | Config |
 |---------|----------|--------|--------|
-| 🪟 **Windows** | PowerShell 7.4+ | `PingMonitor_v3_3_3.ps1` | `config.psd1` |
+| 🪟 **Windows** | Windows 10/11, Server 2016+ | `go/` build output (`pingmonitor.exe`) | `config.psd1` |
 | 🐧 **Unix** | POSIX Shell | `ping_monitor.sh` | `config.conf` |
 
-Both editions share the same summary + enrichment schema. (Windows currently supports optional per-ping events; the Unix edition emits summary events by default.)
+Both editions share the same summary + enrichment schema. (Windows/Go supports optional per-ping events; the Unix edition emits summary events by default.)
 
 ---
 
@@ -204,20 +204,20 @@ Both editions share the same summary + enrichment schema. (Windows currently sup
 
 ## Quick Start
 
-### Windows
+### Windows (Go v5 Recommended)
 
 ```powershell
-# 1. Edit your endpoints
+# 1. Build the current runtime
+go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor
+
+# 2. Edit your endpoints
 notepad endpoints.csv
 
-# 2. Test run (single cycle)
-pwsh -File .\PingMonitor_v4_0_0.ps1 -RunOnce
+# 3. Test run (single cycle)
+.\pingmonitor.exe --run-once
 
-# 3. Run continuously
-pwsh -File .\PingMonitor_v4_0_0.ps1
-
-# 4. (Optional) Run metrics payload self-test
-pwsh -File .\PingMonitor_v4_0_0.ps1 -TestMetricsPayload
+# 4. Run continuously
+.\pingmonitor.exe
 ```
 
 ### Unix/Linux/macOS
@@ -251,11 +251,17 @@ ip,hostname
 
 **Full format with enrichment:**
 ```csv
-ip,hostname,group,description,entitytype,device,vendor,additional_notes
-192.168.1.1,router,network,Core Router,infrastructure,router,Cisco,Primary site
-10.0.0.50,app-server,servers,Production App,server,vm,VMware,Critical
-8.8.8.8,google-dns,external,Google DNS,external,dns,Google,Baseline
+ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes
+192.168.1.1,router,false,network,Core Router,infrastructure,router,Cisco,Primary site
+10.0.0.50,app-server,false,servers,Production App,server,vm,VMware,Critical
+10.0.50.10,lab-api,true,dev,Dev API Node,service,vm,VMware,Excluded from production summary stats
+8.8.8.8,google-dns,false,external,Google DNS,external,dns,Google,Baseline
 ```
+
+`dev` behavior (Go v5):
+- `dev=true` endpoints are emitted as `record_type=summary_dev` (and `ping_dev` when individual ping events are enabled)
+- production stats remain on `record_type=summary`, so dev/test systems do not skew customer-facing availability metrics
+- a dedicated Splunk app page, **Dev Devices**, is included for dev endpoint visibility
 
 ### Windows (config.psd1)
 
@@ -444,7 +450,7 @@ The included Splunk app provides a complete, zero-configuration experience:
 
 1. **Install the app**:
    ```
-    Upload ping_monitor_v2.7.1.tar.gz via Splunk Web → Manage Apps → Install from File
+    Upload ping_monitor_2.7.3_build31_20260615.tar.gz via Splunk Web → Manage Apps → Install from File
    ```
 
 2. **Run Setup**:
@@ -509,7 +515,7 @@ label = Ping Monitor
 [launcher]
 author = Your Organization
 description = Network availability monitoring with dual-mode support
-version = 2.7.1
+version = 2.7.3
 EOF
 
 
@@ -561,14 +567,17 @@ After restarting Splunk (or running `| rest /services/admin/macros`), test:
 
 ## Running as a Service
 
-### Windows (Task Scheduler or NSSM)
+### Windows (NSSM Service)
 
 ```powershell
-# Using the included installer
-.\Install-Service.ps1 -Install
+# 1. Build the Go runtime (current)
+go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor
 
-# Or via Task Scheduler:
-# Action: pwsh.exe -NoProfile -File "C:\path\to\PingMonitor.ps1"
+# 2. Install service (defaults to Go runtime)
+.\Install-Service.ps1 -Install -Runtime go
+
+# Optional: install legacy PowerShell runtime instead
+# .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
 ```
 
 ### Unix (systemd/launchd/OpenRC)
@@ -639,6 +648,7 @@ sudo ./install_unix.sh
 |--------|----------|-------------|
 | `ip` | ✅ | IP address to ping |
 | `hostname` | ✅ | Friendly name |
+| `dev` | — | Optional boolean (`true`/`false`); `true` marks endpoint as development/test and excludes it from production summary stats |
 | `group` | — | Grouping for filtering |
 | `description` | — | Description text |
 | `entitytype` | — | Entity classification |
@@ -674,7 +684,8 @@ Reduce `parallel_threads` when monitoring many endpoints.
 
 ```
 Ping Tool for Splunk/
-├── PingMonitor.ps1          # Windows monitoring script
+├── pingmonitor.exe          # Go v5 runtime binary (build output)
+├── PingMonitor_v4_0_0.ps1   # Windows legacy runtime script
 ├── ping_monitor.sh          # Unix monitoring script
 ├── config.psd1              # Windows configuration
 ├── config.conf              # Unix configuration
@@ -684,7 +695,7 @@ Ping Tool for Splunk/
 ├── splunk/
 │   ├── ping_dashboard.xml   # Splunk dashboard
 │   └── macros.conf          # Dual-mode query macros
-├── Install-Service.ps1      # Windows service installer
+├── Install-Service.ps1      # Windows service installer (Go v5 default)
 └── install_unix.sh          # Unix service installer
 ```
 
@@ -697,6 +708,12 @@ MIT License — free to use, modify, and distribute.
 ---
 
 ## Changelog
+
+**v5.2.0** — Dev endpoint segmentation and service/install modernization
+- Added optional `dev` endpoint flag in `endpoints.csv` for Go runtime
+- Dev endpoints now emit `record_type=summary_dev` and `record_type=ping_dev`, isolating them from production rollups
+- Added Splunk app Dev Devices dashboard for dedicated dev/test visibility
+- Updated Windows service install flow to default to Go runtime (`pingmonitor.exe`) with legacy PowerShell runtime as optional
 
 **v5.1.0** — Go runtime resilience and endpoint hot reload
 - Automatic `endpoints.csv` reload between cycles with last-known-good fallback on invalid CSV edits
@@ -728,4 +745,4 @@ MIT License — free to use, modify, and distribute.
 
 ---
 
-*Last updated: 15 May 2026*
+*Last updated: 15 June 2026*

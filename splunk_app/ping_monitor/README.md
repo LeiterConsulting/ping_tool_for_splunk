@@ -2,16 +2,18 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 2.7.2
+## Version 2.7.3
 
-### What's New in v2.7.2
+### What's New in v2.7.3
+- **Dev devices support**: Added a dedicated Dev Devices dashboard and dev-specific summary stream (`record_type=summary_dev`) so development/test endpoints are visible without skewing production stats
+- **Service/runtime guidance refresh**: Updated release guidance and installer defaults to align with the Go v5 runtime flow
 - **Native-light dashboard refresh**: Removed the custom dark presentation and aligned the Overview, Setup, and Asset Correlation views with standard Splunk Web styling
 - **Splunk Cloud hardening**: Reworked searches and packaging for Cloud compatibility, including KV Store-backed health state, Cloud-safe metadata, and app reload triggers for custom config
 - **AppInspect precert validation**: The current release package passes AppInspect precert with no errors or failures; remaining warnings are Windows host capability checks only
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.2_build30_20260515.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current validated artifact: `ping_monitor_2.7.3_build31_20260615.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: The ping monitor script will send data, and dashboards will display it automatically
 
@@ -27,8 +29,9 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 ## Dashboards
 
 1. **Ping Monitor Overview** - Main dashboard with availability, latency, and status
-2. **Asset Health Correlation** - Enrich other data sources with ping health
-3. **Setup** - In-app configuration page for events and metrics data sources
+2. **Dev Devices** - Dedicated view for endpoints flagged as development/test (`record_type=summary_dev`)
+3. **Asset Health Correlation** - Enrich other data sources with ping health
+4. **Setup** - In-app configuration page for events and metrics data sources
 
 ## Configuration
 

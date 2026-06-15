@@ -15,6 +15,11 @@ owner = nobody
 access = read : [ * ], write : [ admin, sc_admin ]
 export = system
 
+[views/dev_devices]
+owner = nobody
+access = read : [ * ], write : [ admin, sc_admin ]
+export = system
+
 # Setup writes to KV Store; restrict it to admin.
 [views/setup]
 owner = nobody

@@ -1,0 +1,172 @@
+<dashboard version="1.1">
+  <label>Dev Devices</label>
+  <description>Development and test endpoints (marked dev=true) are shown here and excluded from production summary statistics.</description>
+
+  <init>
+    <set token="dev_config_loaded">true</set>
+  </init>
+
+  <search id="dev_config_loader">
+    <query>| inputlookup ping_monitor_settings_lookup
+| head 1
+| eval pm_index=if(isnull(index) OR index=="", "ping", index)
+| eval pm_sourcetype=if(isnull(sourcetype) OR sourcetype=="", "ping_monitor", sourcetype)</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <set token="pm_index">$result.pm_index$</set>
+      <set token="pm_sourcetype">$result.pm_sourcetype$</set>
+    </done>
+  </search>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="time_range" searchWhenChanged="true">
+      <label>Time Range</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="group_filter" searchWhenChanged="true">
+      <label>Group</label>
+      <choice value="*">All Groups</choice>
+      <default>*</default>
+      <fieldForLabel>group</fieldForLabel>
+      <fieldForValue>group</fieldForValue>
+      <search>
+        <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| stats count by group | fields group | sort group</query>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+  </fieldset>
+
+  <row depends="$dev_config_loaded$">
+    <panel>
+      <single>
+        <title>Dev Endpoints</title>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| stats dc(target_ip) as total_dev</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x006d77","0x006d77"]</option>
+        <option name="rangeValues">[0]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Availability (Dev Only)</title>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| stats sum(pings_successful) as success, sum(pings_sent) as total
+| eval availability=if(total&gt;0, round((success/total)*100, 2), 0)
+| fields availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="numberPrecision">0.00</option>
+        <option name="rangeColors">["0xdc4e41","0xf8be34","0x53a051"]</option>
+        <option name="rangeValues">[90,99]</option>
+        <option name="unit">%</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Hosts With Packet Loss</title>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| stats latest(packet_loss_pct) as packet_loss by hostname
+| where packet_loss &gt; 0
+| stats count as hosts_with_loss</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="colorMode">block</option>
+        <option name="drilldown">none</option>
+        <option name="rangeColors">["0x53a051","0xf8be34","0xdc4e41"]</option>
+        <option name="rangeValues">[0,5]</option>
+        <option name="useColors">1</option>
+      </single>
+    </panel>
+  </row>
+
+  <row depends="$dev_config_loaded$">
+    <panel>
+      <title>Dev Endpoint Health</title>
+      <table>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| stats latest(_time) as last_seen,
+        latest(target_ip) as target_ip,
+        latest(packet_loss_pct) as packet_loss_pct,
+        latest(avg_latency_ms) as avg_latency_ms,
+        latest(group) as group,
+        latest(entitytype) as entitytype,
+        latest(device) as device,
+        latest(vendor) as vendor,
+        latest(description) as description,
+        latest(additional_notes) as additional_notes
+        by hostname
+| eval status=case(
+    packet_loss_pct==0, "Healthy",
+    packet_loss_pct&gt;0 AND packet_loss_pct&lt;50, "Degraded",
+    packet_loss_pct&gt;=50 AND packet_loss_pct&lt;100, "Critical",
+    packet_loss_pct==100, "Down",
+    true(), "Unknown")
+| eval avg_latency_ms=round(avg_latency_ms, 2)
+| eval last_seen=strftime(last_seen, "%Y-%m-%d %H:%M:%S")
+| sort status, hostname
+| table hostname, target_ip, status, packet_loss_pct, avg_latency_ms, group, entitytype, device, vendor, description, additional_notes, last_seen</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">25</option>
+      </table>
+    </panel>
+  </row>
+
+  <row depends="$dev_config_loaded$">
+    <panel>
+      <title>Dev Availability Trend</title>
+      <chart>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)`
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| timechart span=5m avg(eval(100-packet_loss_pct)) as availability</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Dev Latency Trend</title>
+      <chart>
+        <search>
+          <query>`ping_dev_summaries($pm_index$, $pm_sourcetype$)` avg_latency_ms&gt;0
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| timechart span=5m avg(avg_latency_ms) as avg_latency_ms</query>
+          <earliest>$time_range.earliest$</earliest>
+          <latest>$time_range.latest$</latest>
+        </search>
+        <option name="charting.chart">line</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+</dashboard>

@@ -5,6 +5,7 @@ package models
 type Endpoint struct {
 	IP              string `json:"ip"`
 	Hostname        string `json:"hostname"`
+	Dev             bool   `json:"dev"`
 	Group           string `json:"group"`
 	Description     string `json:"description"`
 	EntityType      string `json:"entitytype"`
@@ -18,6 +19,7 @@ type PingEvent struct {
 	Timestamp    string  `json:"timestamp"`
 	TargetIP     string  `json:"target_ip"`
 	Hostname     string  `json:"hostname"`
+	Dev          bool    `json:"dev"`
 	Group        string  `json:"group"`
 	Description  string  `json:"description"`
 	EntityType   string  `json:"entitytype"`
@@ -38,6 +40,7 @@ type SummaryEvent struct {
 	Timestamp       string  `json:"timestamp"`
 	TargetIP        string  `json:"target_ip"`
 	Hostname        string  `json:"hostname"`
+	Dev             bool    `json:"dev"`
 	Group           string  `json:"group"`
 	Description     string  `json:"description"`
 	EntityType      string  `json:"entitytype"`

@@ -185,6 +185,7 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 		"metric_name:ping.pings_successful": sum.PingsSuccessful,
 		"hostname":                          sum.Hostname,
 		"target_ip":                         sum.TargetIP,
+		"dev":                               sum.Dev,
 		"group":                             sum.Group,
 		"description":                       sum.Description,
 		"entitytype":                        sum.EntityType,

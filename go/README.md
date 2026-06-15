@@ -1,6 +1,6 @@
 # Ping Monitor v5 (Go)
 
-v5.1.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
+v5.2.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused on long-running stability, bounded resource usage, and drop-in compatibility with existing deployments.
 
 ## Compatibility
 
@@ -8,6 +8,12 @@ v5.1.0 is the current Go release of the PowerShell Ping Monitor rewrite, focused
 - Emits the same event schema (`record_type=ping` and `record_type=summary`) and the same HEC envelope.
 - Metrics payload structure matches v4 compat mode.
 - Reloads `endpoints.csv` automatically between ping cycles; replacing the binary and restarting the service is enough to enable it.
+
+## Dev endpoint flag
+
+- `endpoints.csv` supports an optional `dev` column (`true|false`, `yes|no`, `1|0`).
+- Endpoints with `dev=true` are emitted as `record_type=summary_dev` and `record_type=ping_dev`.
+- Standard production searches that use `record_type=summary` are unaffected by dev/test devices.
 
 ## Runtime behavior
 
@@ -59,5 +65,9 @@ hec = @{
 
 ## Build all platforms
 
-- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.1.0`
+- PowerShell: `pwsh -File .\\go\\build.ps1 -Version v5.2.0`
 - Bash: `./go/build.sh dist` (set `VERSION` env var if desired)
+
+## Windows service
+
+- Build `pingmonitor.exe` and run `./Install-Service.ps1 -Install -Runtime go` from repo root.

@@ -6,7 +6,10 @@
 
 .DESCRIPTION
     This script uses NSSM (Non-Sucking Service Manager) to create a Windows Service
-    that runs the PingMonitor script continuously.
+    that runs Ping Monitor continuously.
+
+    Default runtime is Go v5 (`pingmonitor.exe`). Legacy PowerShell script mode
+    remains available via -Runtime powershell.
 
 .PARAMETER Install
     Installs the service.
@@ -25,7 +28,11 @@
 
 .EXAMPLE
     .\Install-Service.ps1 -Install
-    Installs the Ping Monitor as a Windows Service
+    Installs Ping Monitor as a Windows Service (Go v5 runtime by default)
+
+.EXAMPLE
+    .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
+    Installs Ping Monitor using the legacy PowerShell runtime
 
 .EXAMPLE
     .\Install-Service.ps1 -Uninstall
@@ -54,11 +61,24 @@ param(
     [switch]$Status,
 
     [Parameter()]
+    [ValidateSet('go', 'powershell')]
+    [string]$Runtime = 'go',
+
+    [Parameter()]
     [ValidateSet('v4.0.0', 'v3.3.3')]
     [string]$Version = 'v4.0.0',
 
     [Parameter()]
     [string]$PingMonitorScriptName,
+
+    [Parameter()]
+    [string]$BinaryPath,
+
+    [Parameter()]
+    [string]$ConfigPath,
+
+    [Parameter()]
+    [string]$EndpointsPath,
 
     [Parameter()]
     [string]$ServiceName = "SplunkPingMonitor"
@@ -67,9 +87,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Configuration
-$ServiceDisplayName = "Splunk Ping Monitor $Version"
-$ServiceDescription = "Monitors network endpoints and sends ping results to Splunk ($Version)"
 $ScriptDir = $PSScriptRoot
+
+if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
+    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
 
 $resolvedScriptName = if ($PingMonitorScriptName) {
     $PingMonitorScriptName
@@ -82,6 +104,25 @@ else {
 }
 
 $PingMonitorScript = Join-Path $ScriptDir $resolvedScriptName
+$resolvedBinaryPath = if ($BinaryPath) { $BinaryPath } else { Join-Path $ScriptDir "pingmonitor.exe" }
+
+if (-not [System.IO.Path]::IsPathRooted($resolvedBinaryPath)) {
+    $resolvedBinaryPath = Join-Path $ScriptDir $resolvedBinaryPath
+}
+if ($ConfigPath -and -not [System.IO.Path]::IsPathRooted($ConfigPath)) {
+    $ConfigPath = Join-Path $ScriptDir $ConfigPath
+}
+if ($EndpointsPath -and -not [System.IO.Path]::IsPathRooted($EndpointsPath)) {
+    $EndpointsPath = Join-Path $ScriptDir $EndpointsPath
+}
+
+$serviceTargetLabel = if ($Runtime -eq 'go') {
+    "Go v5"
+} else {
+    "PowerShell $Version"
+}
+$ServiceDisplayName = "Splunk Ping Monitor ($serviceTargetLabel)"
+$ServiceDescription = "Monitors network endpoints and sends ping results to Splunk ($serviceTargetLabel)"
 $NssmPath = Join-Path $ScriptDir "nssm.exe"
 $NssmDownloadUrl = "https://nssm.cc/release/nssm-2.24.zip"
 
@@ -150,6 +191,27 @@ function Get-ServiceStatus {
     $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
     return $service
 }
+
+function Resolve-GoBinaryPath {
+    param([string]$PreferredPath)
+
+    if ($PreferredPath -and (Test-Path $PreferredPath)) {
+        return (Resolve-Path $PreferredPath).Path
+    }
+
+    $distPath = Join-Path $ScriptDir "dist"
+    if (-not (Test-Path $distPath)) {
+        return $null
+    }
+
+    $candidate = Get-ChildItem -Path $distPath -Filter "pingmonitor_*_windows_amd64.exe" -File -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1
+    if ($candidate) {
+        return $candidate.FullName
+    }
+    return $null
+}
 #endregion
 
 #region Main Actions
@@ -169,41 +231,63 @@ function Install-PingMonitorService {
         $nssm = Install-Nssm
     }
     
-    # Verify PingMonitor.ps1 exists
-    if (-not (Test-Path $PingMonitorScript)) {
-        Write-Error "PingMonitor.ps1 not found at: $PingMonitorScript"
-        exit 1
+    $applicationPath = $null
+    $arguments = ""
+
+    if ($Runtime -eq 'go') {
+        $goBinary = Resolve-GoBinaryPath -PreferredPath $resolvedBinaryPath
+        if (-not $goBinary) {
+            Write-Error "Go binary not found. Expected '$resolvedBinaryPath' or a built binary under '$ScriptDir\dist'. Build first with: go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor"
+            exit 1
+        }
+        $applicationPath = $goBinary
+
+        $effectiveConfigPath = if ($ConfigPath) { $ConfigPath } else { Join-Path $ScriptDir "config.psd1" }
+        $effectiveEndpointsPath = if ($EndpointsPath) { $EndpointsPath } else { Join-Path $ScriptDir "endpoints.csv" }
+        $arguments = "--config `"$effectiveConfigPath`" --endpoints `"$effectiveEndpointsPath`""
+
+        Write-Host "Using Go binary: $applicationPath" -ForegroundColor Gray
+        Write-Host "Using config: $effectiveConfigPath" -ForegroundColor Gray
+        Write-Host "Using endpoints: $effectiveEndpointsPath" -ForegroundColor Gray
     }
-    
-    # Find PowerShell 7
-    $pwshPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-    if (-not $pwshPath) {
-        # Try common installation paths
-        $commonPaths = @(
-            "$env:ProgramFiles\PowerShell\7\pwsh.exe",
-            "$env:ProgramFiles(x86)\PowerShell\7\pwsh.exe",
-            "$env:LOCALAPPDATA\Microsoft\PowerShell\7\pwsh.exe"
-        )
-        foreach ($path in $commonPaths) {
-            if (Test-Path $path) {
-                $pwshPath = $path
-                break
+    else {
+        # Verify selected legacy script exists
+        if (-not (Test-Path $PingMonitorScript)) {
+            Write-Error "PingMonitor script not found at: $PingMonitorScript"
+            exit 1
+        }
+
+        # Find PowerShell 7
+        $pwshPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $pwshPath) {
+            $commonPaths = @(
+                "$env:ProgramFiles\PowerShell\7\pwsh.exe",
+                "$env:ProgramFiles(x86)\PowerShell\7\pwsh.exe",
+                "$env:LOCALAPPDATA\Microsoft\PowerShell\7\pwsh.exe"
+            )
+            foreach ($path in $commonPaths) {
+                if (Test-Path $path) {
+                    $pwshPath = $path
+                    break
+                }
             }
         }
+
+        if (-not $pwshPath) {
+            Write-Error "PowerShell 7 (pwsh.exe) not found. Please install PowerShell 7.4+"
+            exit 1
+        }
+
+        $applicationPath = $pwshPath
+        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PingMonitorScript`""
+        Write-Host "Using PowerShell: $applicationPath" -ForegroundColor Gray
+        Write-Host "Using script: $PingMonitorScript" -ForegroundColor Gray
     }
-    
-    if (-not $pwshPath) {
-        Write-Error "PowerShell 7 (pwsh.exe) not found. Please install PowerShell 7.4+"
-        exit 1
-    }
-    
-    Write-Host "Using PowerShell: $pwshPath" -ForegroundColor Gray
+
     Write-Host "Using NSSM: $nssm" -ForegroundColor Gray
-    
+
     # Install service with NSSM
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PingMonitorScript`""
-    
-    & $nssm install $ServiceName $pwshPath $arguments
+    & $nssm install $ServiceName $applicationPath $arguments
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to install service"
         exit 1
@@ -242,6 +326,13 @@ To start the service:
   .\Install-Service.ps1 -Start
   OR
   Start-Service $ServiceName
+
+To reinstall targeting Go v5 (default):
+    .\Install-Service.ps1 -Uninstall
+    .\Install-Service.ps1 -Install -Runtime go
+
+To install legacy PowerShell runtime:
+    .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
 
 To view status:
   .\Install-Service.ps1 -Status

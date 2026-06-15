@@ -483,6 +483,7 @@ func LoadEndpoints(path string) ([]models.Endpoint, error) {
 		ep := models.Endpoint{
 			IP:              ip,
 			Hostname:        hn,
+			Dev:             parseCSVBool(get(row, "dev")),
 			Group:           firstNonEmpty(get(row, "group"), "default"),
 			Description:     get(row, "description"),
 			EntityType:      get(row, "entitytype"),
@@ -502,8 +503,8 @@ func writeEndpointsTemplate(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes\n" +
-		"127.0.0.1,localhost,default,loopback,,, ,\n"
+	content := "ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes\n" +
+		"127.0.0.1,localhost,false,default,loopback,,, ,\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -512,4 +513,14 @@ func firstNonEmpty(v string, def string) string {
 		return def
 	}
 	return v
+}
+
+func parseCSVBool(v string) bool {
+	s := strings.TrimSpace(strings.ToLower(v))
+	switch s {
+	case "1", "true", "yes", "y", "on", "dev":
+		return true
+	default:
+		return false
+	}
 }

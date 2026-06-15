@@ -1,5 +1,5 @@
-ip,hostname,group,description,entitytype,device,vendor,additional_notes
-8.8.8.8,google-dns-primary,dns,Google Public DNS Primary,external,dns-resolver,Google,
-8.8.4.4,google-dns-secondary,dns,Google Public DNS Secondary,external,dns-resolver,Google,
-1.1.1.1,cloudflare-dns,dns,Cloudflare DNS,external,dns-resolver,Cloudflare,
-1.0.0.1,cloudflare-dns-secondary,dns,Cloudflare DNS Secondary,external,dns-resolver,Cloudflare,
+ip,hostname,dev,group,description,entitytype,device,vendor,additional_notes
+8.8.8.8,google-dns-primary,false,dns,Google Public DNS Primary,external,dns-resolver,Google,
+8.8.4.4,google-dns-secondary,false,dns,Google Public DNS Secondary,external,dns-resolver,Google,
+1.1.1.1,cloudflare-dns,false,dns,Cloudflare DNS,external,dns-resolver,Cloudflare,
+1.0.0.1,cloudflare-dns-secondary,false,dns,Cloudflare DNS Secondary,external,dns-resolver,Cloudflare,

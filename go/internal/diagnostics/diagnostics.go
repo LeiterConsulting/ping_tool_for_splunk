@@ -17,7 +17,7 @@ func LogStartup(configSource string, cfg config.Config, endpointCount int) {
 		"ts":         time.Now().UTC().Format(time.RFC3339Nano),
 		"level":      "info",
 		"msg":        "pingmonitor starting",
-		"version":    "v5.1.0",
+		"version":    "v5.2.0",
 		"config_src": configSource,
 		"endpoints":  endpointCount,
 		"output":     cfg.OutputMode,

@@ -1,5 +1,6 @@
 <nav>
   <view name="ping_overview" default="true"/>
+  <view name="dev_devices"/>
   <view name="asset_correlation"/>
   <view name="setup"/>
   <collection label="Reports">

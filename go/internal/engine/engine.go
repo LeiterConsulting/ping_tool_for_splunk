@@ -26,6 +26,7 @@ type pingResult struct {
 	Individual []models.PingEvent
 	Summary    models.SummaryEvent
 	Status     string // success|partial|failed
+	IsDev      bool
 }
 
 func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, opts Options) error {
@@ -129,12 +130,14 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		for i := 0; i < len(cycleEndpoints); i++ {
 			select {
 			case r := <-results:
-				if r.Status == "success" {
-					success++
-				} else if r.Status == "partial" {
-					partial++
-				} else {
-					failed++
+				if !r.IsDev {
+					if r.Status == "success" {
+						success++
+					} else if r.Status == "partial" {
+						partial++
+					} else {
+						failed++
+					}
 				}
 				if err := out.HandleResult(ctx, r.Individual, r.Summary); err != nil {
 					return err
@@ -187,8 +190,14 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 		count = 1
 	}
 	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
+	recordTypeSummary := "summary"
+	recordTypePing := "ping"
+	if ep.Dev {
+		recordTypeSummary = "summary_dev"
+		recordTypePing = "ping_dev"
+	}
 
-	out := pingResult{}
+	out := pingResult{IsDev: ep.Dev}
 
 	pings, err := pinger.Ping(ctx, ep.IP, count, timeout)
 	if err != nil {
@@ -197,8 +206,8 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 		}
 		// Treat as total failure.
 		sumTs := util.FormatDotNetO(time.Now())
-		sumID := util.EventID(collectorHost, ep.IP, "summary", sumTs, -1)
-		out.Summary = buildSummary(ep, sumID, sumTs, count, 0, 0, 0, 0)
+		sumID := util.EventID(collectorHost, ep.IP, recordTypeSummary, sumTs, -1)
+		out.Summary = buildSummary(ep, sumID, sumTs, count, 0, 0, 0, 0, recordTypeSummary)
 		out.Status = "failed"
 		return out
 	}
@@ -214,7 +223,7 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 
 	for i, pr := range pings {
 		ts := util.FormatDotNetO(pr.Timestamp)
-		id := util.EventID(collectorHost, ep.IP, "ping", ts, i+1)
+		id := util.EventID(collectorHost, ep.IP, recordTypePing, ts, i+1)
 		if pr.Success {
 			successCount++
 			totalLatency += pr.LatencyMs
@@ -230,6 +239,7 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 					Timestamp:    ts,
 					TargetIP:     ep.IP,
 					Hostname:     ep.Hostname,
+					Dev:          ep.Dev,
 					Group:        ep.Group,
 					Description:  ep.Description,
 					EntityType:   ep.EntityType,
@@ -241,7 +251,7 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 					TTL:          pr.TTL,
 					PingNumber:   i + 1,
 					PingsInCycle: count,
-					RecordType:   "ping",
+					RecordType:   recordTypePing,
 				}
 				out.Individual = append(out.Individual, ev)
 			}
@@ -255,6 +265,7 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 				Timestamp:    ts,
 				TargetIP:     ep.IP,
 				Hostname:     ep.Hostname,
+				Dev:          ep.Dev,
 				Group:        ep.Group,
 				Description:  ep.Description,
 				EntityType:   ep.EntityType,
@@ -267,7 +278,7 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 				PingNumber:   i + 1,
 				PingsInCycle: count,
 				ErrorMessage: &emsg,
-				RecordType:   "ping",
+				RecordType:   recordTypePing,
 			}
 			out.Individual = append(out.Individual, ev)
 		}
@@ -284,8 +295,8 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 	}
 
 	sumTs := util.FormatDotNetO(time.Now())
-	sumID := util.EventID(collectorHost, ep.IP, "summary", sumTs, -1)
-	out.Summary = buildSummary(ep, sumID, sumTs, count, successCount, count-successCount, pktLoss, avgLat)
+	sumID := util.EventID(collectorHost, ep.IP, recordTypeSummary, sumTs, -1)
+	out.Summary = buildSummary(ep, sumID, sumTs, count, successCount, count-successCount, pktLoss, avgLat, recordTypeSummary)
 	out.Summary.MinLatencyMs = minOut
 	out.Summary.MaxLatencyMs = maxOut
 
@@ -299,19 +310,20 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, e
 	return out
 }
 
-func buildSummary(ep models.Endpoint, id, ts string, sent, success, failed int, pktLoss float64, avgLat float64) models.SummaryEvent {
+func buildSummary(ep models.Endpoint, id, ts string, sent, success, failed int, pktLoss float64, avgLat float64, recordType string) models.SummaryEvent {
 	return models.SummaryEvent{
 		EventID:         id,
 		Timestamp:       ts,
 		TargetIP:        ep.IP,
 		Hostname:        ep.Hostname,
+		Dev:             ep.Dev,
 		Group:           ep.Group,
 		Description:     ep.Description,
 		EntityType:      ep.EntityType,
 		Device:          ep.Device,
 		Vendor:          ep.Vendor,
 		Notes:           ep.AdditionalNotes,
-		RecordType:      "summary",
+		RecordType:      recordType,
 		PingsSent:       sent,
 		PingsSuccessful: success,
 		PingsFailed:     failed,
