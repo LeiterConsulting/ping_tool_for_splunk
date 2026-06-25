@@ -11,6 +11,9 @@
   <!-- Configuration Loader - reads from KV Store -->
   <search id="config_loader">
     <query>| inputlookup ping_monitor_settings_lookup
+| search _key="global"
+| head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor", metrics_index="ping_metrics"]
 | head 1
 | eval pm_index=if(isnull(index) OR index=="", "ping", index)
 | eval pm_sourcetype=if(isnull(sourcetype) OR sourcetype=="", "ping_monitor", sourcetype)

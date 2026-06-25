@@ -2,9 +2,12 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 2.7.5
+## Version 2.7.6
 
-### What's New in v2.7.5
+### What's New in v2.7.6
+- **Setup token reliability fix**: Hardened Setup and dashboard config token loaders so missing or delayed KV fields no longer render literal token strings like `$result.pm_index$` or `$result.last_updated$`.
+- **Config fallback hardening**: Overview, Prod Devices, and Dev Devices now force a safe default config row when the KV record is absent or incomplete, keeping filters and searches stable on first-run installs.
+- **Live validation pass**: Verified in a restarted Splunk instance after package install that Setup, Overview, Prod Devices, and Dev Devices render resolved config values without unresolved token leakage.
 - **Production devices dashboard**: Added a dedicated Prod Devices page immediately to the right of Ping Monitor Overview so production-only health can be reviewed separately from the whole-platform overview
 - **Prod/dev parity**: Prod Devices and Dev Devices now share the same device-pool breakdown tiles, including endpoint count, availability, average latency, packet-loss count, health table, and trend charts
 - **Overview clarified**: Ping Monitor Overview remains the whole-platform view rather than a production-only slice
@@ -13,11 +16,11 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 - **Dev devices support**: Added a dedicated Dev Devices dashboard and dev-specific summary stream (`record_type=summary_dev`) so development/test endpoints are visible without skewing production stats
 - **Native-light dashboard refresh**: Removed the custom dark presentation and aligned the Overview, Setup, and Asset Correlation views with standard Splunk Web styling
 - **Splunk Cloud hardening**: Reworked searches and packaging for Cloud compatibility, including KV Store-backed health state, Cloud-safe metadata, and app reload triggers for custom config
-- **AppInspect precert validation**: `ping_monitor_2.7.5_build33_20260615.tar.gz` passes AppInspect precert with 0 errors, 0 failures, 4 warnings, and 103 successful checks. The warnings remain the expected Windows-host capability checks plus the informational `collections.conf` notice.
+- **AppInspect precert validation**: `ping_monitor_2.7.6_build34_20260625.tar.gz` passes AppInspect precert with 0 errors, 0 failures, 4 warnings, and 103 successful checks. The warnings remain the expected Windows-host capability checks plus the informational `collections.conf` notice.
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.7.5_build33_20260615.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.7.6_build34_20260625.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 

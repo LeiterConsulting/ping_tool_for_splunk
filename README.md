@@ -5,9 +5,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 ## Latest Published Release
 
 - Go runtime: `v5.3.1`
-- Splunk app: `2.7.5` build `33`
+- Splunk app: `2.7.6` build `34`
 - Current runtime release notes: [RELEASE_NOTES_v5.3.1.md](RELEASE_NOTES_v5.3.1.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.7.5.md](RELEASE_NOTES_splunk_app_2.7.5.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.7.6.md](RELEASE_NOTES_splunk_app_2.7.6.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
 ## Current Runtime Options
@@ -156,7 +156,7 @@ Default/current sample values live in [config.psd1](config.psd1).
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_2.7.5_build33_20260615.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_2.7.6_build34_20260625.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.

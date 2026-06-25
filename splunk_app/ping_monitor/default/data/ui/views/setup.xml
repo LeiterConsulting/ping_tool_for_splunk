@@ -16,9 +16,11 @@
 | head 1
 | eval refresh_token="$config_refresh$"
 | eval index=coalesce(index, "ping"), sourcetype=coalesce(sourcetype, "ping_monitor"), metrics_index=coalesce(metrics_index, "ping_metrics")
+| eval last_updated=coalesce(last_updated, "Never")
+| eval record_present=if(isnull(_key) OR _key=="", "no", "yes")
 | eval configured_text=lower(tostring(configured))
-| eval is_configured=if(configured_text=="true" OR configured_text=="1", "yes", "no")
-| fields - refresh_token, configured_text</query>
+| eval is_configured=if(configured_text=="true" OR configured_text=="1" OR record_present=="yes", "yes", "no")
+| fields - refresh_token, configured_text, record_present</query>
     <earliest>-1m</earliest>
     <latest>now</latest>
     <done>
