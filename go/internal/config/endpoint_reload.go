@@ -47,7 +47,12 @@ func (r *EndpointReloader) ReloadIfChanged() ([]models.Endpoint, bool, error) {
 		return cloneEndpoints(r.current), false, err
 	}
 	if sig.equal(r.lastGood) {
-		return cloneEndpoints(r.current), false, nil
+		// If an invalid edit is reverted byte-for-byte to the last known-good
+		// file, report a recovery once so runtime status can clear the stale
+		// reload error even though the effective endpoint set did not change.
+		recovered := r.hasFailure
+		r.hasFailure = false
+		return cloneEndpoints(r.current), recovered, nil
 	}
 	if r.hasFailure && sig.equal(r.lastFailed) {
 		return cloneEndpoints(r.current), false, nil

@@ -17,9 +17,8 @@
         </div>
       </div>
       <nav class="nav-list">
-        <a class="nav-item active" href="#overview">Overview</a>
+        <a class="nav-item active" href="#overview" aria-current="page">Overview</a>
         <a class="nav-item" href="#inventory">Endpoints</a>
-        <a class="nav-item" href="#devices">Dev Devices</a>
         <a class="nav-item" href="#discovery">Discovery</a>
         <a class="nav-item" href="#settings">Settings</a>
       </nav>
@@ -32,9 +31,9 @@
     <main class="main-shell">
       <header class="page-header">
         <div>
-          <p class="eyebrow">Ping Monitor Admin</p>
-          <h1>Deployment Control Surface</h1>
-          <p class="page-copy">Drop this binary into an existing deployment, load the current config and endpoint files, and manage parity through the same runtime surfaces the service already uses.</p>
+          <p class="eyebrow">Collector Administration</p>
+          <h1>Ping Monitor</h1>
+          <p class="page-copy">See what the collector is doing now, manage endpoints safely, and keep delivery to Splunk healthy.</p>
         </div>
         <div class="header-actions">
           <span class="status-pill" id="mode-pill">Loading...</span>
@@ -43,11 +42,12 @@
       </header>
 
       <div class="content-scroll">
+        <div id="runtime-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
         <section id="overview" class="section-stack">
           <div class="section-heading">
             <div>
               <h2>Overview</h2>
-              <p>Runtime-facing summary from the active deployment files.</p>
+              <p>Live collector, cycle, endpoint reload, and delivery state.</p>
             </div>
             <div class="meta-stack">
               <div class="meta-chip" id="config-path-chip">Loading config path...</div>
@@ -55,7 +55,30 @@
             </div>
           </div>
 
-          <div class="summary-grid">
+          <div class="summary-grid runtime-summary-grid">
+            <article class="summary-card accent-teal">
+              <p class="summary-label">Collector</p>
+              <p class="summary-value summary-value-text" id="runtime-state">Loading</p>
+              <p class="summary-note" id="runtime-uptime">Checking process state...</p>
+            </article>
+            <article class="summary-card">
+              <p class="summary-label">Monitoring Cycle</p>
+              <p class="summary-value summary-value-text" id="runtime-cycle">--</p>
+              <p class="summary-note" id="runtime-cycle-note">Waiting for runtime data...</p>
+            </article>
+            <article class="summary-card accent-teal">
+              <p class="summary-label">Splunk Delivery</p>
+              <p class="summary-value summary-value-text" id="runtime-delivery">--</p>
+              <p class="summary-note" id="runtime-delivery-note">Checking durable delivery...</p>
+            </article>
+            <article class="summary-card accent-amber">
+              <p class="summary-label">Pending Delivery</p>
+              <p class="summary-value" id="runtime-pending">--</p>
+              <p class="summary-note" id="runtime-pending-note">Waiting for outbox status...</p>
+            </article>
+          </div>
+
+          <div class="summary-grid inventory-summary-grid">
             <article class="summary-card">
               <p class="summary-label">Total Endpoints</p>
               <p class="summary-value" id="summary-total">--</p>
@@ -90,9 +113,9 @@
               <p class="summary-note" id="discovery-status-copy">Discovery uses the companion workflow when it is available in the current deployment.</p>
             </article>
             <article class="panel info-card section-stack">
-              <p class="summary-label">Parity Goal</p>
-              <p class="info-value">Drop-In Management</p>
-              <p class="summary-note">The UI edits the same files an operator would otherwise edit manually.</p>
+              <p class="summary-label">Endpoint Reload</p>
+              <p class="info-value" id="endpoint-reload-label">Checking...</p>
+              <p class="summary-note" id="endpoint-reload-copy">Comparing the file on disk with the active runtime set.</p>
             </article>
           </div>
         </section>
@@ -110,16 +133,16 @@
             </div>
           </div>
 
-          <div id="endpoint-banner" class="message-banner hidden"></div>
+          <div id="endpoint-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
 
           <div class="editor-grid">
-            <article class="panel section-stack">
+            <article class="panel section-stack endpoint-table-panel">
               <div class="toolbar-row">
                 <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor">
                 <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
-                  <button class="segment active" type="button" data-filter="all">All</button>
-                  <button class="segment" type="button" data-filter="production">Production</button>
-                  <button class="segment" type="button" data-filter="dev">Dev</button>
+                  <button class="segment active" type="button" role="tab" aria-selected="true" data-filter="all">All</button>
+                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="production">Production</button>
+                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="dev">Dev</button>
                 </div>
               </div>
 
@@ -173,15 +196,17 @@
               </div>
             </article>
 
-            <article class="panel section-stack">
+            <article class="panel section-stack endpoint-editor-panel">
               <div class="panel-header">
                 <div>
                   <h3 class="panel-title">Endpoint Editor</h3>
                   <p class="summary-note" id="endpoint-selection-label">Select an endpoint to edit its live CSV fields.</p>
                 </div>
+                <button class="danger-button" id="delete-current-endpoint-button" type="button">Delete This Endpoint</button>
               </div>
 
               <form id="endpoint-form" class="form-stack" autocomplete="off">
+                <div id="endpoint-validation" class="message-banner hidden" role="alert"></div>
                 <div class="field-grid">
                   <label class="field-group">
                     <span>IP Address</span>
@@ -226,36 +251,6 @@
           </div>
         </section>
 
-        <section id="devices" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Dev Devices</h2>
-              <p>Dedicated visibility for systems excluded from customer-facing production summaries.</p>
-            </div>
-            <span class="meta-chip" id="dev-refresh">Awaiting data</span>
-          </div>
-
-          <article class="panel section-stack">
-            <div class="table-wrap dev-table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Hostname</th>
-                    <th>Group</th>
-                    <th>Description</th>
-                    <th>Vendor</th>
-                  </tr>
-                </thead>
-                <tbody id="dev-rows">
-                  <tr>
-                    <td colspan="4" class="empty-cell">Loading dev endpoints...</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </article>
-        </section>
-
         <section id="discovery" class="section-stack">
           <div class="section-heading">
             <div>
@@ -268,7 +263,7 @@
             </div>
           </div>
 
-          <div id="discovery-banner" class="message-banner hidden"></div>
+          <div id="discovery-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
 
           <div class="editor-grid">
             <article class="panel section-stack">
@@ -300,12 +295,15 @@
 
               <div class="button-row">
                 <button class="primary-button" id="run-discovery-button" type="button">Run Discovery</button>
+                <button class="danger-button" id="cancel-discovery-button" type="button" disabled>Cancel Discovery</button>
                 <button class="secondary-button" id="select-all-discovery-button" type="button">Select All</button>
                 <button class="secondary-button" id="deselect-all-discovery-button" type="button">Deselect All</button>
                 <button class="secondary-button" id="mark-discovery-dev-button" type="button">Mark Selected Dev</button>
                 <button class="secondary-button" id="mark-discovery-production-button" type="button">Mark Selected Prod</button>
                 <button class="secondary-button" id="add-discovery-selected-button" type="button">Add Selected to Device List</button>
               </div>
+
+              <p class="message-banner discovery-preflight" id="discovery-preflight" role="status">A /24 scan checks up to 254 host addresses.</p>
 
               <div class="table-meta-row">
                 <span class="table-status" id="discovery-selection-status">0 selected</span>
@@ -382,8 +380,8 @@
         <section id="settings" class="section-stack">
           <div class="section-heading">
             <div>
-              <h2>Settings</h2>
-              <p>Parity with the manual config workflow. These fields write back to the live config file the runtime loads at startup.</p>
+              <h2>Configuration</h2>
+              <p>Changes are saved to disk. Engine settings take effect after the collector restarts.</p>
             </div>
             <div class="section-actions">
               <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
@@ -395,7 +393,7 @@
             </div>
           </div>
 
-          <div id="settings-banner" class="message-banner hidden"></div>
+          <div id="settings-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
           <div id="output-test-details" class="log-surface hidden"></div>
 
           <form id="settings-form" class="settings-stack" autocomplete="off">
@@ -443,17 +441,17 @@
                     <label class="field-group">
                       <span>Output Mode</span>
                       <select id="cfg-output-mode" class="text-input">
-                        <option value="file">file</option>
-                        <option value="hec">hec</option>
-                        <option value="both">both</option>
+                        <option value="file">Local file only</option>
+                        <option value="hec">Splunk HEC only</option>
+                        <option value="both">Local file and Splunk HEC</option>
                       </select>
                     </label>
                     <label class="field-group">
                       <span>Ping Mode</span>
                       <select id="cfg-ping-mode" class="text-input">
-                        <option value="auto">auto</option>
-                        <option value="raw">raw</option>
-                        <option value="exec">exec</option>
+                        <option value="auto">Automatic (recommended)</option>
+                        <option value="raw">Raw ICMP</option>
+                        <option value="exec">Operating-system command</option>
                       </select>
                     </label>
                     <label class="field-group field-span-2">
@@ -482,9 +480,9 @@
                     <label class="field-group">
                       <span>Handle Probe Mode</span>
                       <select id="cfg-handle-probe-mode" class="text-input">
-                        <option value="none">none</option>
-                        <option value="hec_only">hec_only</option>
-                        <option value="metrics_only">metrics_only</option>
+                        <option value="none">Disabled</option>
+                        <option value="hec_only">Event HEC only</option>
+                        <option value="metrics_only">Metrics HEC only</option>
                       </select>
                     </label>
                   </div>
@@ -610,8 +608,8 @@
                     <label class="field-group">
                       <span>Metrics Mode</span>
                       <select id="cfg-metrics-mode" class="text-input">
-                        <option value="dual">dual</option>
-                        <option value="metrics_only">metrics_only</option>
+                        <option value="dual">Events and metrics</option>
+                        <option value="metrics_only">Metrics only</option>
                       </select>
                     </label>
                     <label class="field-group">

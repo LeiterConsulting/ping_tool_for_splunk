@@ -14,6 +14,8 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/ping"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/state"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 	"github.com/google/uuid"
@@ -26,6 +28,7 @@ type Options struct {
 	CollectorID     string
 	StatePath       string
 	ReloadEndpoints func() ([]models.Endpoint, bool, error)
+	Runtime         *runtimeinfo.Tracker
 }
 
 type endpointJob struct {
@@ -137,6 +140,7 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		if cycle > 1 && opts.ReloadEndpoints != nil {
 			reloaded, changed, err := opts.ReloadEndpoints()
 			if err != nil {
+				opts.Runtime.EndpointReloadFailed(err)
 				msg := err.Error()
 				if msg != lastReloadErr || time.Since(lastReloadWarn) >= 30*time.Second {
 					diagnostics.LogWarn("endpoints reload failed; using previous set", map[string]interface{}{
@@ -149,6 +153,7 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 				}
 			} else if changed && len(reloaded) > 0 {
 				if _, capacityErr := calculateScheduleCapacity(cfg, len(reloaded), opts.RunOnce); capacityErr != nil {
+					opts.Runtime.EndpointReloadFailed(capacityErr)
 					diagnostics.LogWarn("endpoints reload rejected; using previous set", map[string]interface{}{
 						"path": opts.EndpointsPath, "cycle": cycle, "error": capacityErr.Error(),
 						"candidate_endpoints": len(reloaded), "current_endpoints": len(activeEndpoints),
@@ -157,6 +162,8 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 					previous := len(activeEndpoints)
 					activeEndpoints = append([]models.Endpoint(nil), reloaded...)
 					lastReloadErr = ""
+					endpointRevision, _ := revision.File(opts.EndpointsPath)
+					opts.Runtime.EndpointReloaded(endpointRevision, len(activeEndpoints), time.Now())
 					diagnostics.LogInfo("endpoints reloaded", map[string]interface{}{
 						"path":               opts.EndpointsPath,
 						"cycle":              cycle,
@@ -177,6 +184,7 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		if err != nil {
 			return err
 		}
+		opts.Runtime.CycleStarted(cycle, cycleID, len(cycleEndpoints), cycleStart)
 
 		// Spread dispatches across the cycle. This avoids a synchronized burst of
 		// ICMP and output work while keeping each endpoint close to the configured
@@ -251,6 +259,11 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
 			diagnostics.LogRuntimeSnapshot("cycle", runtime.NumGoroutine())
 		}
+		nextCycle := time.Time{}
+		if !opts.RunOnce {
+			nextCycle = cycleStart.Add(time.Duration(cfg.CycleIntervalSeconds) * time.Second)
+		}
+		opts.Runtime.CycleCompleted(cycle, time.Now(), duration, nextCycle, success, partial, failed)
 
 		if opts.RunOnce {
 			break

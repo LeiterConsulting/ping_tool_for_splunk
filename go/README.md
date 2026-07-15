@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.5.0 is the current Go runtime. It adds truthful latency metadata, durable asynchronous delivery, indexer acknowledgment support, strict inventory validation, and observable scheduler capacity to the v5.4 native probe/state foundation.
+Ping Monitor v5.6.0 is the current Go runtime. It adds a truthful operator interface, live cycle/reload/delivery state, revision-safe editing, and safer discovery and endpoint workflows to the v5.5 signal and delivery foundation.
 
 ## Current Go Release
 
-- Version: `v5.5.0`
+- Version: `v5.6.0`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.5.0.md](../RELEASE_NOTES_v5.5.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.6.0.md](../RELEASE_NOTES_v5.6.0.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -14,7 +14,7 @@ Ping Monitor v5.5.0 is the current Go runtime. It adds truthful latency metadata
 - A single binary runtime for Windows, Linux, and macOS.
 - Drop-in reuse of existing `config.psd1` and `endpoints.csv` deployment files.
 - Automatic `endpoints.csv` hot reload between cycles with last-known-good fallback on invalid edits.
-- Embedded local admin UI for endpoint CRUD, discovery, config editing, dev/prod marking, and HEC connectivity tests.
+- Embedded admin UI with live runtime truth, revision-safe endpoint/config editing, cancellable discovery, dev/prod marking, and HEC connectivity tests.
 - Fsynced, bounded HEC/metrics outbox with asynchronous delivery, restart recovery, per-sink progress, and optional indexer acknowledgment.
 
 ## Runtime Compatibility
@@ -35,10 +35,10 @@ go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor
 .\pingmonitor.exe --run-once
 
 # Run the monitor with the local admin UI
-.\pingmonitor.exe --ui-listen 127.0.0.1:8080
+.\pingmonitor.exe --ui-listen 0.0.0.0:8080
 
 # Launch the local admin UI without starting the monitor engine
-.\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
+.\pingmonitor.exe --ui-listen 0.0.0.0:8080 --ui-only
 ```
 
 With the default file names, the binary prefers `config.psd1` and `endpoints.csv` next to the executable. That keeps in-place upgrades aligned with existing deployment folders.
@@ -92,8 +92,10 @@ The optional local admin UI runs from the same Go binary and works against the s
 It provides:
 
 - endpoint CRUD with bulk dev/prod actions
+- explicit-selection safeguards for bulk actions and revision conflict protection for saves
+- live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status
 - config editing against the active config file
-- discovery with staged import workflows
+- cancellable discovery with host-count preflight and staged import workflows
 - HEC event and metrics endpoint validation
 - settings help modals for the runtime configuration surface
 
@@ -111,6 +113,7 @@ Operational notes:
 - Existing `config.psd1` and `endpoints.csv` files next to the binary are loaded at startup and surfaced in the UI immediately.
 - HEC tokens are write-only: API responses never contain stored credentials, and a blank token field preserves the stored value.
 - Endpoint edits saved in the UI are written back to the live endpoint file that the runtime hot reloads.
+- Stale config or endpoint drafts are rejected with `409 Conflict` instead of overwriting a newer file revision.
 - Config edits saved in the UI are written back to the active config file, but engine-level config changes still require a process or service restart.
 - When saving over an existing config or endpoint file, the UI creates a timestamped `.bak` backup first.
 - The discovery workflow ships through an embedded PowerShell script fallback, so drop-in deployments do not need a separate `DiscoverEndpoints.ps1` file just to use the UI.
@@ -150,7 +153,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.5.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.6.0`
 - Bash: `./go/build.sh dist`
 
 Current default targets:
@@ -195,9 +198,9 @@ The shipped installer:
 - verifies persisted NSSM application, arguments, working-directory, and log settings
 - uses delayed automatic start, graceful console shutdown, NSSM restart, and SCM recovery actions
 - rotates service stdout/stderr logs
-- enables the local admin UI on `127.0.0.1:8080` by default
+- enables the admin UI on `0.0.0.0:8080` by default
 - supports `-UIListen` to select a different bind address or port
-- rejects non-loopback UI binds unless `-AllowRemoteUI` is explicitly supplied
+- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.6
 - supports `-DisableUI` for a headless service
 - supports `-ForceReinstall` when a binary or deployment path changes
 
@@ -220,7 +223,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/ping_monitor
-ExecStart=/opt/ping_monitor/pingmonitor --config /opt/ping_monitor/config.psd1 --endpoints /opt/ping_monitor/endpoints.csv --ui-listen 127.0.0.1:8080
+ExecStart=/opt/ping_monitor/pingmonitor --config /opt/ping_monitor/config.psd1 --endpoints /opt/ping_monitor/endpoints.csv --ui-listen 0.0.0.0:8080
 Restart=always
 RestartSec=10
 
@@ -249,7 +252,7 @@ Example `launchd` configuration:
 		<string>--endpoints</string>
 		<string>/opt/ping_monitor/endpoints.csv</string>
 		<string>--ui-listen</string>
-		<string>127.0.0.1:8080</string>
+		<string>0.0.0.0:8080</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/opt/ping_monitor</string>

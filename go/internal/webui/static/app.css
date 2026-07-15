@@ -239,6 +239,12 @@ td,
   color: var(--teal-400);
 }
 
+.status-pill[data-tone="warning"] {
+  color: var(--amber-400);
+  border-color: rgba(229, 166, 58, 0.55);
+  background: rgba(229, 166, 58, 0.1);
+}
+
 .primary-button,
 .secondary-button,
 .danger-button,
@@ -309,7 +315,6 @@ button:disabled {
 
 #overview,
 #inventory,
-#devices,
 #discovery,
 #settings {
   scroll-margin-top: 1.5rem;
@@ -373,6 +378,15 @@ button:disabled {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.runtime-summary-grid {
+  margin-bottom: 0.25rem;
+}
+
+.summary-value-text {
+  font-size: clamp(1.25rem, 2vw, 1.8rem) !important;
+  line-height: 1.2;
+}
+
 .info-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -384,6 +398,13 @@ button:disabled {
 
 .editor-grid {
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
+}
+
+.endpoint-editor-panel {
+  position: sticky;
+  top: 1rem;
+  max-height: calc(100vh - 190px);
+  overflow: auto;
 }
 
 .settings-grid {
@@ -828,7 +849,16 @@ td {
 .field-group {
   display: grid;
   gap: 0.45rem;
+  min-width: 0;
   font-size: 0.94rem;
+}
+
+.field-group input,
+.field-group select,
+.field-group textarea {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
 }
 
 .field-group span {
@@ -941,6 +971,23 @@ td {
   display: none;
 }
 
+.advanced-setting-collapsed {
+  display: none !important;
+}
+
+.advanced-toggle {
+  justify-self: start;
+}
+
+.discovery-preflight {
+  display: block;
+  margin: 0;
+}
+
+#runtime-banner:not(.hidden) {
+  margin-bottom: 0.5rem;
+}
+
 @media (max-width: 1180px) {
   .summary-grid,
   .two-column-grid,
@@ -958,6 +1005,7 @@ td {
 @media (max-width: 900px) {
   body {
     overflow: auto;
+    overflow-x: hidden;
   }
 
   .app-shell {
@@ -971,6 +1019,16 @@ td {
     top: auto;
     z-index: auto;
     overflow: visible;
+    gap: 1rem;
+    padding: 1rem;
+  }
+
+  .nav-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sidebar-footer {
+    margin-top: 0;
   }
 
   .main-shell {
@@ -980,9 +1038,12 @@ td {
 
   .content-scroll {
     flex: initial;
+    min-width: 0;
     min-height: auto;
     overflow: visible;
     scrollbar-gutter: auto;
+    max-width: 100%;
+    padding: 1rem;
   }
 
   .content-scroll::after {
@@ -1005,6 +1066,18 @@ td {
     flex-direction: column;
   }
 
+  .page-header {
+    position: static;
+    padding: 1rem;
+  }
+
+  #overview,
+  #inventory,
+  #discovery,
+  #settings {
+    scroll-margin-top: 1rem;
+  }
+
   .settings-help-header,
   .checkbox-help-row,
   .field-label-row {
@@ -1023,6 +1096,16 @@ td {
     justify-content: space-between;
   }
 
+  .inline-field-wide {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inline-field-wide .text-input-compact {
+    min-width: 0;
+    width: 100%;
+  }
+
   .pager {
     justify-content: flex-start;
     margin-left: 0;
@@ -1031,6 +1114,33 @@ td {
   .filter-input {
     min-width: 0;
     width: 100%;
+  }
+
+  .panel,
+  .summary-card,
+  .toolbar-row,
+  .button-row,
+  .section-actions,
+  .header-actions {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .panel > *,
+  .summary-card > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .endpoint-editor-panel {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+
+  .button-row > button,
+  .section-actions > button {
+    white-space: normal;
   }
 
   .meta-stack {

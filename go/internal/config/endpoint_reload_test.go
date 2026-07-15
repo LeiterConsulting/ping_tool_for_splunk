@@ -118,6 +118,45 @@ func TestEndpointReloaderKeepsLastGoodSetOnInvalidFile(t *testing.T) {
 	}
 }
 
+func TestEndpointReloaderReportsRecoveryWhenInvalidEditIsReverted(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "endpoints.csv")
+	goodContent := "ip,hostname,group,description,entitytype,device,vendor,additional_notes\n" +
+		"127.0.0.1,host1,default,one,server,loopback,Microsoft,initial\n"
+	goodTime := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	writeEndpointsFixture(t, path, goodContent, goodTime)
+
+	reloader, _, err := NewEndpointReloader(path)
+	if err != nil {
+		t.Fatalf("NewEndpointReloader() error = %v", err)
+	}
+
+	writeEndpointsFixture(t, path,
+		"ip,hostname,group,description,entitytype,device,vendor,additional_notes\n",
+		time.Date(2026, 5, 15, 12, 0, 2, 0, time.UTC),
+	)
+	if _, _, err := reloader.ReloadIfChanged(); err == nil {
+		t.Fatal("ReloadIfChanged() invalid edit error = nil")
+	}
+
+	writeEndpointsFixture(t, path, goodContent, goodTime)
+	recovered, changed, err := reloader.ReloadIfChanged()
+	if err != nil {
+		t.Fatalf("ReloadIfChanged() reverted edit error = %v", err)
+	}
+	if !changed {
+		t.Fatal("ReloadIfChanged() reverted edit changed = false, want recovery signal")
+	}
+	if len(recovered) != 1 || recovered[0].Hostname != "host1" {
+		t.Fatalf("unexpected endpoints after revert recovery: %#v", recovered)
+	}
+
+	if _, changed, err := reloader.ReloadIfChanged(); err != nil || changed {
+		t.Fatalf("ReloadIfChanged() after recovery = changed %v, error %v; want no-op", changed, err)
+	}
+}
+
 func writeEndpointsFixture(t *testing.T, path string, content string, modTime time.Time) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

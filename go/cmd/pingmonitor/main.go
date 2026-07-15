@@ -18,6 +18,8 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/engine"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/identity"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/singleinstance"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/webui"
 )
@@ -29,7 +31,7 @@ func main() {
 		runOnce       = flag.Bool("run-once", false, "Run a single cycle and exit")
 		maxCycles     = flag.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
 		pingMode      = flag.String("ping-mode", "", "Ping mode: auto|raw|exec (empty = use config)")
-		uiListen      = flag.String("ui-listen", "", "Listen address for optional local web UI (for example 127.0.0.1:8080)")
+		uiListen      = flag.String("ui-listen", "", "Listen address for optional web UI (for example 0.0.0.0:8080)")
 		uiOnly        = flag.Bool("ui-only", false, "Serve the web UI without starting the monitoring engine (requires -ui-listen)")
 		validateOnly  = flag.Bool("validate", false, "Validate config, endpoints, and scheduler capacity, then exit without probing")
 		version       = flag.Bool("version", false, "Print version and exit")
@@ -96,10 +98,15 @@ func main() {
 	}
 
 	if *uiOnly {
+		configRevision, _ := revision.File(resolvedConfigPath)
+		endpointsRevision, _ := revision.File(resolvedEndpointsPath)
+		editableEndpoints, _ := config.LoadEditableEndpoints(resolvedEndpointsPath)
+		runtimeTracker := runtimeinfo.New("ui_only", configRevision, endpointsRevision, len(editableEndpoints))
 		warnIfRemoteUI(*uiListen)
 		if err := webui.Start(ctx, webui.Options{
 			ListenAddr: *uiListen, ConfigPath: resolvedConfigPath, EndpointsPath: resolvedEndpointsPath,
-			RootDir: root, Version: buildinfo.Version, CollectorID: collectorID,
+			RootDir: root, Version: buildinfo.Version, CollectorID: collectorID, Runtime: runtimeTracker,
+			EffectiveConfig: &cfg,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
 			os.Exit(2)
@@ -122,6 +129,9 @@ func main() {
 		fmt.Printf("validation successful: config=%s endpoints=%d\n", cfgSource, len(endpoints))
 		return
 	}
+	configRevision, _ := revision.File(resolvedConfigPath)
+	endpointsRevision, _ := revision.File(resolvedEndpointsPath)
+	runtimeTracker := runtimeinfo.New("monitor", configRevision, endpointsRevision, len(endpoints))
 
 	diagnostics.LogStartup(cfgSource, cfg, len(endpoints))
 	if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
@@ -131,12 +141,14 @@ func main() {
 	if *uiListen != "" {
 		warnIfRemoteUI(*uiListen)
 		err := webui.Start(ctx, webui.Options{
-			ListenAddr:    *uiListen,
-			ConfigPath:    resolvedConfigPath,
-			EndpointsPath: resolvedEndpointsPath,
-			RootDir:       root,
-			Version:       buildinfo.Version,
-			CollectorID:   collectorID,
+			ListenAddr:      *uiListen,
+			ConfigPath:      resolvedConfigPath,
+			EndpointsPath:   resolvedEndpointsPath,
+			RootDir:         root,
+			Version:         buildinfo.Version,
+			CollectorID:     collectorID,
+			Runtime:         runtimeTracker,
+			EffectiveConfig: &cfg,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
@@ -151,6 +163,7 @@ func main() {
 		CollectorID:     collectorID,
 		StatePath:       resolvedConfigPath + ".state.json",
 		ReloadEndpoints: endpointReloader.ReloadIfChanged,
+		Runtime:         runtimeTracker,
 	}
 
 	if err := engine.Run(ctx, cfg, endpoints, opts); err != nil {
@@ -158,6 +171,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "shutdown requested")
 			return
 		}
+		runtimeTracker.Failed(err)
 		fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 		os.Exit(1)
 	}

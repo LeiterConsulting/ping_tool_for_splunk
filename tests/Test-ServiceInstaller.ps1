@@ -43,16 +43,17 @@ try {
     Assert-True ($definition.Arguments -match '".*Ping Monitor Installer Test.*config.json"') 'paths containing spaces should be quoted'
     Assert-True ($definition.StartupType -eq 'AutomaticDelayedStart') 'delayed automatic start should be the default'
 
-    $remoteRejected = $false
-    try {
-        & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
-            -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `
-            -WorkingDirectory $testRoot -UIListen '0.0.0.0:18081' -ErrorAction Stop | Out-Null
-    }
-    catch {
-        $remoteRejected = $_.Exception.Message -match 'Refusing non-loopback UI bind'
-    }
-    Assert-True $remoteRejected 'remote UI binds should require explicit opt-in'
+    $defaultJson = & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
+        -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `
+        -WorkingDirectory $testRoot -Json
+    $defaultDefinition = $defaultJson | ConvertFrom-Json
+    Assert-True ($defaultDefinition.UIListen -eq '0.0.0.0:8080') 'v5.6 service UI should default to 0.0.0.0:8080'
+
+    $remoteJson = & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
+        -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `
+        -WorkingDirectory $testRoot -UIListen '0.0.0.0:18081' -Json
+    $remoteDefinition = $remoteJson | ConvertFrom-Json
+    Assert-True ($remoteDefinition.UIListen -eq '0.0.0.0:18081') 'remote UI bind should be accepted without an opt-in switch'
 
     $missingService = (& $installer -Status -ServiceName "PingMonitorMissing$([Guid]::NewGuid().ToString('N'))" -Json) | ConvertFrom-Json
     Assert-True (-not $missingService.Installed) 'status should work without elevation for an absent service'

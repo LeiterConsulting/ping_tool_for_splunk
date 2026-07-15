@@ -11,9 +11,30 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	filerevision "github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 )
+
+func requestBodyWithRevision(t *testing.T, path string, raw string) *bytes.Reader {
+	t.Helper()
+	currentRevision, err := filerevision.File(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["revision"] = currentRevision
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bytes.NewReader(encoded)
+}
 
 func TestEndpointsAPI(t *testing.T) {
 	tempDir := t.TempDir()
@@ -62,6 +83,9 @@ func TestEndpointsAPI(t *testing.T) {
 	if len(payload.Items) != 2 {
 		t.Fatalf("len(items) = %d, want 2", len(payload.Items))
 	}
+	if payload.Revision == "" {
+		t.Fatal("revision is blank")
+	}
 	if !payload.Items[1].Dev {
 		t.Fatal("items[1].dev = false, want true")
 	}
@@ -83,7 +107,7 @@ func TestEndpointsAPI_PutRoundTrip(t *testing.T) {
 		t.Fatalf("newHandler() error = %v", err)
 	}
 
-	body := bytes.NewBufferString(`{"items":[{"ip":"10.0.0.1","hostname":"core-router","group":"network","description":"Core Router","entitytype":"network","device":"router","vendor":"Cisco","additional_notes":"Primary","dev":false},{"ip":"10.0.0.25","hostname":"qa-api","group":"development","description":"QA API","entitytype":"service","device":"vm","vendor":"VMware","additional_notes":"Excluded","dev":true}]}`)
+	body := requestBodyWithRevision(t, endpointsPath, `{"items":[{"ip":"10.0.0.1","hostname":"core-router","group":"network","description":"Core Router","entitytype":"network","device":"router","vendor":"Cisco","additional_notes":"Primary","dev":false},{"ip":"10.0.0.25","hostname":"qa-api","group":"development","description":"QA API","entitytype":"service","device":"vm","vendor":"VMware","additional_notes":"Excluded","dev":true}]}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/endpoints", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -98,6 +122,36 @@ func TestEndpointsAPI_PutRoundTrip(t *testing.T) {
 	}
 	if len(loaded) != 2 || !loaded[1].Dev {
 		t.Fatalf("unexpected endpoints after PUT: %#v", loaded)
+	}
+}
+
+func TestEndpointsAPI_RejectsStaleRevision(t *testing.T) {
+	tempDir := t.TempDir()
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	configPath := filepath.Join(tempDir, "config.psd1")
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, config.Defaults(tempDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staleRevision, err := filerevision.File(endpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.2,host-b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(endpointsWriteRequest{Revision: staleRevision})
+	req := httptest.NewRequest(http.MethodPut, "/api/endpoints", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "reload from disk") {
+		t.Fatalf("stale write status = %d, body = %s", resp.Code, resp.Body.String())
 	}
 }
 
@@ -117,7 +171,7 @@ func TestConfigAPI_PutRoundTrip(t *testing.T) {
 		t.Fatalf("newHandler() error = %v", err)
 	}
 
-	body := bytes.NewBufferString(`{"config":{"pings_per_cycle":9,"cycle_interval_seconds":45,"timeout_ms":1500,"parallel_threads":12,"output_mode":"both","log_path":"./logs/ui.log","log_rotation_size_mb":99,"emit_individual_pings":false,"ping":{"mode":"exec"},"diagnostics":{"enabled":true,"handle_probe_mode":"metrics_only"},"debug":{"emit_memory_stats":true},"hec":{"enabled":true,"url":"https://hec.example.com:8088","token":"secret-token","index":"main","sourcetype":"ping_monitor","verify_ssl":true,"ssl_protocol":"Default","batch_size":120,"drop_on_failure":false,"max_buffer_events":9000,"max_buffer_bytes":"9MB","retry":{"enabled":true,"max_attempts":5,"base_delay_ms":500,"jitter_pct":25,"backoff":"fixed"},"retry_count":1,"retry_delay_ms":500,"dead_letter_path":"./logs/hec.ndjson","dead_letter_rotation_size_mb":15},"metrics":{"enabled":true,"mode":"dual","index":"metrics","hec_url":"https://metrics.example.com:8088","token":"metric-token","verify_ssl":true,"ssl_protocol":"Default","compat_mode":false,"sourcetype":"ping_monitor:metrics","event_name":"metric","use_metrics_index":true,"batch_size":250,"max_buffer_events":10000,"max_buffer_bytes":"10MB"}}}`)
+	body := requestBodyWithRevision(t, configPath, `{"config":{"pings_per_cycle":9,"cycle_interval_seconds":45,"timeout_ms":1500,"parallel_threads":12,"output_mode":"both","log_path":"./logs/ui.log","log_rotation_size_mb":99,"emit_individual_pings":false,"ping":{"mode":"exec"},"diagnostics":{"enabled":true,"handle_probe_mode":"metrics_only"},"debug":{"emit_memory_stats":true},"hec":{"enabled":true,"url":"https://hec.example.com:8088","token":"secret-token","index":"main","sourcetype":"ping_monitor","verify_ssl":true,"ssl_protocol":"Default","batch_size":120,"drop_on_failure":false,"max_buffer_events":9000,"max_buffer_bytes":"9MB","retry":{"enabled":true,"max_attempts":5,"base_delay_ms":500,"jitter_pct":25,"backoff":"fixed"},"retry_count":1,"retry_delay_ms":500,"dead_letter_path":"./logs/hec.ndjson","dead_letter_rotation_size_mb":15},"metrics":{"enabled":true,"mode":"dual","index":"metrics","hec_url":"https://metrics.example.com:8088","token":"metric-token","verify_ssl":true,"ssl_protocol":"Default","compat_mode":false,"sourcetype":"ping_monitor:metrics","event_name":"metric","use_metrics_index":true,"batch_size":250,"max_buffer_events":10000,"max_buffer_bytes":"10MB"}}}`)
 	req := httptest.NewRequest(http.MethodPut, "/api/config", body)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -148,7 +202,7 @@ func TestConfigAPI_PutRoundTrip(t *testing.T) {
 	}
 	loaded.HEC.Token = ""
 	loaded.Metrics.Token = ""
-	preserveBody, err := json.Marshal(configWriteRequest{Config: loaded})
+	preserveBody, err := json.Marshal(configWriteRequest{Config: loaded, Revision: response.Revision})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +219,77 @@ func TestConfigAPI_PutRoundTrip(t *testing.T) {
 	}
 	if preserved.HEC.Token != "secret-token" || preserved.Metrics.Token != "metric-token" {
 		t.Fatalf("blank token did not preserve write-only secrets: %#v", preserved)
+	}
+}
+
+func TestStatusAPI_ReportsRuntimeAndRestartTruth(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, config.Defaults(tempDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	tracker := runtimeinfo.New("monitor", configRevision, endpointsRevision, 1)
+	started := time.Now().Add(-100 * time.Millisecond)
+	tracker.CycleStarted(2, "cycle-2", 1, started)
+	tracker.CycleCompleted(2, time.Now(), 100*time.Millisecond, time.Now().Add(time.Minute), 1, 0, 0)
+
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, append(contents, []byte("\n# pending restart\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "test", Runtime: tracker})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d (%s)", resp.Code, resp.Body.String())
+	}
+	var payload statusResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.ConfigRestartRequired || payload.Runtime.CurrentCycle != 2 || payload.Runtime.LastProductionSuccess != 1 {
+		t.Fatalf("status truth = %#v", payload)
+	}
+}
+
+func TestConfigAPI_RejectsStaleRevision(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, config.Defaults(tempDir)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staleRevision, _ := filerevision.File(configPath)
+	contents, _ := os.ReadFile(configPath)
+	if err := os.WriteFile(configPath, append(contents, []byte("\n# external edit\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(configWriteRequest{Config: config.Defaults(tempDir), Revision: staleRevision})
+	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "reload from disk") {
+		t.Fatalf("stale config status = %d, body = %s", resp.Code, resp.Body.String())
 	}
 }
 
@@ -482,8 +607,80 @@ func TestStaticShellServesIndex(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
-	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", "Endpoint Inventory", "Dev Devices") {
+	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", "Endpoint Inventory", "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete This Endpoint") {
 		t.Fatalf("body missing expected shell markers: %q", body)
+	}
+	for header, want := range map[string]string{
+		"Content-Security-Policy": "default-src 'self'",
+		"Referrer-Policy":         "no-referrer",
+		"X-Content-Type-Options":  "nosniff",
+		"X-Frame-Options":         "DENY",
+	} {
+		if got := resp.Header().Get(header); !strings.Contains(got, want) {
+			t.Errorf("%s = %q, want content %q", header, got, want)
+		}
+	}
+}
+
+func TestStatusUsesEffectiveConfigWithoutReparsingDisk(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "hec"
+	cfg.HEC.Enabled = true
+	cfg.Delivery.SpoolPath = "./outbox"
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spoolDir := filepath.Join(tempDir, "outbox")
+	if err := os.MkdirAll(spoolDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spoolDir, "status.json"), []byte(`{"state":"healthy","confirmation_mode":"hec_accepted_only"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configRevision, err := filerevision.File(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointsRevision, err := filerevision.File(endpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracker := runtimeinfo.New("monitor", configRevision, endpointsRevision, 1)
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Version: "test", Runtime: tracker, EffectiveConfig: &cfg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A draft disk edit may be invalid while the monitor continues with its
+	// startup config. Status must remain cheap and truthful instead of reparsing
+	// that PSD1 on every browser poll.
+	if err := os.WriteFile(configPath, []byte("@{ invalid ="), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", resp.Code, resp.Body.String())
+	}
+	var payload statusResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Delivery == nil || payload.Delivery.State != "healthy" {
+		t.Fatalf("delivery = %#v, want cached healthy status", payload.Delivery)
+	}
+	if !payload.ConfigRestartRequired {
+		t.Fatal("config_restart_required = false after disk revision changed")
 	}
 }
 

@@ -85,7 +85,7 @@ param(
 
     [Parameter(ParameterSetName = 'Install')]
     [Parameter(ParameterSetName = 'Validate')]
-    [string]$UIListen = '127.0.0.1:8080',
+    [string]$UIListen = '0.0.0.0:8080',
 
     [Parameter(ParameterSetName = 'Install')]
     [Parameter(ParameterSetName = 'Validate')]
@@ -219,16 +219,14 @@ function Assert-UIListenSafe {
         $portPart = [int]$Matches.port
     }
     else {
-        throw "UIListen must use host:port syntax, for example 127.0.0.1:8080. Received: $ListenAddress"
+        throw "UIListen must use host:port syntax, for example 0.0.0.0:8080. Received: $ListenAddress"
     }
     if ($portPart -lt 1 -or $portPart -gt 65535) {
         throw "UIListen port is outside 1-65535: $portPart"
     }
 
-    $loopbackNames = @('127.0.0.1', 'localhost', '::1')
-    if ($hostPart -notin $loopbackNames -and -not $RemoteAllowed) {
-        throw "Refusing non-loopback UI bind '$ListenAddress'. Use -AllowRemoteUI only when network access controls are in place."
-    }
+    # v5.6 intentionally permits non-loopback listeners. -AllowRemoteUI remains
+    # accepted for command-line compatibility but is no longer required.
 }
 
 function Resolve-GoBinary {

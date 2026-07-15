@@ -4,9 +4,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.5.0`
+- Go runtime: `v5.6.0`
 - Splunk app: `2.9.2` build `41`
-- Current runtime release notes: [RELEASE_NOTES_v5.5.0.md](RELEASE_NOTES_v5.5.0.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.2.md](RELEASE_NOTES_splunk_app_2.9.2.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
@@ -14,14 +14,14 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.5.0 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.6.0 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
 
 ## What The Current Release Includes
 
-- Embedded local admin UI for live endpoint CRUD, discovery, dev/prod marking, settings editing, and HEC connectivity tests.
+- Operator-focused embedded admin UI with live collector/cycle/delivery truth, revision-safe endpoint and config editing, discovery, dev/prod marking, and HEC connectivity tests.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
 - Automatic `endpoints.csv` hot reload between monitoring cycles with last-known-good protection on invalid edits.
 - Dev/test endpoint segmentation with dedicated Prod Devices and Dev Devices dashboards that keep platform and pool-specific views separate.
@@ -36,17 +36,17 @@ If you already have a deployment folder with `config.psd1` and `endpoints.csv`, 
 Windows:
 
 ```powershell
-.\pingmonitor.exe --ui-listen 127.0.0.1:8080
+.\pingmonitor.exe --ui-listen 0.0.0.0:8080
 ```
 
 Linux or macOS:
 
 ```bash
 chmod +x ./pingmonitor
-./pingmonitor --config ./config.psd1 --endpoints ./endpoints.csv --ui-listen 127.0.0.1:8080
+./pingmonitor --config ./config.psd1 --endpoints ./endpoints.csv --ui-listen 0.0.0.0:8080
 ```
 
-Open `http://127.0.0.1:8080` to manage the live deployment.
+Open `http://<collector-address>:8080` to manage the live deployment.
 
 ### Useful Runtime Flags
 
@@ -112,7 +112,10 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 - `endpoints.csv` is checked between cycles and reloaded automatically when the file changes.
 - Invalid endpoint edits do not replace the active set; the runtime keeps the last known good endpoint list until the file is corrected.
 - The embedded UI loads the active deployment files at startup, so an existing deployment can be managed in place without re-entering configuration.
+- The Overview distinguishes UI-only, active-cycle, next-cycle, endpoint-reload, Splunk-delivery, and durable-outbox state instead of inferring runtime health from file contents.
+- Live status polling uses the startup-effective configuration and does not repeatedly invoke PowerShell to parse `config.psd1`.
 - Endpoint edits made in the UI are written back to the live endpoint file that the runtime hot reloads.
+- Config and endpoint saves carry a file revision. A stale browser draft receives `409 Conflict` instead of silently overwriting a newer disk edit.
 - Config edits made in the UI are saved directly to the active config file, but engine-level settings are loaded at process start. Restart the runtime or service after config changes that should affect monitoring behavior.
 - HEC tokens are write-only in the API. A blank token field preserves the stored token; the UI receives only a configured/not-configured flag.
 - When the UI saves config or endpoints over an existing file, it creates a timestamped `.bak` backup first.
@@ -120,15 +123,15 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 The UI supports:
 
 - full endpoint CRUD
-- bulk dev/prod changes
-- discovery with merge or overwrite workflows
+- explicitly selected bulk dev/prod and delete actions, with destructive confirmations
+- cancellable discovery with host-count preflight plus merge or overwrite workflows
 - HEC event and metrics endpoint test actions
 - settings help modals for the runtime configuration surface
 
 If you only want to edit files without running the monitor:
 
 ```powershell
-.\pingmonitor.exe --ui-listen 127.0.0.1:8080 --ui-only
+.\pingmonitor.exe --ui-listen 0.0.0.0:8080 --ui-only
 ```
 
 ## Current Settings Overview
@@ -210,7 +213,7 @@ Run validation first from any PowerShell 7.4+ session. Validation does not chang
 Open PowerShell with **Run as administrator** for installation and lifecycle operations:
 
 ```powershell
-# Install, verify, and start the service. The UI remains loopback-only by default.
+# Install, verify, and start the service. The UI listens on 0.0.0.0:8080 by default.
 .\Install-Service.ps1 -Install `
   -BinaryPath D:\pingmonitor\pingmonitor.exe `
   -ConfigPath D:\pingmonitor\config.psd1 `
@@ -246,19 +249,19 @@ By default the service:
 - has SCM restart actions for failures of the NSSM service process;
 - gives the console application 15 seconds to shut down cleanly;
 - rotates `service_stdout.log` and `service_stderr.log` at 10 MB and at least daily;
-- binds the optional admin UI to `127.0.0.1:8080`.
+- binds the optional admin UI to `0.0.0.0:8080`.
 
-Use a different loopback port or disable the UI when required:
+Use a different address/port or disable the UI when required:
 
 ```powershell
-# Bind the UI to a different loopback port
-.\Install-Service.ps1 -Install -UIListen 127.0.0.1:8090
+# Bind the UI to a different address or port
+.\Install-Service.ps1 -Install -UIListen 0.0.0.0:8090
 
 # Run without the embedded UI
 .\Install-Service.ps1 -Install -DisableUI
 ```
 
-Non-loopback UI addresses are rejected unless `-AllowRemoteUI` is explicitly supplied. That switch does not add authentication, TLS, or firewall rules; it only confirms that the operator has supplied those controls elsewhere.
+Version 5.6 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
 
 Before an upgrade, validate the replacement binary, stop the service, replace the binary, and restart it. If the executable path changes, use `-ForceReinstall` so the persisted NSSM definition is verified again.
 
@@ -289,7 +292,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/ping_monitor
-ExecStart=/opt/ping_monitor/pingmonitor --config /opt/ping_monitor/config.psd1 --endpoints /opt/ping_monitor/endpoints.csv --ui-listen 127.0.0.1:8080
+ExecStart=/opt/ping_monitor/pingmonitor --config /opt/ping_monitor/config.psd1 --endpoints /opt/ping_monitor/endpoints.csv --ui-listen 0.0.0.0:8080
 Restart=always
 RestartSec=10
 
@@ -325,7 +328,7 @@ Example `launchd` plist for the Go runtime on macOS:
 		<string>--endpoints</string>
 		<string>/opt/ping_monitor/endpoints.csv</string>
 		<string>--ui-listen</string>
-		<string>127.0.0.1:8080</string>
+		<string>0.0.0.0:8080</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>/opt/ping_monitor</string>

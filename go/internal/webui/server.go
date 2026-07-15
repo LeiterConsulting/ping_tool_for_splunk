@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
@@ -27,6 +28,8 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/outbox"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 )
 
 //go:embed static/*
@@ -47,19 +50,26 @@ type Options struct {
 	DiscoveryScriptPath string
 	Version             string
 	CollectorID         string
+	Runtime             *runtimeinfo.Tracker
+	EffectiveConfig     *config.Config
 }
 
 type statusResponse struct {
-	Product             string         `json:"product"`
-	Version             string         `json:"version"`
-	CollectorID         string         `json:"collector_id"`
-	ConfigPath          string         `json:"config_path"`
-	ConfigFormat        string         `json:"config_format"`
-	EndpointsPath       string         `json:"endpoints_path"`
-	DiscoveryAvailable  bool           `json:"discovery_available"`
-	DiscoveryScriptPath string         `json:"discovery_script_path,omitempty"`
-	Mode                string         `json:"mode"`
-	Delivery            *outbox.Status `json:"delivery,omitempty"`
+	Product                string               `json:"product"`
+	Version                string               `json:"version"`
+	CollectorID            string               `json:"collector_id"`
+	ConfigPath             string               `json:"config_path"`
+	ConfigFormat           string               `json:"config_format"`
+	EndpointsPath          string               `json:"endpoints_path"`
+	DiscoveryAvailable     bool                 `json:"discovery_available"`
+	DiscoveryScriptPath    string               `json:"discovery_script_path,omitempty"`
+	Mode                   string               `json:"mode"`
+	Delivery               *outbox.Status       `json:"delivery,omitempty"`
+	Runtime                runtimeinfo.Snapshot `json:"runtime"`
+	ConfigRevision         string               `json:"config_revision,omitempty"`
+	EndpointsRevision      string               `json:"endpoints_revision,omitempty"`
+	ConfigRestartRequired  bool                 `json:"config_restart_required"`
+	EndpointsReloadPending bool                 `json:"endpoints_reload_pending"`
 }
 
 type endpointSummary struct {
@@ -74,24 +84,30 @@ type endpointsResponse struct {
 	EndpointsPath string            `json:"endpoints_path"`
 	Summary       endpointSummary   `json:"summary"`
 	Items         []models.Endpoint `json:"items"`
+	Revision      string            `json:"revision"`
+	ReloadPending bool              `json:"reload_pending"`
 }
 
 type endpointsWriteRequest struct {
-	Items []models.Endpoint `json:"items"`
+	Items    []models.Endpoint `json:"items"`
+	Revision string            `json:"revision"`
 }
 
 type configResponse struct {
-	GeneratedAt  string        `json:"generated_at"`
-	ConfigPath   string        `json:"config_path"`
-	ConfigFormat string        `json:"config_format"`
-	Config       config.Config `json:"config"`
-	Secrets      secretStatus  `json:"secrets"`
+	GeneratedAt     string        `json:"generated_at"`
+	ConfigPath      string        `json:"config_path"`
+	ConfigFormat    string        `json:"config_format"`
+	Config          config.Config `json:"config"`
+	Secrets         secretStatus  `json:"secrets"`
+	Revision        string        `json:"revision"`
+	RestartRequired bool          `json:"restart_required"`
 }
 
 type configWriteRequest struct {
 	Config            config.Config `json:"config"`
 	ClearHECToken     bool          `json:"clear_hec_token,omitempty"`
 	ClearMetricsToken bool          `json:"clear_metrics_token,omitempty"`
+	Revision          string        `json:"revision"`
 }
 
 type secretStatus struct {
@@ -157,7 +173,11 @@ type outputTestResponse struct {
 }
 
 type apiServer struct {
-	opts Options
+	opts            Options
+	writeMu         sync.Mutex
+	statusConfigMu  sync.RWMutex
+	statusConfig    config.Config
+	hasStatusConfig bool
 }
 
 func Start(ctx context.Context, opts Options) error {
@@ -226,7 +246,13 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
 	mux.Handle("/", staticHandler(staticRoot))
 
-	return mux, nil
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		mux.ServeHTTP(w, r)
+	}), nil
 }
 
 func newAPIServer(opts Options) *apiServer {
@@ -240,7 +266,12 @@ func newAPIServer(opts Options) *apiServer {
 		opts.RootDir = "."
 	}
 	opts.DiscoveryScriptPath = resolveDiscoveryScriptPath(opts)
-	return &apiServer{opts: opts}
+	server := &apiServer{opts: opts}
+	if opts.EffectiveConfig != nil {
+		server.statusConfig = *opts.EffectiveConfig
+		server.hasStatusConfig = true
+	}
+	return server
 }
 
 func resolveDiscoveryScriptPath(opts Options) string {
@@ -334,8 +365,13 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	configRevision, _ := revision.File(info.Path)
+	endpointsRevision, _ := revision.File(s.opts.EndpointsPath)
+	runtimeSnapshot := s.opts.Runtime.Snapshot()
+	configRestartRequired := runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveConfigRevision != "" && configRevision != runtimeSnapshot.EffectiveConfigRevision
+	endpointsReloadPending := runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveEndpointsRevision != "" && endpointsRevision != runtimeSnapshot.EffectiveEndpointsRevision
 	var delivery *outbox.Status
-	if cfg, _, loadErr := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir); loadErr == nil &&
+	if cfg, ok := s.effectiveStatusConfig(); ok &&
 		(((cfg.OutputMode == "hec" || cfg.OutputMode == "both") && cfg.HEC.Enabled) || cfg.Metrics.Enabled) {
 		spoolPath := cfg.Delivery.SpoolPath
 		if !filepath.IsAbs(spoolPath) {
@@ -349,16 +385,21 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, statusResponse{
-		Product:             "Ping Monitor",
-		Version:             s.opts.Version,
-		CollectorID:         s.opts.CollectorID,
-		ConfigPath:          info.Path,
-		ConfigFormat:        info.Format,
-		EndpointsPath:       filepath.Clean(s.opts.EndpointsPath),
-		DiscoveryAvailable:  discoveryScriptAvailable(s.opts.DiscoveryScriptPath),
-		DiscoveryScriptPath: s.opts.DiscoveryScriptPath,
-		Mode:                "editable",
-		Delivery:            delivery,
+		Product:                "Ping Monitor",
+		Version:                s.opts.Version,
+		CollectorID:            s.opts.CollectorID,
+		ConfigPath:             info.Path,
+		ConfigFormat:           info.Format,
+		EndpointsPath:          filepath.Clean(s.opts.EndpointsPath),
+		DiscoveryAvailable:     discoveryScriptAvailable(s.opts.DiscoveryScriptPath),
+		DiscoveryScriptPath:    s.opts.DiscoveryScriptPath,
+		Mode:                   "editable",
+		Delivery:               delivery,
+		Runtime:                runtimeSnapshot,
+		ConfigRevision:         configRevision,
+		EndpointsRevision:      endpointsRevision,
+		ConfigRestartRequired:  configRestartRequired,
+		EndpointsReloadPending: endpointsReloadPending,
 	})
 }
 
@@ -370,11 +411,15 @@ func (s *apiServer) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		currentRevision, _ := revision.File(s.opts.EndpointsPath)
+		runtimeSnapshot := s.opts.Runtime.Snapshot()
 		writeJSON(w, http.StatusOK, endpointsResponse{
 			GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
 			EndpointsPath: filepath.Clean(s.opts.EndpointsPath),
 			Summary:       summarizeEndpoints(endpoints),
 			Items:         endpoints,
+			Revision:      currentRevision,
+			ReloadPending: runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveEndpointsRevision != "" && currentRevision != runtimeSnapshot.EffectiveEndpointsRevision,
 		})
 	case http.MethodPut:
 		var request endpointsWriteRequest
@@ -382,10 +427,23 @@ func (s *apiServer) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+		currentRevision, err := revision.File(s.opts.EndpointsPath)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if request.Revision == "" || request.Revision != currentRevision {
+			writeRevisionConflict(w, "endpoint file changed after this draft was loaded", currentRevision)
+			return
+		}
 		if err := config.SaveEndpoints(s.opts.EndpointsPath, request.Items); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		newRevision, _ := revision.File(s.opts.EndpointsPath)
+		runtimeSnapshot := s.opts.Runtime.Snapshot()
 		endpoints, err := config.LoadEditableEndpoints(s.opts.EndpointsPath)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -400,6 +458,8 @@ func (s *apiServer) handleEndpoints(w http.ResponseWriter, r *http.Request) {
 			EndpointsPath: filepath.Clean(s.opts.EndpointsPath),
 			Summary:       summarizeEndpoints(endpoints),
 			Items:         endpoints,
+			Revision:      newRevision,
+			ReloadPending: runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveEndpointsRevision != "" && newRevision != runtimeSnapshot.EffectiveEndpointsRevision,
 		})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -414,11 +474,28 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info))
+		currentRevision, _ := revision.File(info.Path)
+		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info, currentRevision, configRestartRequired(s.opts.Runtime, currentRevision)))
 	case http.MethodPut:
 		var request configWriteRequest
 		if err := decodeJSONBody(r, &request); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		s.writeMu.Lock()
+		defer s.writeMu.Unlock()
+		currentInfo, err := config.ResolveConfigSource(s.opts.ConfigPath)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		currentRevision, err := revision.File(currentInfo.Path)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if request.Revision == "" || request.Revision != currentRevision {
+			writeRevisionConflict(w, "config file changed after this form was loaded", currentRevision)
 			return
 		}
 		existing, _, err := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir)
@@ -432,6 +509,7 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		newRevision, _ := revision.File(info.Path)
 		cfg, _, err := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -441,10 +519,26 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"config_path": info.Path,
 			"format":      info.Format,
 		})
-		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info))
+		if s.opts.Runtime.Snapshot().Mode != "monitor" {
+			s.setEffectiveStatusConfig(cfg)
+		}
+		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info, newRevision, configRestartRequired(s.opts.Runtime, newRevision)))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (s *apiServer) effectiveStatusConfig() (config.Config, bool) {
+	s.statusConfigMu.RLock()
+	defer s.statusConfigMu.RUnlock()
+	return s.statusConfig, s.hasStatusConfig
+}
+
+func (s *apiServer) setEffectiveStatusConfig(cfg config.Config) {
+	s.statusConfigMu.Lock()
+	defer s.statusConfigMu.Unlock()
+	s.statusConfig = cfg
+	s.hasStatusConfig = true
 }
 
 func (s *apiServer) handleDiscoveryRun(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +640,7 @@ func (s *apiServer) handleOutputTest(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func redactedConfigResponse(cfg config.Config, info config.SourceInfo) configResponse {
+func redactedConfigResponse(cfg config.Config, info config.SourceInfo, currentRevision string, restartRequired bool) configResponse {
 	secrets := secretStatus{
 		HECTokenConfigured:     strings.TrimSpace(cfg.HEC.Token) != "",
 		MetricsTokenConfigured: strings.TrimSpace(cfg.Metrics.Token) != "",
@@ -556,7 +650,20 @@ func redactedConfigResponse(cfg config.Config, info config.SourceInfo) configRes
 	return configResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339), ConfigPath: info.Path,
 		ConfigFormat: info.Format, Config: cfg, Secrets: secrets,
+		Revision: currentRevision, RestartRequired: restartRequired,
 	}
+}
+
+func configRestartRequired(tracker *runtimeinfo.Tracker, currentRevision string) bool {
+	snapshot := tracker.Snapshot()
+	return snapshot.Mode == "monitor" && snapshot.EffectiveConfigRevision != "" && currentRevision != snapshot.EffectiveConfigRevision
+}
+
+func writeRevisionConflict(w http.ResponseWriter, message string, currentRevision string) {
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error":            message + "; reload from disk before saving",
+		"current_revision": currentRevision,
+	})
 }
 
 func mergeWriteOnlySecrets(candidate *config.Config, existing config.Config, clearHEC bool, clearMetrics bool) {

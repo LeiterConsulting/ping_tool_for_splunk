@@ -2,13 +2,18 @@ const state = {
   status: null,
   endpoints: [],
   savedEndpoints: [],
+  endpointsRevision: '',
+  endpointsDirty: false,
   filter: 'all',
   search: '',
   selectedEndpointIndex: -1,
   selectedEndpointIndices: new Set(),
   savedConfig: null,
+  configRevision: '',
+  configDirty: false,
   config: null,
   configSecrets: {},
+  runtimeRefreshPending: false,
   tables: {
     endpoint: {
       page: 1,
@@ -34,6 +39,7 @@ const state = {
     durationMs: 0,
     selectedIndices: new Set(),
     mergeMode: 'skip_existing',
+    abortController: null,
   },
 };
 
@@ -44,6 +50,17 @@ const elements = {
   sidebarDiscoveryStatus: document.getElementById('sidebar-discovery-status'),
   versionText: document.getElementById('version-text'),
   modePill: document.getElementById('mode-pill'),
+  runtimeBanner: document.getElementById('runtime-banner'),
+  runtimeState: document.getElementById('runtime-state'),
+  runtimeUptime: document.getElementById('runtime-uptime'),
+  runtimeCycle: document.getElementById('runtime-cycle'),
+  runtimeCycleNote: document.getElementById('runtime-cycle-note'),
+  runtimeDelivery: document.getElementById('runtime-delivery'),
+  runtimeDeliveryNote: document.getElementById('runtime-delivery-note'),
+  runtimePending: document.getElementById('runtime-pending'),
+  runtimePendingNote: document.getElementById('runtime-pending-note'),
+  endpointReloadLabel: document.getElementById('endpoint-reload-label'),
+  endpointReloadCopy: document.getElementById('endpoint-reload-copy'),
   configPathChip: document.getElementById('config-path-chip'),
   endpointPath: document.getElementById('endpoint-path'),
   configSourceLabel: document.getElementById('config-source-label'),
@@ -61,6 +78,7 @@ const elements = {
   endpointSelectionStatus: document.getElementById('endpoint-selection-status'),
   endpointRows: document.getElementById('endpoint-rows'),
   endpointForm: document.getElementById('endpoint-form'),
+  endpointValidation: document.getElementById('endpoint-validation'),
   endpointSelectionLabel: document.getElementById('endpoint-selection-label'),
   addEndpointButton: document.getElementById('add-endpoint-button'),
   selectAllEndpointsButton: document.getElementById('select-all-endpoints-button'),
@@ -68,6 +86,7 @@ const elements = {
   markSelectedDevButton: document.getElementById('mark-selected-dev-button'),
   markSelectedProductionButton: document.getElementById('mark-selected-production-button'),
   deleteEndpointButton: document.getElementById('delete-endpoint-button'),
+  deleteCurrentEndpointButton: document.getElementById('delete-current-endpoint-button'),
   resetEndpointsButton: document.getElementById('reset-endpoints-button'),
   saveEndpointsButton: document.getElementById('save-endpoints-button'),
   endpointPageSize: document.getElementById('endpoint-page-size'),
@@ -85,8 +104,6 @@ const elements = {
     additional_notes: document.getElementById('endpoint-notes'),
     dev: document.getElementById('endpoint-dev'),
   },
-  devRefresh: document.getElementById('dev-refresh'),
-  devRows: document.getElementById('dev-rows'),
   searchInput: document.getElementById('search-input'),
   filterButtons: Array.from(document.querySelectorAll('[data-filter]')),
   navLinks: Array.from(document.querySelectorAll('.nav-item[href^="#"]')),
@@ -97,6 +114,8 @@ const elements = {
   discoveryLogs: document.getElementById('discovery-logs'),
   discoveryRows: document.getElementById('discovery-rows'),
   runDiscoveryButton: document.getElementById('run-discovery-button'),
+  cancelDiscoveryButton: document.getElementById('cancel-discovery-button'),
+  discoveryPreflight: document.getElementById('discovery-preflight'),
   selectAllDiscoveryButton: document.getElementById('select-all-discovery-button'),
   deselectAllDiscoveryButton: document.getElementById('deselect-all-discovery-button'),
   markDiscoveryDevButton: document.getElementById('mark-discovery-dev-button'),
@@ -184,7 +203,7 @@ const elements = {
   },
 };
 
-const sectionHashes = ['#overview', '#inventory', '#devices', '#discovery', '#settings'];
+const sectionHashes = ['#overview', '#inventory', '#discovery', '#settings'];
 
 const checkboxFormat = 'Checked or unchecked.';
 const positiveIntegerFormat = 'Whole number, 1 or higher.';
@@ -540,6 +559,36 @@ function pluralize(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function formatDuration(seconds) {
+  const value = Math.max(0, Number(seconds) || 0);
+  if (value < 60) {
+    return `${Math.floor(value)}s`;
+  }
+  if (value < 3600) {
+    return `${Math.floor(value / 60)}m ${Math.floor(value % 60)}s`;
+  }
+  const hours = Math.floor(value / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+function formatTimestamp(value, fallback = 'Not available') {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return fallback;
+  }
+  return parsed.toLocaleString();
+}
+
+function titleCase(value) {
+  return String(value || 'unknown')
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
 function emptyEndpoint() {
   return {
     ip: '',
@@ -573,6 +622,43 @@ function normalizeEndpoints(endpoints) {
   return endpoints.map((endpoint) => normalizeEndpoint(endpoint));
 }
 
+function isValidIPAddress(value) {
+  const text = String(value || '').trim();
+  const octets = text.split('.');
+  if (octets.length === 4 && octets.every((part) => /^\d{1,3}$/.test(part) && Number(part) >= 0 && Number(part) <= 255)) {
+    return true;
+  }
+  if (text.includes(':')) {
+    try {
+      return new URL(`http://[${text}]/`).hostname.length > 0;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function validateEndpointDraft() {
+  const seen = new Map();
+  for (let index = 0; index < state.endpoints.length; index += 1) {
+    const endpoint = state.endpoints[index];
+    const ip = String(endpoint.ip || '').trim();
+    const hostname = String(endpoint.hostname || '').trim();
+    if (!isValidIPAddress(ip)) {
+      return { index, field: 'ip', message: `Endpoint ${index + 1} needs a valid IP address.` };
+    }
+    const key = ip.toLowerCase();
+    if (seen.has(key)) {
+      return { index, field: 'ip', message: `Endpoint ${index + 1} duplicates the IP address from endpoint ${seen.get(key) + 1}.` };
+    }
+    seen.set(key, index);
+    if (!hostname || hostname.length > 253 || /[\r\n\t]/.test(hostname)) {
+      return { index, field: 'hostname', message: `Endpoint ${index + 1} needs a valid hostname.` };
+    }
+  }
+  return null;
+}
+
 function readNumberValue(element, fallback = 0) {
   const numeric = Number(element.value);
   return Number.isFinite(numeric) ? numeric : fallback;
@@ -600,14 +686,19 @@ function setMessage(element, tone, message) {
 }
 
 function endpointsAreDirty() {
-  return JSON.stringify(normalizeEndpoints(state.endpoints)) !== JSON.stringify(normalizeEndpoints(state.savedEndpoints));
+  return state.endpointsDirty;
 }
 
 function configIsDirty() {
-  if (!state.savedConfig) {
-    return false;
-  }
-  return JSON.stringify(readConfigForm()) !== JSON.stringify(state.savedConfig);
+  return state.configDirty;
+}
+
+function hasUnsavedChanges() {
+  return endpointsAreDirty() || configIsDirty();
+}
+
+function confirmDiscardChanges(message = 'Discard unsaved changes and reload from disk?') {
+  return !hasUnsavedChanges() || window.confirm(message);
 }
 
 function helpTopic(title, summary, format = '', notes = [], values = []) {
@@ -821,6 +912,51 @@ function initializeSettingsHelp() {
   injectSettingsFieldHelpButtons();
 }
 
+function initializeAdvancedSettings() {
+  const groups = [
+    {
+      anchor: 'cfg-hec-enabled',
+      fields: ['cfg-hec-ssl-protocol', 'cfg-hec-batch-size', 'cfg-hec-max-buffer-events', 'cfg-hec-max-buffer-bytes', 'cfg-hec-retry-count', 'cfg-hec-retry-delay-ms', 'cfg-hec-ack-timeout', 'cfg-hec-ack-poll', 'cfg-hec-channel', 'cfg-hec-verify-ssl', 'cfg-hec-retry-enabled', 'cfg-hec-use-ack', 'cfg-hec-max-attempts', 'cfg-hec-base-delay-ms', 'cfg-hec-jitter-pct', 'cfg-hec-backoff'],
+    },
+    {
+      anchor: 'cfg-metrics-enabled',
+      fields: ['cfg-metrics-ssl-protocol', 'cfg-metrics-sourcetype', 'cfg-metrics-event-name', 'cfg-metrics-batch-size', 'cfg-metrics-max-buffer-events', 'cfg-metrics-max-buffer-bytes', 'cfg-metrics-ack-timeout', 'cfg-metrics-ack-poll', 'cfg-metrics-channel', 'cfg-metrics-verify-ssl', 'cfg-metrics-compat-mode', 'cfg-metrics-use-metrics-index', 'cfg-metrics-use-ack'],
+    },
+    {
+      anchor: 'cfg-delivery-spool-path',
+      fields: ['cfg-delivery-spool-path', 'cfg-delivery-max-bytes', 'cfg-delivery-max-envelopes', 'cfg-delivery-drain-max'],
+    },
+  ];
+
+  groups.forEach((group) => {
+    const anchor = document.getElementById(group.anchor);
+    const card = anchor?.closest('.settings-card');
+    if (!card || card.dataset.advancedReady === 'true') {
+      return;
+    }
+    const targets = group.fields
+      .map((id) => document.getElementById(id)?.closest('.field-group, .checkbox-row'))
+      .filter(Boolean);
+    if (targets.length === 0) {
+      return;
+    }
+    targets.forEach((target) => target.classList.add('advanced-setting-collapsed'));
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary-button advanced-toggle';
+    button.textContent = 'Show Advanced Settings';
+    button.setAttribute('aria-expanded', 'false');
+    button.addEventListener('click', () => {
+      const expanded = button.getAttribute('aria-expanded') === 'true';
+      targets.forEach((target) => target.classList.toggle('advanced-setting-collapsed', expanded));
+      button.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      button.textContent = expanded ? 'Show Advanced Settings' : 'Hide Advanced Settings';
+    });
+    card.appendChild(button);
+    card.dataset.advancedReady = 'true';
+  });
+}
+
 function sanitizeIndexSet(indexSet, maxLength) {
   const next = new Set();
   indexSet.forEach((value) => {
@@ -997,7 +1133,9 @@ function updateSortButtons() {
 
 function renderEndpointFilterButtons() {
   elements.filterButtons.forEach((button) => {
-    button.classList.toggle('active', (button.dataset.filter || 'all') === state.filter);
+    const isActive = (button.dataset.filter || 'all') === state.filter;
+    button.classList.toggle('active', isActive);
+    button.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
 }
 
@@ -1013,13 +1151,7 @@ function syncSelectedEndpointToVisibleRows(rows) {
 }
 
 function getEndpointActionIndices() {
-  if (state.selectedEndpointIndices.size > 0) {
-    return Array.from(state.selectedEndpointIndices).sort((left, right) => left - right);
-  }
-  if (state.selectedEndpointIndex >= 0 && state.selectedEndpointIndex < state.endpoints.length) {
-    return [state.selectedEndpointIndex];
-  }
-  return [];
+  return Array.from(state.selectedEndpointIndices).sort((left, right) => left - right);
 }
 
 function getDiscoveryActionIndices() {
@@ -1074,7 +1206,10 @@ function fetchJson(path, options = {}) {
   }).then(async (response) => {
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload.error || `Request failed for ${path}`);
+      const error = new Error(payload.error || `Request failed for ${path}`);
+      error.status = response.status;
+      error.payload = payload;
+      throw error;
     }
     return payload;
   });
@@ -1106,7 +1241,13 @@ function setActiveNav(hash, preferredLink = null) {
     || elements.navLinks.find((link) => link.getAttribute('href') === hash)
     || fallbackLink;
   elements.navLinks.forEach((link) => {
-    link.classList.toggle('active', link === resolvedLink);
+    const isActive = link === resolvedLink;
+    link.classList.toggle('active', isActive);
+    if (isActive) {
+      link.setAttribute('aria-current', 'page');
+    } else {
+      link.removeAttribute('aria-current');
+    }
   });
 }
 
@@ -1174,14 +1315,16 @@ function readEndpointForm() {
   });
 }
 
-function updateCurrentEndpointFromForm() {
+function updateCurrentEndpointFromForm(renderTable = true) {
   if (state.selectedEndpointIndex < 0 || state.selectedEndpointIndex >= state.endpoints.length) {
     return;
   }
   state.endpoints[state.selectedEndpointIndex] = readEndpointForm();
+  state.endpointsDirty = true;
   renderSummary();
-  renderEndpointTable();
-  renderDevTable();
+  if (renderTable) {
+    renderEndpointTable();
+  }
   renderEndpointButtons();
 }
 
@@ -1190,20 +1333,83 @@ function renderStatus() {
     return;
   }
   const formatLabel = String(state.status.config_format || '').toUpperCase();
+  const runtime = state.status.runtime || {};
+  const delivery = state.status.delivery || {};
+  const deliveryState = delivery.state || 'not_started';
+  const runtimeState = runtime.state || 'unknown';
+  const restartRequired = Boolean(state.status.config_restart_required);
+  const reloadPending = Boolean(state.status.endpoints_reload_pending);
+
   elements.versionText.textContent = `${state.status.version} deployment UI`;
-  elements.modePill.textContent = state.status.mode === 'editable' ? 'Editable' : state.status.mode;
+  elements.modePill.textContent = restartRequired ? 'Restart required' : titleCase(runtimeState);
+  elements.modePill.dataset.tone = restartRequired || runtimeState === 'failed' ? 'warning' : 'healthy';
   elements.configPathChip.textContent = state.status.config_path;
   elements.endpointPath.textContent = state.status.endpoints_path;
   elements.sidebarConfigSource.textContent = `Config: ${formatLabel}`;
-  elements.sidebarDiscoveryStatus.textContent = state.status.discovery_available ? 'Discovery ready' : 'Discovery unavailable';
-  elements.configSourceLabel.textContent = `${formatLabel} settings file`;
-  elements.configSourceCopy.textContent = state.status.config_path;
+  elements.sidebarDiscoveryStatus.textContent = restartRequired
+    ? 'Config restart required'
+    : (state.status.discovery_available ? 'Discovery ready' : 'Discovery unavailable');
+
+  elements.runtimeState.textContent = titleCase(runtimeState);
+  elements.runtimeUptime.textContent = runtime.mode === 'ui_only'
+    ? 'Configuration-only mode'
+    : `Uptime ${formatDuration(runtime.uptime_seconds)}`;
+
+  if (runtime.cycle_running) {
+    elements.runtimeCycle.textContent = `Cycle ${runtime.current_cycle}`;
+    elements.runtimeCycleNote.textContent = `In progress since ${formatTimestamp(runtime.current_cycle_started_at)}.`;
+  } else if (runtime.last_cycle_completed_at) {
+    elements.runtimeCycle.textContent = `Cycle ${runtime.current_cycle}`;
+    elements.runtimeCycleNote.textContent = `${runtime.last_production_success || 0} healthy, ${runtime.last_production_partial || 0} partial, ${runtime.last_production_failed || 0} failed · ${runtime.last_cycle_duration_ms || 0} ms.`;
+  } else {
+    elements.runtimeCycle.textContent = runtime.mode === 'ui_only' ? 'Not running' : 'Starting';
+    elements.runtimeCycleNote.textContent = runtime.mode === 'ui_only' ? 'The monitoring engine is disabled in UI-only mode.' : 'Waiting for the first completed cycle.';
+  }
+
+  elements.runtimeDelivery.textContent = titleCase(deliveryState);
+  elements.runtimeDeliveryNote.textContent = delivery.last_success_at
+    ? `Last success ${formatTimestamp(delivery.last_success_at)}.`
+    : (delivery.last_error || 'No completed delivery recorded yet.');
+  elements.runtimePending.textContent = String(delivery.pending_envelopes || 0);
+  elements.runtimePendingNote.textContent = `${delivery.pending_bytes || 0} bytes waiting in the durable outbox.`;
+
+  elements.configSourceLabel.textContent = restartRequired ? 'Restart Required' : 'Active Configuration';
+  elements.configSourceCopy.textContent = restartRequired
+    ? `${formatLabel} changes are saved on disk but are not active in this collector.`
+    : `${formatLabel} on disk matches the running collector.`;
+  if (runtime.last_endpoint_reload_error) {
+    elements.endpointReloadLabel.textContent = 'Reload Failed';
+    elements.endpointReloadCopy.textContent = runtime.last_endpoint_reload_error;
+  } else if (reloadPending) {
+    elements.endpointReloadLabel.textContent = 'Pending Reload';
+    elements.endpointReloadCopy.textContent = 'The endpoint file changed and will be applied between monitoring cycles.';
+  } else {
+    elements.endpointReloadLabel.textContent = 'In Sync';
+    elements.endpointReloadCopy.textContent = runtime.last_endpoint_reload_at
+      ? `Last applied ${formatTimestamp(runtime.last_endpoint_reload_at)}.`
+      : `${runtime.active_endpoints || state.endpoints.length || 0} endpoints are active.`;
+  }
+
   elements.discoveryStatusLabel.textContent = state.status.discovery_available ? 'Discovery Ready' : 'Discovery Unavailable';
   elements.discoveryStatusCopy.textContent = state.status.discovery_available
     ? (state.status.discovery_script_path || 'Using companion discovery workflow.')
     : 'Discovery needs the companion workflow available in this deployment.';
   elements.discoveryAvailability.textContent = state.status.discovery_available ? 'Discovery Available' : 'Discovery Not Available';
   elements.settingsSourceChip.textContent = `${formatLabel} · ${state.status.config_path}`;
+
+  if (runtime.fatal_error) {
+    setMessage(elements.runtimeBanner, 'error', `Collector failed: ${runtime.fatal_error}`);
+  } else if (runtime.last_endpoint_reload_error) {
+    setMessage(elements.runtimeBanner, 'error', `Endpoint reload failed; the collector is using its last known-good set. ${runtime.last_endpoint_reload_error}`);
+  } else if (restartRequired) {
+    setMessage(elements.runtimeBanner, 'warning', 'Configuration is saved on disk but is not active. Restart the collector to apply engine settings.');
+  } else if (reloadPending) {
+    setMessage(elements.runtimeBanner, 'warning', 'Endpoint changes are saved and waiting for the next between-cycle hot reload.');
+  } else if (deliveryState === 'impaired' || deliveryState === 'blocked') {
+    setMessage(elements.runtimeBanner, 'error', `Splunk delivery is ${deliveryState}. ${delivery.last_error || 'Review the output configuration and durable outbox.'}`);
+  } else {
+    setMessage(elements.runtimeBanner, '', '');
+  }
 }
 
 function renderSummary() {
@@ -1243,7 +1449,7 @@ function renderEndpointTable() {
     ].filter(Boolean).join(' ');
     const label = endpoint.ip || endpoint.hostname || `endpoint ${index + 1}`;
     return `
-      <tr class="${rowClasses}" data-index="${index}">
+      <tr class="${rowClasses}" data-index="${index}" tabindex="0" aria-selected="${index === state.selectedEndpointIndex ? 'true' : 'false'}">
         <td class="table-select-col"><input class="table-row-checkbox" type="checkbox" data-index="${index}" ${state.selectedEndpointIndices.has(index) ? 'checked' : ''} aria-label="Select ${escapeHtml(label)}"></td>
         <td>${escapeHtml(endpoint.ip)}</td>
         <td>${escapeHtml(endpoint.hostname)}</td>
@@ -1259,6 +1465,7 @@ function renderEndpointTable() {
 
 function renderEndpointButtons() {
   const dirty = endpointsAreDirty();
+  const validation = validateEndpointDraft();
   const hasEditorSelection = state.selectedEndpointIndex >= 0;
   const actionIndices = getEndpointActionIndices();
   const selectedCount = state.selectedEndpointIndices.size;
@@ -1266,13 +1473,23 @@ function renderEndpointButtons() {
 
   elements.endpointDirtyPill.textContent = dirty ? 'Unsaved changes' : 'In sync';
   elements.endpointDirtyPill.classList.toggle('is-dirty', dirty);
-  elements.saveEndpointsButton.disabled = !dirty;
+  elements.saveEndpointsButton.disabled = !dirty || Boolean(validation);
   elements.resetEndpointsButton.disabled = !dirty;
   elements.selectAllEndpointsButton.disabled = filteredCount === 0;
   elements.deselectAllEndpointsButton.disabled = selectedCount === 0;
   elements.markSelectedDevButton.disabled = actionIndices.length === 0;
   elements.markSelectedProductionButton.disabled = actionIndices.length === 0;
   elements.deleteEndpointButton.disabled = actionIndices.length === 0;
+  elements.deleteCurrentEndpointButton.disabled = !hasEditorSelection;
+  Object.values(elements.endpointFields).forEach((field) => field.removeAttribute('aria-invalid'));
+  if (validation) {
+    setMessage(elements.endpointValidation, 'error', validation.message);
+    if (validation.index === state.selectedEndpointIndex && elements.endpointFields[validation.field]) {
+      elements.endpointFields[validation.field].setAttribute('aria-invalid', 'true');
+    }
+  } else {
+    setMessage(elements.endpointValidation, '', '');
+  }
 
   if (!hasEditorSelection) {
     elements.endpointSelectionLabel.textContent = state.endpoints.length === 0
@@ -1295,23 +1512,6 @@ function renderEndpointEditor() {
   const selected = state.selectedEndpointIndex >= 0 ? state.endpoints[state.selectedEndpointIndex] : null;
   loadEndpointForm(selected);
   renderEndpointButtons();
-}
-
-function renderDevTable() {
-  const devEndpoints = state.endpoints.filter((endpoint) => endpoint.dev);
-  if (devEndpoints.length === 0) {
-    elements.devRows.innerHTML = '<tr><td colspan="4" class="empty-cell">No dev endpoints are currently defined in the working draft.</td></tr>';
-  } else {
-    elements.devRows.innerHTML = devEndpoints.map((endpoint) => `
-      <tr>
-        <td>${escapeHtml(endpoint.hostname)}</td>
-        <td>${escapeHtml(endpoint.group || 'default')}</td>
-        <td>${escapeHtml(endpoint.description || '-')}</td>
-        <td>${escapeHtml(endpoint.vendor || '-')}</td>
-      </tr>
-    `).join('');
-  }
-  elements.devRefresh.textContent = `${devEndpoints.length} dev endpoint${devEndpoints.length === 1 ? '' : 's'} in draft`;
 }
 
 function buildDiscoverySummaryText() {
@@ -1352,12 +1552,14 @@ function renderDiscovery() {
   elements.discoveryNextPageButton.disabled = view.page >= view.totalPages || state.discovery.running;
   elements.runDiscoveryButton.disabled = !state.discovery.available || state.discovery.running;
   elements.runDiscoveryButton.textContent = state.discovery.running ? 'Running Discovery...' : 'Run Discovery';
+  elements.cancelDiscoveryButton.disabled = !state.discovery.running;
   elements.selectAllDiscoveryButton.disabled = !hasResults || state.discovery.running;
   elements.deselectAllDiscoveryButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.markDiscoveryDevButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.markDiscoveryProductionButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.addDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.discoveryMergeMode.disabled = !hasResults || state.discovery.running;
+  renderDiscoveryPreflight();
 
   if (view.totalItems === 0) {
     const emptyMessage = state.discovery.running
@@ -1585,9 +1787,13 @@ async function reloadAllData(showSuccess = false) {
     state.status = status;
     state.endpoints = deepClone(endpointsPayload.items || []);
     state.savedEndpoints = deepClone(endpointsPayload.items || []);
+    state.endpointsRevision = endpointsPayload.revision || '';
+    state.endpointsDirty = false;
     state.selectedEndpointIndices.clear();
     loadConfigForm(configPayload.config || {}, configPayload.secrets || {});
     state.savedConfig = readConfigForm();
+    state.configRevision = configPayload.revision || '';
+    state.configDirty = false;
     state.discovery.available = Boolean(status.discovery_available);
     if (!state.discovery.running && state.discovery.items.length === 0 && !state.discovery.summary) {
       state.discovery.runState = 'Idle';
@@ -1620,7 +1826,6 @@ function renderAll() {
   renderSummary();
   renderEndpointTable();
   renderEndpointEditor();
-  renderDevTable();
   renderDiscovery();
   renderConfigButtons();
 }
@@ -1630,19 +1835,29 @@ async function saveEndpoints() {
     state.endpoints[state.selectedEndpointIndex] = readEndpointForm();
   }
   try {
-    const payload = await putJson('/api/endpoints', { items: normalizeEndpoints(state.endpoints) });
+    const payload = await putJson('/api/endpoints', {
+      items: normalizeEndpoints(state.endpoints),
+      revision: state.endpointsRevision,
+    });
     state.endpoints = deepClone(payload.items || []);
     state.savedEndpoints = deepClone(payload.items || []);
+    state.endpointsRevision = payload.revision || state.endpointsRevision;
+    state.endpointsDirty = false;
     ensureSelectedEndpoint();
     renderAll();
-    setMessage(elements.endpointBanner, 'success', `Saved ${state.endpoints.length} endpoints to ${payload.endpoints_path}.`);
+    setMessage(elements.endpointBanner, payload.reload_pending ? 'warning' : 'success', payload.reload_pending
+      ? `Saved ${state.endpoints.length} endpoints. The running collector will apply them between cycles.`
+      : `Saved ${state.endpoints.length} endpoints to ${payload.endpoints_path}.`);
+    refreshRuntimeStatus();
   } catch (error) {
-    setMessage(elements.endpointBanner, 'error', error instanceof Error ? error.message : 'Unable to save endpoints.');
+    const prefix = error?.status === 409 ? 'Save blocked to protect a newer file. ' : '';
+    setMessage(elements.endpointBanner, 'error', `${prefix}${error instanceof Error ? error.message : 'Unable to save endpoints.'}`);
   }
 }
 
 function resetEndpointsDraft() {
   state.endpoints = deepClone(state.savedEndpoints);
+  state.endpointsDirty = false;
   state.selectedEndpointIndices.clear();
   ensureSelectedEndpoint();
   renderAll();
@@ -1651,6 +1866,7 @@ function resetEndpointsDraft() {
 
 function addEndpoint() {
   state.endpoints.push(emptyEndpoint());
+  state.endpointsDirty = true;
   state.selectedEndpointIndex = state.endpoints.length - 1;
   state.selectedEndpointIndices.clear();
   state.tables.endpoint.page = Math.max(1, Math.ceil(state.endpoints.length / state.tables.endpoint.pageSize));
@@ -1663,12 +1879,63 @@ function deleteSelectedEndpoint() {
   if (indexes.length === 0) {
     return;
   }
+  if (!window.confirm(`Remove ${pluralize(indexes.length, 'selected endpoint')} from the working draft?`)) {
+    return;
+  }
   const removals = new Set(indexes);
   state.endpoints = state.endpoints.filter((_, index) => !removals.has(index));
+  state.endpointsDirty = true;
   state.selectedEndpointIndices.clear();
   ensureSelectedEndpoint();
   renderAll();
   setMessage(elements.endpointBanner, 'warning', `Removed ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} from the working draft. Save endpoints to persist the deletion.`);
+}
+
+function discoveryHostEstimate() {
+  const mask = Math.min(30, Math.max(16, readNumberValue(elements.discoveryInputs.subnetMask, 24)));
+  return Math.max(1, (2 ** (32 - mask)) - 2);
+}
+
+function renderDiscoveryPreflight() {
+  const mask = Math.min(30, Math.max(16, readNumberValue(elements.discoveryInputs.subnetMask, 24)));
+  const hosts = discoveryHostEstimate();
+  const target = elements.discoveryInputs.targetNetwork.value.trim() || 'the detected local subnet';
+  elements.discoveryPreflight.textContent = `A /${mask} scan can check up to ${hosts.toLocaleString()} host addresses in ${target}. Review the target before starting.`;
+  elements.discoveryPreflight.className = `message-banner discovery-preflight ${hosts > 4094 ? 'warning' : ''}`.trim();
+}
+
+async function refreshRuntimeStatus() {
+  if (state.runtimeRefreshPending) {
+    return;
+  }
+  state.runtimeRefreshPending = true;
+  try {
+    state.status = await fetchJson('/api/status');
+    renderStatus();
+  } catch (error) {
+    setMessage(elements.runtimeBanner, 'error', error instanceof Error ? error.message : 'Unable to refresh collector status.');
+  } finally {
+    state.runtimeRefreshPending = false;
+  }
+}
+
+function deleteCurrentEndpoint() {
+  const index = state.selectedEndpointIndex;
+  if (index < 0 || index >= state.endpoints.length) {
+    return;
+  }
+  const endpoint = state.endpoints[index];
+  const label = endpoint.hostname || endpoint.ip || `endpoint ${index + 1}`;
+  if (!window.confirm(`Remove ${label} from the working draft?`)) {
+    return;
+  }
+  state.endpoints.splice(index, 1);
+  state.endpointsDirty = true;
+  state.selectedEndpointIndices.delete(index);
+  state.selectedEndpointIndices = new Set(Array.from(state.selectedEndpointIndices).map((selected) => selected > index ? selected - 1 : selected));
+  state.selectedEndpointIndex = Math.min(index, state.endpoints.length - 1);
+  renderAll();
+  setMessage(elements.endpointBanner, 'warning', `Removed ${label} from the working draft. Save endpoints to persist the deletion.`);
 }
 
 function selectAllVisibleEndpoints() {
@@ -1693,6 +1960,7 @@ function setEndpointModeForSelection(isDev) {
       state.endpoints[index].dev = isDev;
     }
   });
+  state.endpointsDirty = true;
   if (indexes.includes(state.selectedEndpointIndex)) {
     loadEndpointForm(state.endpoints[state.selectedEndpointIndex]);
   }
@@ -1702,14 +1970,20 @@ function setEndpointModeForSelection(isDev) {
 
 async function saveConfig() {
   try {
-    const payload = await putJson('/api/config', { config: readConfigForm() });
+    const payload = await putJson('/api/config', { config: readConfigForm(), revision: state.configRevision });
     loadConfigForm(payload.config || {}, payload.secrets || {});
     state.savedConfig = readConfigForm();
+    state.configRevision = payload.revision || state.configRevision;
+    state.configDirty = false;
     renderStatus();
     renderConfigButtons();
-    setMessage(elements.settingsBanner, 'success', `Saved ${payload.config_format.toUpperCase()} config to ${payload.config_path}.`);
+    setMessage(elements.settingsBanner, payload.restart_required ? 'warning' : 'success', payload.restart_required
+      ? `Saved ${payload.config_format.toUpperCase()} config. Restart the collector to apply these engine settings.`
+      : `Saved ${payload.config_format.toUpperCase()} config to ${payload.config_path}.`);
+    refreshRuntimeStatus();
   } catch (error) {
-    setMessage(elements.settingsBanner, 'error', error instanceof Error ? error.message : 'Unable to save config.');
+    const prefix = error?.status === 409 ? 'Save blocked to protect a newer file. ' : '';
+    setMessage(elements.settingsBanner, 'error', `${prefix}${error instanceof Error ? error.message : 'Unable to save config.'}`);
   }
 }
 
@@ -1740,6 +2014,8 @@ async function reloadConfig() {
     const payload = await fetchJson('/api/config');
     loadConfigForm(payload.config || {}, payload.secrets || {});
     state.savedConfig = readConfigForm();
+    state.configRevision = payload.revision || '';
+    state.configDirty = false;
     renderConfigButtons();
     setMessage(elements.settingsBanner, 'success', `Reloaded ${payload.config_format.toUpperCase()} config from disk.`);
   } catch (error) {
@@ -1752,6 +2028,7 @@ function resetConfigChanges() {
     return;
   }
   loadConfigForm(state.savedConfig, state.configSecrets);
+  state.configDirty = false;
   renderConfigButtons();
   setMessage(elements.settingsBanner, 'success', 'Reverted settings form to the last saved file state.');
 }
@@ -1834,6 +2111,9 @@ function addSelectedDiscoveryToEndpoints() {
   });
 
   state.discovery.selectedIndices.clear();
+  if (addedCount > 0 || updatedCount > 0) {
+    state.endpointsDirty = true;
+  }
   ensureSelectedEndpoint();
   renderAll();
   setMessage(
@@ -1919,6 +2199,12 @@ async function runDiscovery() {
     setMessage(elements.discoveryBanner, 'warning', 'Discovery is unavailable in this deployment because the companion workflow was not found.');
     return;
   }
+  const estimatedHosts = discoveryHostEstimate();
+  if (estimatedHosts > 4094 && !window.confirm(`This discovery can probe up to ${estimatedHosts.toLocaleString()} addresses. Start the scan?`)) {
+    return;
+  }
+  const abortController = new AbortController();
+  state.discovery.abortController = abortController;
   state.discovery.running = true;
   state.discovery.runState = 'Starting';
   state.discovery.progressSummary = 'Starting discovery run.';
@@ -1935,6 +2221,7 @@ async function runDiscovery() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       cache: 'no-store',
+      signal: abortController.signal,
       body: JSON.stringify({
         target_network: elements.discoveryInputs.targetNetwork.value.trim(),
         subnet_mask: readNumberValue(elements.discoveryInputs.subnetMask, 24),
@@ -1949,12 +2236,27 @@ async function runDiscovery() {
     await consumeDiscoveryStream(response);
   } catch (error) {
     state.discovery.running = false;
+    if (error?.name === 'AbortError') {
+      state.discovery.runState = 'Canceled';
+      state.discovery.progressSummary = 'Discovery was canceled by the operator.';
+      renderDiscovery();
+      setMessage(elements.discoveryBanner, 'warning', 'Discovery canceled. No endpoint file changes were made.');
+      return;
+    }
     if (state.discovery.runState !== 'Error') {
       state.discovery.runState = 'Error';
     }
     renderDiscovery();
     setMessage(elements.discoveryBanner, 'error', error instanceof Error ? error.message : 'Unable to run discovery.');
+  } finally {
+    if (state.discovery.abortController === abortController) {
+      state.discovery.abortController = null;
+    }
   }
+}
+
+function cancelDiscovery() {
+  state.discovery.abortController?.abort();
 }
 
 elements.searchInput.addEventListener('input', (event) => {
@@ -1965,7 +2267,9 @@ elements.searchInput.addEventListener('input', (event) => {
 });
 
 elements.refreshButton.addEventListener('click', () => {
-  reloadAllData(true);
+  if (confirmDiscardChanges()) {
+    reloadAllData(true);
+  }
 });
 
 elements.navLinks.forEach((link) => {
@@ -2012,9 +2316,22 @@ elements.endpointRows.addEventListener('click', (event) => {
   renderEndpointEditor();
   renderEndpointTable();
 });
+elements.endpointRows.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+  const row = event.target.closest('[data-index]');
+  if (!row || event.target.closest('.table-row-checkbox')) {
+    return;
+  }
+  event.preventDefault();
+  state.selectedEndpointIndex = Number(row.dataset.index);
+  renderEndpointEditor();
+  renderEndpointTable();
+});
 
-elements.endpointForm.addEventListener('input', updateCurrentEndpointFromForm);
-elements.endpointForm.addEventListener('change', updateCurrentEndpointFromForm);
+elements.endpointForm.addEventListener('input', () => updateCurrentEndpointFromForm(false));
+elements.endpointForm.addEventListener('change', () => updateCurrentEndpointFromForm(true));
 
 elements.addEndpointButton.addEventListener('click', addEndpoint);
 elements.selectAllEndpointsButton.addEventListener('click', selectAllVisibleEndpoints);
@@ -2022,6 +2339,7 @@ elements.deselectAllEndpointsButton.addEventListener('click', deselectAllEndpoin
 elements.markSelectedDevButton.addEventListener('click', () => setEndpointModeForSelection(true));
 elements.markSelectedProductionButton.addEventListener('click', () => setEndpointModeForSelection(false));
 elements.deleteEndpointButton.addEventListener('click', deleteSelectedEndpoint);
+elements.deleteCurrentEndpointButton.addEventListener('click', deleteCurrentEndpoint);
 elements.endpointPageSize.addEventListener('change', (event) => {
   setTablePageSize('endpoint', event.target.value);
   renderEndpointTable();
@@ -2038,6 +2356,11 @@ elements.resetEndpointsButton.addEventListener('click', resetEndpointsDraft);
 elements.saveEndpointsButton.addEventListener('click', saveEndpoints);
 
 elements.runDiscoveryButton.addEventListener('click', runDiscovery);
+elements.cancelDiscoveryButton.addEventListener('click', cancelDiscovery);
+Object.values(elements.discoveryInputs).forEach((input) => {
+  input.addEventListener('input', renderDiscoveryPreflight);
+  input.addEventListener('change', renderDiscoveryPreflight);
+});
 elements.selectAllDiscoveryButton.addEventListener('click', selectAllVisibleDiscovery);
 elements.deselectAllDiscoveryButton.addEventListener('click', deselectAllDiscovery);
 elements.markDiscoveryDevButton.addEventListener('click', () => setDiscoveryModeForSelection(true));
@@ -2082,12 +2405,23 @@ elements.tableSortButtons.forEach((button) => {
 });
 
 initializeSettingsHelp();
+initializeAdvancedSettings();
 
-elements.settingsForm.addEventListener('input', renderConfigButtons);
-elements.settingsForm.addEventListener('change', renderConfigButtons);
+elements.settingsForm.addEventListener('input', () => {
+  state.configDirty = true;
+  renderConfigButtons();
+});
+elements.settingsForm.addEventListener('change', () => {
+  state.configDirty = true;
+  renderConfigButtons();
+});
 elements.testHECButton.addEventListener('click', () => testOutput('hec'));
 elements.testMetricsButton.addEventListener('click', () => testOutput('metrics'));
-elements.reloadConfigButton.addEventListener('click', reloadConfig);
+elements.reloadConfigButton.addEventListener('click', () => {
+  if (!configIsDirty() || window.confirm('Discard unsaved configuration changes and reload from disk?')) {
+    reloadConfig();
+  }
+});
 elements.resetConfigButton.addEventListener('click', resetConfigChanges);
 elements.saveConfigButton.addEventListener('click', saveConfig);
 
@@ -2101,5 +2435,13 @@ window.addEventListener('resize', updateActiveNavFromScroll);
 window.addEventListener('hashchange', () => {
   scrollSectionIntoView(location.hash || '#overview', 'auto');
 });
+window.addEventListener('beforeunload', (event) => {
+  if (!hasUnsavedChanges()) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = '';
+});
 
 reloadAllData();
+window.setInterval(refreshRuntimeStatus, 5000);
