@@ -2,6 +2,14 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
+## Version 2.9.2
+
+### What's New in v2.9.2
+
+- **Operational report repair**: Current Health, Daily Availability, Weekly Trend, review reports, health lookup generation, and packaged alerts now use the same Setup-driven metrics source already proven by Metrics Summary.
+- **No subsearch truncation**: Operational reports aggregate metrics at the indexers rather than materializing event history through a dynamic 50,000-row subsearch.
+- **Historical event access retained**: `ping_events` uses the default streaming event source, while `ping_events(index, sourcetype)` and related parameterized macros support explicit alternate historical locations.
+
 ## Version 2.9.0
 
 ### What's New in v2.9.0
@@ -41,7 +49,7 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.9.0_build39_20260715.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.9.2_build41_20260715.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
