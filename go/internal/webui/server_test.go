@@ -126,6 +126,16 @@ func TestConfigAPI_PutRoundTrip(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (%s)", resp.Code, http.StatusOK, resp.Body.String())
 	}
+	if strings.Contains(resp.Body.String(), "secret-token") || strings.Contains(resp.Body.String(), "metric-token") {
+		t.Fatalf("config response exposed a write-only secret: %s", resp.Body.String())
+	}
+	var response configResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode config response: %v", err)
+	}
+	if response.Config.HEC.Token != "" || response.Config.Metrics.Token != "" || !response.Secrets.HECTokenConfigured || !response.Secrets.MetricsTokenConfigured {
+		t.Fatalf("unexpected redacted config response: %#v", response)
+	}
 	loaded, _, err := config.LoadEditable(context.Background(), configPath, tempDir)
 	if err != nil {
 		t.Fatalf("LoadEditable() error = %v", err)
@@ -135,6 +145,26 @@ func TestConfigAPI_PutRoundTrip(t *testing.T) {
 	}
 	if !loaded.Diagnostics.Enabled || !loaded.Debug.EmitMemoryStats || !loaded.HEC.Enabled || loaded.HEC.Token != "secret-token" || !loaded.Metrics.Enabled || !loaded.Metrics.UseMetricsIndex {
 		t.Fatalf("unexpected nested config after PUT: %#v", loaded)
+	}
+	loaded.HEC.Token = ""
+	loaded.Metrics.Token = ""
+	preserveBody, err := json.Marshal(configWriteRequest{Config: loaded})
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserveReq := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(preserveBody))
+	preserveReq.Header.Set("Content-Type", "application/json")
+	preserveResp := httptest.NewRecorder()
+	handler.ServeHTTP(preserveResp, preserveReq)
+	if preserveResp.Code != http.StatusOK {
+		t.Fatalf("blank-token PUT status = %d (%s)", preserveResp.Code, preserveResp.Body.String())
+	}
+	preserved, _, err := config.LoadEditable(context.Background(), configPath, tempDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preserved.HEC.Token != "secret-token" || preserved.Metrics.Token != "metric-token" {
+		t.Fatalf("blank token did not preserve write-only secrets: %#v", preserved)
 	}
 }
 

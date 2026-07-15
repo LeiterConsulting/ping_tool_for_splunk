@@ -25,15 +25,20 @@ func pad7(v int) string {
 
 // UnixSecondsFromISO tries to parse .NET "o" timestamps, falling back safely.
 func UnixSecondsFromISO(ts string) int64 {
+	return int64(UnixTimeFromISO(ts))
+}
+
+// UnixTimeFromISO preserves subsecond precision for Splunk HEC event time.
+func UnixTimeFromISO(ts string) float64 {
 	if ts == "" {
-		return time.Now().UTC().Unix()
+		return float64(time.Now().UTC().UnixNano()) / float64(time.Second)
 	}
 	// Accept RFC3339Nano as well; time.Parse handles offsets.
 	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
-		return t.Unix()
+		return float64(t.UnixNano()) / float64(time.Second)
 	}
 	if t, err := time.Parse(time.RFC3339, ts); err == nil {
-		return t.Unix()
+		return float64(t.UnixNano()) / float64(time.Second)
 	}
-	return time.Now().UTC().Unix()
+	return float64(time.Now().UTC().UnixNano()) / float64(time.Second)
 }

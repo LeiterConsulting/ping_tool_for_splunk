@@ -4,17 +4,17 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.3.1`
-- Splunk app: `2.7.6` build `34`
-- Current runtime release notes: [RELEASE_NOTES_v5.3.1.md](RELEASE_NOTES_v5.3.1.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.7.6.md](RELEASE_NOTES_splunk_app_2.7.6.md)
+- Go runtime: `v5.5.0`
+- Splunk app: `2.9.0` build `39`
+- Current runtime release notes: [RELEASE_NOTES_v5.5.0.md](RELEASE_NOTES_v5.5.0.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.0.md](RELEASE_NOTES_splunk_app_2.9.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
 ## Current Runtime Options
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.3.1 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.5.0 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -56,6 +56,7 @@ Open `http://127.0.0.1:8080` to manage the live deployment.
 | `--endpoints` | Path to `endpoints.csv` |
 | `--ui-listen` | Bind address for the local admin UI |
 | `--ui-only` | Start the UI without starting the monitoring engine |
+| `--validate` | Validate config, inventory, and worst-case scheduler capacity without probing or creating runtime state |
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
@@ -90,17 +91,17 @@ ip,hostname,dev
 Full format:
 
 ```csv
-ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev
-192.168.1.1,router,network,Core Router,infrastructure,router,Cisco,Primary site,false
-10.0.0.50,app-server,servers,Production App,server,vm,VMware,Critical,false
-10.0.50.10,lab-api,dev,Dev API Node,service,vm,VMware,Excluded from production summary stats,true
-8.8.8.8,google-dns,external,Google DNS,external,dns,Google,Baseline,false
+ip,hostname,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev
+192.168.1.1,router,network,Core Router,infrastructure,router,Cisco,Primary site,,false
+10.0.0.50,app-server,servers,Production App,server,vm,VMware,Critical,,false
 ```
 
 Endpoint file rules:
 
 - Legacy two-column files (`ip,hostname`) are still accepted.
-- The optional `dev` flag must remain the trailing column when present.
+- `ip` and `hostname` headers are required; column order is otherwise flexible.
+- The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, and duplicate endpoint IDs are rejected.
+- `endpoint_id` is optional; the runtime derives a stable target-based ID when it is blank.
 - `dev=true` endpoints emit `record_type=summary_dev` and, when enabled, `record_type=ping_dev`.
 - Production rollups stay on `record_type=summary`, so dev/test systems do not skew customer-facing availability.
 
@@ -113,6 +114,7 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 - The embedded UI loads the active deployment files at startup, so an existing deployment can be managed in place without re-entering configuration.
 - Endpoint edits made in the UI are written back to the live endpoint file that the runtime hot reloads.
 - Config edits made in the UI are saved directly to the active config file, but engine-level settings are loaded at process start. Restart the runtime or service after config changes that should affect monitoring behavior.
+- HEC tokens are write-only in the API. A blank token field preserves the stored token; the UI receives only a configured/not-configured flag.
 - When the UI saves config or endpoints over an existing file, it creates a timestamped `.bak` backup first.
 
 The UI supports:
@@ -136,12 +138,31 @@ If you only want to edit files without running the monitor:
 | Core cycle | `pings_per_cycle`, `cycle_interval_seconds`, `timeout_ms`, `parallel_threads` | Controls ping count, cycle cadence, timeout, and concurrency |
 | Event volume | `emit_individual_pings` | Keeps per-ping events on or off while summary events always remain |
 | Output and logging | `output_mode`, `log_path`, `log_rotation_size_mb` | Chooses file, HEC, or both and controls local log output |
-| Ping engine | `ping.mode` | Selects `auto`, `raw`, or `exec` |
+| Ping engine | `ping.mode` | Selects `auto`, `raw`, or `exec`; Windows uses native ICMP in `auto`/`raw` |
+| Health | `health.down_after_failures`, `health.recovery_after_successes`, `health.stale_after_intervals` | Controls state hysteresis and checkpoint freshness |
 | Diagnostics and debug | `diagnostics.enabled`, `diagnostics.handle_probe_mode`, `debug.emit_memory_stats` | Enables runtime troubleshooting and memory instrumentation |
-| HEC events | `hec.enabled`, `hec.url`, `hec.token`, `hec.index`, `hec.sourcetype`, `hec.retry.*`, `dead_letter_path` | Controls direct event delivery, retry behavior, and optional dead-letter output |
-| Metrics | `metrics.enabled`, `metrics.mode`, `metrics.index`, `metrics.hec_url`, `metrics.token`, `metrics.compat_mode`, `metrics.use_metrics_index` | Controls metrics delivery and compatibility behavior |
+| HEC events | `hec.enabled`, `hec.url`, `hec.token`, `hec.index`, `hec.sourcetype`, `hec.retry.*`, `hec.use_ack` | Controls direct event delivery, retry behavior, and optional indexer acknowledgment |
+| Metrics | `metrics.enabled`, `metrics.mode`, `metrics.index`, `metrics.hec_url`, `metrics.token`, `metrics.use_metrics_index`, `metrics.use_ack` | Controls metrics delivery and confirmation behavior |
+| Durable delivery | `delivery.spool_path`, `delivery.max_spool_bytes`, `delivery.max_envelopes`, `delivery.drain_max_envelopes` | Bounds the fsynced outbox and catch-up work without allowing silent drops |
 
 Default/current sample values live in [config.psd1](config.psd1).
+
+## Signal And Delivery Truth Contract
+
+- `observation_status` describes what the current probe batch observed: reply, partial reply, no reply, or probe error.
+- `state` is the collector's hysteretic decision. It changes to down only after `health.down_after_failures` consecutive valid full-loss cycles and recovers only after `health.recovery_after_successes` valid successful cycles.
+- `state_confidence` is `pending` during a down/recovery transition, `confirmed` after the threshold is met, and `unknown` for an invalid measurement.
+- Packet loss is an observation, not a substitute for state. The Splunk app uses collector state for current v3 health and labels any state inferred from older history.
+- Exact latency is emitted only when the selected backend measured RTT. A platform result such as `time<1ms` is represented as censored with `latency_upper_bound_ms=1`; it is counted as a successful reply but excluded from exact min/average/max calculations.
+- `probe_elapsed_ms` is diagnostic wall time and is never presented as network RTT.
+
+For network output, a cycle is written atomically to the durable outbox before the background delivery worker contacts Splunk. `/api/status` reports backlog age/count/bytes and a confirmation mode:
+
+- `hec_accepted_only`: Splunk returned a successful HEC response, but indexer acknowledgment is disabled.
+- `indexed_acknowledged`: all enabled network sinks confirmed indexing through HEC indexer acknowledgment.
+- `mixed`: only some enabled sinks require indexer acknowledgment.
+
+Enable `use_ack` only after [indexer acknowledgment is enabled on the corresponding Splunk HEC token](https://help.splunk.com/en/splunk-enterprise/get-started/get-data-in/9.0/get-data-with-http-event-collector/about-http-event-collector-indexer-acknowledgment). Failed or unconfirmed batches remain in the outbox across restarts. If the configured capacity is exhausted, the monitor stops accepting new cycles and reports the error rather than deleting signal.
 
 ## Splunk Output And App Setup
 
@@ -156,7 +177,7 @@ Default/current sample values live in [config.psd1](config.psd1).
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_2.7.6_build34_20260625.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_2.9.0_build39_20260715.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.
@@ -172,20 +193,86 @@ If you prefer file output, configure a Splunk monitor input for the runtime log 
 
 ### Windows (Go Runtime, Shipped Installer)
 
-The repository ships [Install-Service.ps1](Install-Service.ps1), which installs the Go runtime as a Windows service by default.
+The repository ships [Install-Service.ps1](Install-Service.ps1), which installs the Go runtime through NSSM with delayed automatic start, graceful shutdown, application restart, Windows Service Control Manager recovery, and rotating stdout/stderr logs.
+
+Prerequisites are PowerShell 7.4+, administrator rights for lifecycle mutations, and a vetted NSSM 2.24+ `nssm.exe` either on `PATH` or beside `Install-Service.ps1`. The installer does not download or execute a remote binary automatically.
+
+Run validation first from any PowerShell 7.4+ session. Validation does not change service state and does not require elevation:
 
 ```powershell
-# Install the Go runtime as a Windows service and enable the local UI on 127.0.0.1:8080
-.\Install-Service.ps1 -Install -Runtime go
-
-# Bind the UI to a different local port
-.\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
-
-# Disable the local UI for the service
-# .\Install-Service.ps1 -Install -Runtime go -DisableUI
+# Validate a deployment folder and show the exact service definition
+.\Install-Service.ps1 -Validate `
+  -BinaryPath D:\pingmonitor\pingmonitor.exe `
+  -ConfigPath D:\pingmonitor\config.psd1 `
+  -EndpointsPath D:\pingmonitor\endpoints.csv
 ```
 
-When the service starts, it uses the same active deployment files as the interactive runtime, so replacing the binary and restarting the service preserves the existing configuration and immediately exposes it in the UI.
+Open PowerShell with **Run as administrator** for installation and lifecycle operations:
+
+```powershell
+# Install, verify, and start the service. The UI remains loopback-only by default.
+.\Install-Service.ps1 -Install `
+  -BinaryPath D:\pingmonitor\pingmonitor.exe `
+  -ConfigPath D:\pingmonitor\config.psd1 `
+  -EndpointsPath D:\pingmonitor\endpoints.csv
+
+# Inspect persisted NSSM paths, arguments, log files, process ID, and status
+.\Install-Service.ps1 -Status
+.\Install-Service.ps1 -Status -Json
+
+# Control the verified service instance
+.\Install-Service.ps1 -Stop
+.\Install-Service.ps1 -Start
+.\Install-Service.ps1 -Restart
+
+# Replace an existing definition after changing paths or service settings
+.\Install-Service.ps1 -Install `
+  -BinaryPath D:\pingmonitor\pingmonitor.exe `
+  -ConfigPath D:\pingmonitor\config.psd1 `
+  -EndpointsPath D:\pingmonitor\endpoints.csv `
+  -ForceReinstall
+
+# Remove the service without deleting deployment data or logs
+.\Install-Service.ps1 -Uninstall
+```
+
+The default working directory is the directory containing the selected Go binary. Therefore a service installed from the repository can safely target a separate deployment directory; relative runtime paths continue to resolve beside that deployed binary. Override this with `-WorkingDirectory` or place service output elsewhere with `-LogDirectory`.
+
+By default the service:
+
+- runs as `LocalSystem` through NSSM;
+- starts using `AutomaticDelayedStart`;
+- restarts the monitored application after 10 seconds;
+- has SCM restart actions for failures of the NSSM service process;
+- gives the console application 15 seconds to shut down cleanly;
+- rotates `service_stdout.log` and `service_stderr.log` at 10 MB and at least daily;
+- binds the optional admin UI to `127.0.0.1:8080`.
+
+Use a different loopback port or disable the UI when required:
+
+```powershell
+# Bind the UI to a different loopback port
+.\Install-Service.ps1 -Install -UIListen 127.0.0.1:8090
+
+# Run without the embedded UI
+.\Install-Service.ps1 -Install -DisableUI
+```
+
+Non-loopback UI addresses are rejected unless `-AllowRemoteUI` is explicitly supplied. That switch does not add authentication, TLS, or firewall rules; it only confirms that the operator has supplied those controls elsewhere.
+
+Before an upgrade, validate the replacement binary, stop the service, replace the binary, and restart it. If the executable path changes, use `-ForceReinstall` so the persisted NSSM definition is verified again.
+
+The repository includes two service tests:
+
+```powershell
+# Safe definition/path/argument tests; does not require elevation
+.\tests\Test-ServiceInstaller.ps1 -BinaryPath D:\pingmonitor\pingmonitor.exe
+
+# Full create/start/health/restart/stop/remove canary; requires elevation
+.\tests\Test-WindowsServiceLifecycle.ps1 -BinaryPath D:\pingmonitor\pingmonitor.exe
+```
+
+The lifecycle test creates a uniquely named temporary deployment and service, verifies `/healthz`, and removes both in a `finally` block. Do not give it the name of a production service.
 
 ### Linux (Go Runtime Under systemd)
 
@@ -293,4 +380,4 @@ sudo ./install_unix.sh
 
 MIT License.
 
-*Last updated: 15 June 2026*
+*Last updated: 15 July 2026*

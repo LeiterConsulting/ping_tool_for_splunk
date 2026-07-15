@@ -26,6 +26,7 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/outbox"
 )
 
 //go:embed static/*
@@ -45,17 +46,20 @@ type Options struct {
 	RootDir             string
 	DiscoveryScriptPath string
 	Version             string
+	CollectorID         string
 }
 
 type statusResponse struct {
-	Product             string `json:"product"`
-	Version             string `json:"version"`
-	ConfigPath          string `json:"config_path"`
-	ConfigFormat        string `json:"config_format"`
-	EndpointsPath       string `json:"endpoints_path"`
-	DiscoveryAvailable  bool   `json:"discovery_available"`
-	DiscoveryScriptPath string `json:"discovery_script_path,omitempty"`
-	Mode                string `json:"mode"`
+	Product             string         `json:"product"`
+	Version             string         `json:"version"`
+	CollectorID         string         `json:"collector_id"`
+	ConfigPath          string         `json:"config_path"`
+	ConfigFormat        string         `json:"config_format"`
+	EndpointsPath       string         `json:"endpoints_path"`
+	DiscoveryAvailable  bool           `json:"discovery_available"`
+	DiscoveryScriptPath string         `json:"discovery_script_path,omitempty"`
+	Mode                string         `json:"mode"`
+	Delivery            *outbox.Status `json:"delivery,omitempty"`
 }
 
 type endpointSummary struct {
@@ -81,10 +85,18 @@ type configResponse struct {
 	ConfigPath   string        `json:"config_path"`
 	ConfigFormat string        `json:"config_format"`
 	Config       config.Config `json:"config"`
+	Secrets      secretStatus  `json:"secrets"`
 }
 
 type configWriteRequest struct {
-	Config config.Config `json:"config"`
+	Config            config.Config `json:"config"`
+	ClearHECToken     bool          `json:"clear_hec_token,omitempty"`
+	ClearMetricsToken bool          `json:"clear_metrics_token,omitempty"`
+}
+
+type secretStatus struct {
+	HECTokenConfigured     bool `json:"hec_token_configured"`
+	MetricsTokenConfigured bool `json:"metrics_token_configured"`
 }
 
 type discoveryRunRequest struct {
@@ -322,15 +334,31 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	var delivery *outbox.Status
+	if cfg, _, loadErr := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir); loadErr == nil &&
+		(((cfg.OutputMode == "hec" || cfg.OutputMode == "both") && cfg.HEC.Enabled) || cfg.Metrics.Enabled) {
+		spoolPath := cfg.Delivery.SpoolPath
+		if !filepath.IsAbs(spoolPath) {
+			spoolPath = filepath.Join(filepath.Dir(info.Path), spoolPath)
+		}
+		status, statusErr := outbox.ReadStatus(spoolPath)
+		if statusErr == nil {
+			delivery = &status
+		} else if errors.Is(statusErr, os.ErrNotExist) {
+			delivery = &outbox.Status{State: "not_started"}
+		}
+	}
 	writeJSON(w, http.StatusOK, statusResponse{
 		Product:             "Ping Monitor",
 		Version:             s.opts.Version,
+		CollectorID:         s.opts.CollectorID,
 		ConfigPath:          info.Path,
 		ConfigFormat:        info.Format,
 		EndpointsPath:       filepath.Clean(s.opts.EndpointsPath),
 		DiscoveryAvailable:  discoveryScriptAvailable(s.opts.DiscoveryScriptPath),
 		DiscoveryScriptPath: s.opts.DiscoveryScriptPath,
 		Mode:                "editable",
+		Delivery:            delivery,
 	})
 }
 
@@ -386,18 +414,19 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, configResponse{
-			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
-			ConfigPath:   info.Path,
-			ConfigFormat: info.Format,
-			Config:       cfg,
-		})
+		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info))
 	case http.MethodPut:
 		var request configWriteRequest
 		if err := decodeJSONBody(r, &request); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		existing, _, err := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		mergeWriteOnlySecrets(&request.Config, existing, request.ClearHECToken, request.ClearMetricsToken)
 		info, err := config.SaveConfig(r.Context(), s.opts.ConfigPath, s.opts.RootDir, request.Config)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -412,12 +441,7 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"config_path": info.Path,
 			"format":      info.Format,
 		})
-		writeJSON(w, http.StatusOK, configResponse{
-			GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
-			ConfigPath:   info.Path,
-			ConfigFormat: info.Format,
-			Config:       cfg,
-		})
+		writeJSON(w, http.StatusOK, redactedConfigResponse(cfg, info))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -495,25 +519,57 @@ func (s *apiServer) handleOutputTest(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	stored, _, err := config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	mergeWriteOnlySecrets(&request.Config, stored, false, false)
 
 	var (
-		result outputTestResponse
-		err    error
+		result   outputTestResponse
+		probeErr error
 	)
 	switch strings.ToLower(strings.TrimSpace(request.Target)) {
 	case "hec":
-		result, err = probeHECOutput(r.Context(), request.Config)
+		result, probeErr = probeHECOutput(r.Context(), request.Config)
 	case "metrics":
-		result, err = probeMetricsOutput(r.Context(), request.Config)
+		result, probeErr = probeMetricsOutput(r.Context(), request.Config)
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target must be hec or metrics"})
 		return
 	}
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+	if probeErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": probeErr.Error()})
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func redactedConfigResponse(cfg config.Config, info config.SourceInfo) configResponse {
+	secrets := secretStatus{
+		HECTokenConfigured:     strings.TrimSpace(cfg.HEC.Token) != "",
+		MetricsTokenConfigured: strings.TrimSpace(cfg.Metrics.Token) != "",
+	}
+	cfg.HEC.Token = ""
+	cfg.Metrics.Token = ""
+	return configResponse{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339), ConfigPath: info.Path,
+		ConfigFormat: info.Format, Config: cfg, Secrets: secrets,
+	}
+}
+
+func mergeWriteOnlySecrets(candidate *config.Config, existing config.Config, clearHEC bool, clearMetrics bool) {
+	if clearHEC {
+		candidate.HEC.Token = ""
+	} else if strings.TrimSpace(candidate.HEC.Token) == "" {
+		candidate.HEC.Token = existing.HEC.Token
+	}
+	if clearMetrics {
+		candidate.Metrics.Token = ""
+	} else if strings.TrimSpace(candidate.Metrics.Token) == "" {
+		candidate.Metrics.Token = existing.Metrics.Token
+	}
 }
 
 func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunRequest) (discoveryResponse, error) {
@@ -831,7 +887,7 @@ func probeHECOutput(ctx context.Context, cfg config.Config) (outputTestResponse,
 	}
 	hostname := probeHostname()
 	payload := models.HECEvent{
-		Time:       time.Now().UTC().Unix(),
+		Time:       float64(time.Now().UTC().UnixNano()) / float64(time.Second),
 		Host:       hostname,
 		Source:     "ping_monitor_ui",
 		SourceType: firstNonEmptyString(cfg.HEC.SourceType, "ping_monitor"),
@@ -857,7 +913,7 @@ func probeMetricsOutput(ctx context.Context, cfg config.Config) (outputTestRespo
 	}
 	hostname := probeHostname()
 	payload := models.MetricsEvent{
-		Time:       time.Now().UTC().Unix(),
+		Time:       float64(time.Now().UTC().UnixNano()) / float64(time.Second),
 		Host:       hostname,
 		Source:     "ping_monitor_ui",
 		SourceType: firstNonEmptyString(cfg.Metrics.SourceType, "ping_monitor:metrics"),

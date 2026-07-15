@@ -6,7 +6,7 @@ import (
 )
 
 func writePSD1File(path string, cfg Config) error {
-	return writeWithBackup(path, []byte(renderPSD1(cfg)))
+	return writeWithBackupMode(path, []byte(renderPSD1(cfg)), 0o600)
 }
 
 func renderPSD1(cfg Config) string {
@@ -27,6 +27,11 @@ func renderPSD1(cfg Config) string {
 
 	builder.WriteString("    ping = @{\n")
 	fmt.Fprintf(&builder, "        mode = %s\n", psd1String(cfg.Ping.Mode))
+	builder.WriteString("    }\n\n")
+	builder.WriteString("    health = @{\n")
+	fmt.Fprintf(&builder, "        down_after_failures = %d\n", cfg.Health.DownAfterFailures)
+	fmt.Fprintf(&builder, "        recovery_after_successes = %d\n", cfg.Health.RecoveryAfterSuccesses)
+	fmt.Fprintf(&builder, "        stale_after_intervals = %d\n", cfg.Health.StaleAfterIntervals)
 	builder.WriteString("    }\n\n")
 
 	builder.WriteString("    diagnostics = @{\n")
@@ -61,6 +66,10 @@ func renderPSD1(cfg Config) string {
 	fmt.Fprintf(&builder, "        retry_delay_ms = %d\n", cfg.HEC.RetryDelayMs)
 	fmt.Fprintf(&builder, "        dead_letter_path = %s\n", psd1String(cfg.HEC.DeadLetterPath))
 	fmt.Fprintf(&builder, "        dead_letter_rotation_size_mb = %d\n", cfg.HEC.DeadLetterRotationSizeMB)
+	fmt.Fprintf(&builder, "        use_ack = %s\n", psd1Bool(cfg.HEC.UseACK))
+	fmt.Fprintf(&builder, "        ack_timeout_seconds = %d\n", cfg.HEC.ACKTimeoutSeconds)
+	fmt.Fprintf(&builder, "        ack_poll_interval_ms = %d\n", cfg.HEC.ACKPollIntervalMs)
+	fmt.Fprintf(&builder, "        channel = %s\n", psd1String(cfg.HEC.Channel))
 	builder.WriteString("    }\n\n")
 
 	builder.WriteString("    metrics = @{\n")
@@ -78,6 +87,17 @@ func renderPSD1(cfg Config) string {
 	fmt.Fprintf(&builder, "        batch_size = %d\n", cfg.Metrics.BatchSize)
 	fmt.Fprintf(&builder, "        max_buffer_events = %d\n", cfg.Metrics.MaxBufferEvents)
 	fmt.Fprintf(&builder, "        max_buffer_bytes = %s\n", psd1String(cfg.Metrics.MaxBufferBytes))
+	fmt.Fprintf(&builder, "        use_ack = %s\n", psd1Bool(cfg.Metrics.UseACK))
+	fmt.Fprintf(&builder, "        ack_timeout_seconds = %d\n", cfg.Metrics.ACKTimeoutSeconds)
+	fmt.Fprintf(&builder, "        ack_poll_interval_ms = %d\n", cfg.Metrics.ACKPollIntervalMs)
+	fmt.Fprintf(&builder, "        channel = %s\n", psd1String(cfg.Metrics.Channel))
+	builder.WriteString("    }\n\n")
+
+	builder.WriteString("    delivery = @{\n")
+	fmt.Fprintf(&builder, "        spool_path = %s\n", psd1String(cfg.Delivery.SpoolPath))
+	fmt.Fprintf(&builder, "        max_spool_bytes = %s\n", psd1String(cfg.Delivery.MaxSpoolBytes))
+	fmt.Fprintf(&builder, "        max_envelopes = %d\n", cfg.Delivery.MaxEnvelopes)
+	fmt.Fprintf(&builder, "        drain_max_envelopes = %d\n", cfg.Delivery.DrainMaxEnvelopes)
 	builder.WriteString("    }\n")
 	builder.WriteString("}\n")
 	return builder.String()

@@ -1,8 +1,18 @@
 package models
 
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net"
+	"strings"
+)
+
+const SchemaVersion = 3
+
 // Endpoint matches endpoints.csv schema.
 // Note: Field names match v4 payload keys (lowercase + underscores) where applicable.
 type Endpoint struct {
+	EndpointID      string `json:"endpoint_id,omitempty"`
 	IP              string `json:"ip"`
 	Hostname        string `json:"hostname"`
 	Dev             bool   `json:"dev"`
@@ -15,50 +25,90 @@ type Endpoint struct {
 }
 
 type PingEvent struct {
-	EventID      string  `json:"event_id"`
-	Timestamp    string  `json:"timestamp"`
-	TargetIP     string  `json:"target_ip"`
-	Hostname     string  `json:"hostname"`
-	Dev          bool    `json:"dev"`
-	Group        string  `json:"group"`
-	Description  string  `json:"description"`
-	EntityType   string  `json:"entitytype"`
-	Device       string  `json:"device"`
-	Vendor       string  `json:"vendor"`
-	Notes        string  `json:"additional_notes"`
-	Status       string  `json:"status"`
-	LatencyMs    int     `json:"latency_ms"`
-	TTL          int     `json:"ttl"`
-	PingNumber   int     `json:"ping_number"`
-	PingsInCycle int     `json:"pings_in_cycle"`
-	ErrorMessage *string `json:"error_message,omitempty"`
-	RecordType   string  `json:"record_type"`
+	SchemaVersion       int      `json:"schema_version"`
+	EventID             string   `json:"event_id"`
+	CollectorID         string   `json:"collector_id"`
+	EndpointID          string   `json:"endpoint_id"`
+	CycleID             string   `json:"cycle_id"`
+	Timestamp           string   `json:"timestamp"`
+	SentAt              string   `json:"sent_at"`
+	ReceivedAt          string   `json:"received_at,omitempty"`
+	TargetIP            string   `json:"target_ip"`
+	Hostname            string   `json:"hostname"`
+	Dev                 bool     `json:"dev"`
+	Group               string   `json:"group"`
+	Description         string   `json:"description"`
+	EntityType          string   `json:"entitytype"`
+	Device              string   `json:"device"`
+	Vendor              string   `json:"vendor"`
+	Notes               string   `json:"additional_notes"`
+	Status              string   `json:"status"`
+	ObservationStatus   string   `json:"observation_status"`
+	MeasurementValid    bool     `json:"measurement_valid"`
+	ProbeBackend        string   `json:"probe_backend"`
+	LatencyMs           *float64 `json:"latency_ms,omitempty"`
+	LatencySource       string   `json:"latency_source,omitempty"`
+	LatencyResolutionMs *float64 `json:"latency_resolution_ms,omitempty"`
+	LatencyCensored     bool     `json:"latency_censored"`
+	LatencyUpperBoundMs *float64 `json:"latency_upper_bound_ms,omitempty"`
+	ProbeElapsedMs      *float64 `json:"probe_elapsed_ms,omitempty"`
+	ICMPStatusCode      *uint32  `json:"icmp_status_code,omitempty"`
+	TTL                 *int     `json:"ttl,omitempty"`
+	PingNumber          int      `json:"ping_number"`
+	PingsInCycle        int      `json:"pings_in_cycle"`
+	ErrorMessage        *string  `json:"error_message,omitempty"`
+	RecordType          string   `json:"record_type"`
 }
 
 type SummaryEvent struct {
-	EventID         string  `json:"event_id"`
-	Timestamp       string  `json:"timestamp"`
-	TargetIP        string  `json:"target_ip"`
-	Hostname        string  `json:"hostname"`
-	Dev             bool    `json:"dev"`
-	Group           string  `json:"group"`
-	Description     string  `json:"description"`
-	EntityType      string  `json:"entitytype"`
-	Device          string  `json:"device"`
-	Vendor          string  `json:"vendor"`
-	Notes           string  `json:"additional_notes"`
-	RecordType      string  `json:"record_type"`
-	PingsSent       int     `json:"pings_sent"`
-	PingsSuccessful int     `json:"pings_successful"`
-	PingsFailed     int     `json:"pings_failed"`
-	PacketLossPct   float64 `json:"packet_loss_pct"`
-	AvgLatencyMs    float64 `json:"avg_latency_ms"`
-	MinLatencyMs    int     `json:"min_latency_ms"`
-	MaxLatencyMs    int     `json:"max_latency_ms"`
+	SchemaVersion          int      `json:"schema_version"`
+	EventID                string   `json:"event_id"`
+	CollectorID            string   `json:"collector_id"`
+	EndpointID             string   `json:"endpoint_id"`
+	CycleID                string   `json:"cycle_id"`
+	Timestamp              string   `json:"timestamp"`
+	TargetIP               string   `json:"target_ip"`
+	Hostname               string   `json:"hostname"`
+	Dev                    bool     `json:"dev"`
+	Group                  string   `json:"group"`
+	Description            string   `json:"description"`
+	EntityType             string   `json:"entitytype"`
+	Device                 string   `json:"device"`
+	Vendor                 string   `json:"vendor"`
+	Notes                  string   `json:"additional_notes"`
+	RecordType             string   `json:"record_type"`
+	ProbeBackend           string   `json:"probe_backend"`
+	MeasurementValid       bool     `json:"measurement_valid"`
+	ObservationStatus      string   `json:"observation_status"`
+	ObservationError       string   `json:"observation_error,omitempty"`
+	State                  string   `json:"state"`
+	StateReason            string   `json:"state_reason"`
+	StateConfidence        string   `json:"state_confidence"`
+	DownAfterFailures      int      `json:"down_after_failures"`
+	RecoveryAfterSuccesses int      `json:"recovery_after_successes"`
+	CycleIntervalSeconds   int      `json:"cycle_interval_seconds"`
+	StaleAfterIntervals    int      `json:"stale_after_intervals"`
+	StaleAfterSeconds      int      `json:"stale_after_seconds"`
+	PreviousState          string   `json:"previous_state"`
+	StateChangedAt         string   `json:"state_changed_at"`
+	ConsecutiveSuccesses   int      `json:"consecutive_successes"`
+	ConsecutiveFailures    int      `json:"consecutive_failures"`
+	PingsSent              int      `json:"pings_sent"`
+	PingsSuccessful        int      `json:"pings_successful"`
+	PingsFailed            int      `json:"pings_failed"`
+	PacketLossPct          *float64 `json:"packet_loss_pct,omitempty"`
+	AvgLatencyMs           *float64 `json:"avg_latency_ms,omitempty"`
+	MinLatencyMs           *float64 `json:"min_latency_ms,omitempty"`
+	MaxLatencyMs           *float64 `json:"max_latency_ms,omitempty"`
+	LatencySampleCount     int      `json:"latency_sample_count"`
+	LatencyCensoredCount   int      `json:"latency_censored_count"`
+	LatencySource          string   `json:"latency_source,omitempty"`
+	LatencyResolutionMs    *float64 `json:"latency_resolution_ms,omitempty"`
+	LatencyUpperBoundMs    *float64 `json:"latency_upper_bound_ms,omitempty"`
 }
 
 type MetricsEvent struct {
-	Time       int64                  `json:"time"`
+	Time       float64                `json:"time"`
 	Host       string                 `json:"host"`
 	Source     string                 `json:"source"`
 	SourceType string                 `json:"sourcetype"`
@@ -68,11 +118,23 @@ type MetricsEvent struct {
 }
 
 type HECEvent struct {
-	Time       int64  `json:"time"`
-	Host       string `json:"host"`
-	Source     string `json:"source"`
-	SourceType string `json:"sourcetype"`
-	Index      string `json:"index"`
+	Time       float64 `json:"time"`
+	Host       string  `json:"host"`
+	Source     string  `json:"source"`
+	SourceType string  `json:"sourcetype"`
+	Index      string  `json:"index"`
 	// event_id is inside Event payload (search-time dedupe)
 	Event interface{} `json:"event"`
+}
+
+func StableEndpointID(explicitID string, target string) string {
+	if id := strings.TrimSpace(explicitID); id != "" {
+		return id
+	}
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	if ip := net.ParseIP(normalizedTarget); ip != nil {
+		normalizedTarget = ip.String()
+	}
+	sum := sha256.Sum256([]byte(normalizedTarget))
+	return "ep_" + hex.EncodeToString(sum[:12])
 }

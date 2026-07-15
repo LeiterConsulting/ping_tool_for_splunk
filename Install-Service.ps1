@@ -1,513 +1,586 @@
 #Requires -Version 7.4
-#Requires -RunAsAdministrator
 <#
 .SYNOPSIS
-    Installs or uninstalls the Splunk Ping Monitor as a Windows Service using NSSM.
+    Installs and controls Ping Monitor as a supervised Windows service through NSSM.
 
 .DESCRIPTION
-    This script uses NSSM (Non-Sucking Service Manager) to create a Windows Service
-    that runs Ping Monitor continuously.
+    The Go runtime is the default service target. The installer validates the binary,
+    configuration, endpoint inventory, UI bind address, working directory, and log
+    directory before changing Windows service state. Installation configures delayed
+    automatic start, application restart, SCM recovery, graceful shutdown, and rotating
+    stdout/stderr logs.
 
-    Default runtime is Go v5 (`pingmonitor.exe`). Legacy PowerShell script mode
-    remains available via -Runtime powershell.
-
-.PARAMETER Install
-    Installs the service.
-
-.PARAMETER Uninstall
-    Uninstalls the service.
-
-.PARAMETER Start
-    Starts the service (if installed).
-
-.PARAMETER Stop
-    Stops the service (if running).
-
-.PARAMETER Status
-    Shows the current service status.
+    Status and Validate do not require elevation. Install, Uninstall, Start, Stop, and
+    Restart require an elevated PowerShell session.
 
 .EXAMPLE
-    .\Install-Service.ps1 -Install
-    Installs Ping Monitor as a Windows Service (Go v5 runtime by default, local admin UI enabled on 127.0.0.1:8080)
+    .\Install-Service.ps1 -Validate -BinaryPath D:\pingmonitor\pingmonitor.exe -ConfigPath D:\pingmonitor\config.psd1 -EndpointsPath D:\pingmonitor\endpoints.csv
 
 .EXAMPLE
-    .\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
-    Installs Ping Monitor with the embedded admin UI bound to a custom local address
+    .\Install-Service.ps1 -Install -BinaryPath D:\pingmonitor\pingmonitor.exe -ConfigPath D:\pingmonitor\config.psd1 -EndpointsPath D:\pingmonitor\endpoints.csv
 
 .EXAMPLE
-    .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
-    Installs Ping Monitor using the legacy PowerShell runtime
+    .\Install-Service.ps1 -Restart
 
 .EXAMPLE
-    .\Install-Service.ps1 -Uninstall
-    Removes the Windows Service
-
-.NOTES
-    Requires Administrator privileges
-    Requires NSSM to be installed or downloaded
+    .\Install-Service.ps1 -Status -Json
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Status')]
+[CmdletBinding(DefaultParameterSetName = 'Status', SupportsShouldProcess = $true)]
 param(
-    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Install', Mandatory = $true)]
     [switch]$Install,
 
-    [Parameter(ParameterSetName = 'Uninstall')]
+    [Parameter(ParameterSetName = 'Uninstall', Mandatory = $true)]
     [switch]$Uninstall,
 
-    [Parameter(ParameterSetName = 'Start')]
+    [Parameter(ParameterSetName = 'Start', Mandatory = $true)]
     [switch]$Start,
 
-    [Parameter(ParameterSetName = 'Stop')]
+    [Parameter(ParameterSetName = 'Stop', Mandatory = $true)]
     [switch]$Stop,
+
+    [Parameter(ParameterSetName = 'Restart', Mandatory = $true)]
+    [switch]$Restart,
+
+    [Parameter(ParameterSetName = 'Validate', Mandatory = $true)]
+    [switch]$Validate,
 
     [Parameter(ParameterSetName = 'Status')]
     [switch]$Status,
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [ValidateSet('go', 'powershell')]
     [string]$Runtime = 'go',
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [ValidateSet('v4.0.0', 'v3.3.3')]
     [string]$Version = 'v4.0.0',
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [string]$PingMonitorScriptName,
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [string]$BinaryPath,
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [string]$ConfigPath,
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [string]$EndpointsPath,
 
-    [Parameter()]
-    [string]$UIListen = "127.0.0.1:8080",
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
+    [string]$WorkingDirectory,
 
-    [Parameter()]
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
+    [string]$LogDirectory,
+
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
+    [string]$UIListen = '127.0.0.1:8080',
+
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
     [switch]$DisableUI,
 
+    [Parameter(ParameterSetName = 'Install')]
+    [Parameter(ParameterSetName = 'Validate')]
+    [switch]$AllowRemoteUI,
+
+    [Parameter(ParameterSetName = 'Install')]
+    [ValidateSet('AutomaticDelayedStart', 'Automatic', 'Manual')]
+    [string]$StartupType = 'AutomaticDelayedStart',
+
+    [Parameter(ParameterSetName = 'Install')]
+    [switch]$ForceReinstall,
+
+    [Parameter(ParameterSetName = 'Install')]
+    [switch]$NoStart,
+
     [Parameter()]
-    [string]$ServiceName = "SplunkPingMonitor"
+    [ValidatePattern('^[A-Za-z0-9_.-]+$')]
+    [string]$ServiceName = 'SplunkPingMonitor',
+
+    [Parameter()]
+    [ValidateRange(5, 300)]
+    [int]$WaitTimeoutSeconds = 45,
+
+    [Parameter(ParameterSetName = 'Status')]
+    [Parameter(ParameterSetName = 'Validate')]
+    [switch]$Json
 )
 
-$ErrorActionPreference = "Stop"
-$uiListenWasBound = $PSBoundParameters.ContainsKey('UIListen')
-
-# Configuration
-$ScriptDir = $PSScriptRoot
-
-if ([string]::IsNullOrWhiteSpace($ScriptDir)) {
-    $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-}
-
-$resolvedScriptName = if ($PingMonitorScriptName) {
-    $PingMonitorScriptName
+$ErrorActionPreference = 'Stop'
+$ScriptDir = if ([string]::IsNullOrWhiteSpace($PSScriptRoot)) {
+    Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 else {
-    switch ($Version) {
-        'v3.3.3' { 'PingMonitor_v3_3_3.ps1' }
-        default { 'PingMonitor_v4_0_0.ps1' }
+    $PSScriptRoot
+}
+
+$script:NssmPath = $null
+
+function Test-IsAdministrator {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Assert-Administrator {
+    if (-not (Test-IsAdministrator)) {
+        throw "This action requires an elevated PowerShell session. Reopen PowerShell with 'Run as administrator'."
     }
 }
 
-$PingMonitorScript = Join-Path $ScriptDir $resolvedScriptName
-$resolvedBinaryPath = if ($BinaryPath) { $BinaryPath } else { Join-Path $ScriptDir "pingmonitor.exe" }
+function Resolve-AbsolutePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$BasePath,
+        [switch]$MustExist,
+        [switch]$Directory
+    )
 
-if (-not [System.IO.Path]::IsPathRooted($resolvedBinaryPath)) {
-    $resolvedBinaryPath = Join-Path $ScriptDir $resolvedBinaryPath
-}
-if ($ConfigPath -and -not [System.IO.Path]::IsPathRooted($ConfigPath)) {
-    $ConfigPath = Join-Path $ScriptDir $ConfigPath
-}
-if ($EndpointsPath -and -not [System.IO.Path]::IsPathRooted($EndpointsPath)) {
-    $EndpointsPath = Join-Path $ScriptDir $EndpointsPath
-}
-
-$serviceTargetLabel = if ($Runtime -eq 'go') {
-    "Go v5"
-} else {
-    "PowerShell $Version"
-}
-$ServiceDisplayName = "Splunk Ping Monitor ($serviceTargetLabel)"
-$ServiceDescription = "Monitors network endpoints and sends ping results to Splunk ($serviceTargetLabel)"
-$NssmPath = Join-Path $ScriptDir "nssm.exe"
-$NssmDownloadUrl = "https://nssm.cc/release/nssm-2.24.zip"
-
-#region Helper Functions
-function Test-NssmInstalled {
-    # Check if NSSM is in PATH
-    $nssmInPath = Get-Command "nssm.exe" -ErrorAction SilentlyContinue
-    if ($nssmInPath) {
-        return $nssmInPath.Source
+    $candidate = if ([IO.Path]::IsPathRooted($Path)) { $Path } else { Join-Path $BasePath $Path }
+    $fullPath = [IO.Path]::GetFullPath($candidate)
+    if ($MustExist -and -not (Test-Path -LiteralPath $fullPath)) {
+        throw "Required path does not exist: $fullPath"
     }
-    
-    # Check if NSSM is in script directory
-    if (Test-Path $NssmPath) {
-        return $NssmPath
+    if ($MustExist -and $Directory -and -not (Test-Path -LiteralPath $fullPath -PathType Container)) {
+        throw "Expected a directory: $fullPath"
     }
-    
-    return $null
+    if ($MustExist -and -not $Directory -and -not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+        throw "Expected a file: $fullPath"
+    }
+    return $fullPath
 }
 
-function Install-Nssm {
-    Write-Host "NSSM not found. Downloading..." -ForegroundColor Yellow
-    
-    $zipPath = Join-Path $env:TEMP "nssm.zip"
-    $extractPath = Join-Path $env:TEMP "nssm"
-    
-    try {
-        # Download NSSM
-        Invoke-WebRequest -Uri $NssmDownloadUrl -OutFile $zipPath -UseBasicParsing
-        
-        # Extract
-        Expand-Archive -Path $zipPath -DestinationPath $extractPath -Force
-        
-        # Find the correct architecture binary
-        $arch = if ([Environment]::Is64BitOperatingSystem) { "win64" } else { "win32" }
-        $nssmExe = Get-ChildItem -Path $extractPath -Recurse -Filter "nssm.exe" | 
-                   Where-Object { $_.DirectoryName -like "*$arch*" } | 
-                   Select-Object -First 1
-        
-        if (-not $nssmExe) {
-            throw "Could not find NSSM executable in downloaded archive"
+function Find-Nssm {
+    $command = Get-Command nssm.exe -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+    $bundled = Join-Path $ScriptDir 'nssm.exe'
+    if (Test-Path -LiteralPath $bundled -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $bundled).Path
+    }
+    throw "nssm.exe was not found in PATH or beside Install-Service.ps1. Install NSSM 2.24+ before continuing."
+}
+
+function Invoke-Nssm {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [switch]$AllowFailure
+    )
+    if (-not $script:NssmPath) {
+        $script:NssmPath = Find-Nssm
+    }
+    $output = @(& $script:NssmPath @Arguments 2>&1)
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0 -and -not $AllowFailure) {
+        throw "NSSM command failed (exit $exitCode): nssm $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
+    }
+    return [pscustomobject]@{ ExitCode = $exitCode; Output = ($output -join [Environment]::NewLine).Trim() }
+}
+
+function ConvertTo-ServiceArgumentString {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $quoted = foreach ($argument in $Arguments) {
+        if ($argument -notmatch '[\s"]') {
+            $argument
+            continue
         }
-        
-        # Copy to script directory
-        Copy-Item -Path $nssmExe.FullName -Destination $NssmPath -Force
-        
-        # Cleanup
-        Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
-        Remove-Item $extractPath -Recurse -Force -ErrorAction SilentlyContinue
-        
-        Write-Host "NSSM installed to: $NssmPath" -ForegroundColor Green
-        return $NssmPath
+        '"' + ($argument -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"'
     }
-    catch {
-        Write-Error "Failed to download/install NSSM: $($_.Exception.Message)"
-        Write-Host @"
+    return $quoted -join ' '
+}
 
-Please manually download NSSM from: https://nssm.cc/download
-Extract and place nssm.exe in: $ScriptDir
-Or add nssm.exe to your system PATH.
-"@ -ForegroundColor Yellow
-        exit 1
+function Assert-UIListenSafe {
+    param([string]$ListenAddress, [bool]$RemoteAllowed)
+    if ([string]::IsNullOrWhiteSpace($ListenAddress)) {
+        throw 'UIListen cannot be blank unless -DisableUI is used.'
+    }
+
+    $hostPart = $null
+    $portPart = $null
+    if ($ListenAddress -match '^\[(?<host>[^\]]+)\]:(?<port>\d+)$') {
+        $hostPart = $Matches.host
+        $portPart = [int]$Matches.port
+    }
+    elseif ($ListenAddress -match '^(?<host>[^:]+):(?<port>\d+)$') {
+        $hostPart = $Matches.host
+        $portPart = [int]$Matches.port
+    }
+    else {
+        throw "UIListen must use host:port syntax, for example 127.0.0.1:8080. Received: $ListenAddress"
+    }
+    if ($portPart -lt 1 -or $portPart -gt 65535) {
+        throw "UIListen port is outside 1-65535: $portPart"
+    }
+
+    $loopbackNames = @('127.0.0.1', 'localhost', '::1')
+    if ($hostPart -notin $loopbackNames -and -not $RemoteAllowed) {
+        throw "Refusing non-loopback UI bind '$ListenAddress'. Use -AllowRemoteUI only when network access controls are in place."
     }
 }
 
-function Get-ServiceStatus {
-    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-    return $service
-}
-
-function Resolve-GoBinaryPath {
-    param([string]$PreferredPath)
-
-    if ($PreferredPath -and (Test-Path $PreferredPath)) {
-        return (Resolve-Path $PreferredPath).Path
+function Resolve-GoBinary {
+    if ($BinaryPath) {
+        return Resolve-AbsolutePath -Path $BinaryPath -BasePath $ScriptDir -MustExist
     }
-
-    $distPath = Join-Path $ScriptDir "dist"
-    if (-not (Test-Path $distPath)) {
-        return $null
+    $coLocated = Join-Path $ScriptDir 'pingmonitor.exe'
+    if (Test-Path -LiteralPath $coLocated -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $coLocated).Path
     }
-
-    $candidate = Get-ChildItem -Path $distPath -Filter "pingmonitor_*_windows_amd64.exe" -File -ErrorAction SilentlyContinue |
+    $candidate = Get-ChildItem -LiteralPath (Join-Path $ScriptDir 'dist') -Filter 'pingmonitor_*_windows_amd64.exe' -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
     if ($candidate) {
         return $candidate.FullName
     }
-    return $null
+    throw "Go binary not found. Supply -BinaryPath or build pingmonitor.exe first."
 }
-#endregion
 
-#region Main Actions
-function Install-PingMonitorService {
-    Write-Host "Installing $ServiceDisplayName..." -ForegroundColor Cyan
-    
-    # Check if already installed
-    $existing = Get-ServiceStatus
-    if ($existing) {
-        Write-Warning "Service '$ServiceName' is already installed. Use -Uninstall first to reinstall."
-        return
-    }
-    
-    # Ensure NSSM is available
-    $nssm = Test-NssmInstalled
-    if (-not $nssm) {
-        $nssm = Install-Nssm
-    }
-    
-    $applicationPath = $null
-    $arguments = ""
-
+function Get-DesiredServiceDefinition {
     if ($Runtime -eq 'go') {
-        $goBinary = Resolve-GoBinaryPath -PreferredPath $resolvedBinaryPath
-        if (-not $goBinary) {
-            Write-Error "Go binary not found. Expected '$resolvedBinaryPath' or a built binary under '$ScriptDir\dist'. Build first with: go -C .\go build -o .\pingmonitor.exe .\go\cmd\pingmonitor"
-            exit 1
-        }
-        $applicationPath = $goBinary
-
-        $effectiveConfigPath = if ($ConfigPath) { $ConfigPath } else { Join-Path $ScriptDir "config.psd1" }
-        $effectiveEndpointsPath = if ($EndpointsPath) { $EndpointsPath } else { Join-Path $ScriptDir "endpoints.csv" }
-        $arguments = "--config `"$effectiveConfigPath`" --endpoints `"$effectiveEndpointsPath`""
-        if (-not $DisableUI -and -not [string]::IsNullOrWhiteSpace($UIListen)) {
-            $arguments += " --ui-listen `"$UIListen`""
-        }
-
-        Write-Host "Using Go binary: $applicationPath" -ForegroundColor Gray
-        Write-Host "Using config: $effectiveConfigPath" -ForegroundColor Gray
-        Write-Host "Using endpoints: $effectiveEndpointsPath" -ForegroundColor Gray
-        if (-not $DisableUI -and -not [string]::IsNullOrWhiteSpace($UIListen)) {
-            Write-Host "Using admin UI: http://$UIListen" -ForegroundColor Gray
+        $application = Resolve-GoBinary
+        $workDir = if ($WorkingDirectory) {
+            Resolve-AbsolutePath -Path $WorkingDirectory -BasePath $ScriptDir -MustExist -Directory
         }
         else {
-            Write-Host "Using admin UI: disabled" -ForegroundColor Gray
+            Split-Path -Parent $application
         }
+        $configFile = if ($ConfigPath) {
+            Resolve-AbsolutePath -Path $ConfigPath -BasePath $ScriptDir -MustExist
+        }
+        else {
+            Resolve-AbsolutePath -Path 'config.psd1' -BasePath $workDir -MustExist
+        }
+        $endpointFile = if ($EndpointsPath) {
+            Resolve-AbsolutePath -Path $EndpointsPath -BasePath $ScriptDir -MustExist
+        }
+        else {
+            Resolve-AbsolutePath -Path 'endpoints.csv' -BasePath $workDir -MustExist
+        }
+        if (-not $DisableUI) {
+            Assert-UIListenSafe -ListenAddress $UIListen -RemoteAllowed $AllowRemoteUI.IsPresent
+        }
+
+        $runtimeVersion = @(& $application --version 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "The selected Go binary failed its --version check: $application"
+        }
+        $validationOutput = @(& $application --validate --config $configFile --endpoints $endpointFile 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "The selected Go deployment failed runtime validation: $($validationOutput -join ' ')"
+        }
+        $args = @('--config', $configFile, '--endpoints', $endpointFile)
+        if (-not $DisableUI) {
+            $args += @('--ui-listen', $UIListen)
+        }
+        $displayVersion = ($runtimeVersion -join ' ').Trim()
+        $displayName = "Splunk Ping Monitor (Go $displayVersion)"
     }
     else {
-        # Verify selected legacy script exists
-        if (-not (Test-Path $PingMonitorScript)) {
-            Write-Error "PingMonitor script not found at: $PingMonitorScript"
-            exit 1
+        $scriptName = if ($PingMonitorScriptName) { $PingMonitorScriptName } elseif ($Version -eq 'v3.3.3') { 'PingMonitor_v3_3_3.ps1' } else { 'PingMonitor_v4_0_0.ps1' }
+        $monitorScript = Resolve-AbsolutePath -Path $scriptName -BasePath $ScriptDir -MustExist
+        $pwsh = (Get-Command pwsh.exe -ErrorAction SilentlyContinue).Source
+        if (-not $pwsh) {
+            throw 'PowerShell 7.4 or newer is required for the legacy PowerShell service runtime.'
+        }
+        $application = $pwsh
+        $workDir = if ($WorkingDirectory) { Resolve-AbsolutePath -Path $WorkingDirectory -BasePath $ScriptDir -MustExist -Directory } else { Split-Path -Parent $monitorScript }
+        $args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $monitorScript)
+        $configFile = $null
+        $endpointFile = $null
+        $displayVersion = $Version
+        $displayName = "Splunk Ping Monitor (PowerShell $Version)"
+    }
+
+    $logs = if ($LogDirectory) {
+        Resolve-AbsolutePath -Path $LogDirectory -BasePath $workDir
+    }
+    else {
+        Join-Path $workDir 'logs'
+    }
+
+    return [pscustomobject]@{
+        ServiceName       = $ServiceName
+        DisplayName       = $displayName
+        Description       = "Monitors network endpoints and sends truthful ping observations to Splunk ($displayVersion)"
+        Runtime           = $Runtime
+        RuntimeVersion    = $displayVersion
+        Application       = $application
+        Arguments         = $args
+        ArgumentString    = ConvertTo-ServiceArgumentString -Arguments $args
+        WorkingDirectory  = [IO.Path]::GetFullPath($workDir)
+        ConfigPath        = $configFile
+        EndpointsPath     = $endpointFile
+        UIListen          = if ($DisableUI) { $null } else { $UIListen }
+        LogDirectory      = [IO.Path]::GetFullPath($logs)
+        StdoutPath        = [IO.Path]::GetFullPath((Join-Path $logs 'service_stdout.log'))
+        StderrPath        = [IO.Path]::GetFullPath((Join-Path $logs 'service_stderr.log'))
+        StartupType       = $StartupType
+    }
+}
+
+function Get-ServiceObject {
+    return Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+}
+
+function Wait-ServiceState {
+    param([Parameter(Mandatory = $true)][string]$DesiredState)
+    $service = Get-ServiceObject
+    if (-not $service) {
+        throw "Service '$ServiceName' is not installed."
+    }
+    $service.WaitForStatus($DesiredState, [TimeSpan]::FromSeconds($WaitTimeoutSeconds))
+    $service.Refresh()
+    if ($service.Status.ToString() -ne $DesiredState) {
+        throw "Service '$ServiceName' did not reach $DesiredState within $WaitTimeoutSeconds seconds. Current state: $($service.Status)"
+    }
+    return $service
+}
+
+function Wait-ServiceRemoved {
+    $deadline = [DateTime]::UtcNow.AddSeconds($WaitTimeoutSeconds)
+    do {
+        if (-not (Get-ServiceObject)) { return }
+        Start-Sleep -Milliseconds 250
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Service '$ServiceName' was not removed within $WaitTimeoutSeconds seconds."
+}
+
+function Get-NssmSetting {
+    param([string[]]$Arguments)
+    $result = Invoke-Nssm -Arguments (@('get', $ServiceName) + $Arguments) -AllowFailure
+    if ($result.ExitCode -ne 0) { return $null }
+    return $result.Output.Trim()
+}
+
+function Assert-InstalledDefinition {
+    param([Parameter(Mandatory = $true)]$Definition)
+    $checks = @(
+        @{ Name = 'Application'; Actual = Get-NssmSetting @('Application'); Expected = $Definition.Application },
+        @{ Name = 'AppDirectory'; Actual = Get-NssmSetting @('AppDirectory'); Expected = $Definition.WorkingDirectory },
+        @{ Name = 'AppParameters'; Actual = Get-NssmSetting @('AppParameters'); Expected = $Definition.ArgumentString },
+        @{ Name = 'AppStdout'; Actual = Get-NssmSetting @('AppStdout'); Expected = $Definition.StdoutPath },
+        @{ Name = 'AppStderr'; Actual = Get-NssmSetting @('AppStderr'); Expected = $Definition.StderrPath }
+    )
+    $mismatches = foreach ($check in $checks) {
+        if ($check.Actual.Trim('"') -ne $check.Expected.Trim('"')) {
+            "$($check.Name): expected '$($check.Expected)', found '$($check.Actual)'"
+        }
+    }
+    if ($mismatches) {
+        throw "Installed service verification failed:`n$($mismatches -join [Environment]::NewLine)"
+    }
+}
+
+function Stop-ServiceInternal {
+    $service = Get-ServiceObject
+    if (-not $service) { throw "Service '$ServiceName' is not installed." }
+    if ($service.Status -eq 'Stopped') { return $service }
+    Stop-Service -Name $ServiceName
+    return Wait-ServiceState -DesiredState 'Stopped'
+}
+
+function Remove-ServiceInternal {
+    $service = Get-ServiceObject
+    if (-not $service) { return }
+    if ($service.Status -ne 'Stopped') {
+        Stop-ServiceInternal | Out-Null
+    }
+    Invoke-Nssm -Arguments @('remove', $ServiceName, 'confirm') | Out-Null
+    Wait-ServiceRemoved
+}
+
+function Install-PingMonitorService {
+    Assert-Administrator
+    $definition = Get-DesiredServiceDefinition
+    $existing = Get-ServiceObject
+    if ($existing -and -not $ForceReinstall) {
+        throw "Service '$ServiceName' already exists. Use -ForceReinstall to replace its definition safely."
+    }
+    if (-not $PSCmdlet.ShouldProcess($ServiceName, 'Install and configure Windows service')) { return }
+    if ($existing) {
+        Remove-ServiceInternal
+    }
+
+    New-Item -ItemType Directory -Path $definition.LogDirectory -Force | Out-Null
+    $script:NssmPath = Find-Nssm
+    try {
+        Invoke-Nssm -Arguments @('install', $ServiceName, $definition.Application, $definition.ArgumentString) | Out-Null
+        $startValue = switch ($StartupType) {
+            'AutomaticDelayedStart' { 'SERVICE_DELAYED_AUTO_START' }
+            'Automatic' { 'SERVICE_AUTO_START' }
+            'Manual' { 'SERVICE_DEMAND_START' }
+        }
+        $settings = @(
+            @('DisplayName', $definition.DisplayName),
+            @('Description', $definition.Description),
+            @('AppDirectory', $definition.WorkingDirectory),
+            @('Start', $startValue),
+            @('AppExit', 'Default', 'Restart'),
+            @('AppRestartDelay', '10000'),
+            @('AppThrottle', '1500'),
+            @('AppStopMethodSkip', '0'),
+            @('AppStopMethodConsole', '15000'),
+            @('AppStopMethodWindow', '1500'),
+            @('AppStopMethodThreads', '1500'),
+            @('AppStdout', $definition.StdoutPath),
+            @('AppStderr', $definition.StderrPath),
+            @('AppStdoutCreationDisposition', '4'),
+            @('AppStderrCreationDisposition', '4'),
+            @('AppRotateFiles', '1'),
+            @('AppRotateOnline', '1'),
+            @('AppRotateSeconds', '86400'),
+            @('AppRotateBytes', '10485760')
+        )
+        foreach ($setting in $settings) {
+            Invoke-Nssm -Arguments (@('set', $ServiceName) + $setting) | Out-Null
         }
 
-        # Find PowerShell 7
-        $pwshPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
-        if (-not $pwshPath) {
-            $commonPaths = @(
-                "$env:ProgramFiles\PowerShell\7\pwsh.exe",
-                "$env:ProgramFiles(x86)\PowerShell\7\pwsh.exe",
-                "$env:LOCALAPPDATA\Microsoft\PowerShell\7\pwsh.exe"
-            )
-            foreach ($path in $commonPaths) {
-                if (Test-Path $path) {
-                    $pwshPath = $path
-                    break
-                }
+        & sc.exe failure $ServiceName 'reset=' 86400 'actions=' 'restart/10000/restart/30000/restart/60000' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Unable to configure SCM recovery actions for '$ServiceName'." }
+        & sc.exe failureflag $ServiceName 1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Unable to enable SCM recovery actions for '$ServiceName'." }
+
+        Assert-InstalledDefinition -Definition $definition
+        if (-not $NoStart) {
+            Start-Service -Name $ServiceName
+            Wait-ServiceState -DesiredState 'Running' | Out-Null
+            Start-Sleep -Milliseconds 750
+            $service = Get-ServiceObject
+            $service.Refresh()
+            if ($service.Status -ne 'Running') {
+                throw "Service '$ServiceName' exited during startup stabilization. Review $($definition.StderrPath)."
             }
         }
-
-        if (-not $pwshPath) {
-            Write-Error "PowerShell 7 (pwsh.exe) not found. Please install PowerShell 7.4+"
-            exit 1
-        }
-
-        $applicationPath = $pwshPath
-        $arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$PingMonitorScript`""
-        Write-Host "Using PowerShell: $applicationPath" -ForegroundColor Gray
-        Write-Host "Using script: $PingMonitorScript" -ForegroundColor Gray
-        if ($DisableUI -or $uiListenWasBound) {
-            Write-Warning "UI parameters are ignored when -Runtime powershell is selected."
-        }
+    }
+    catch {
+        $installError = $_
+        try { Remove-ServiceInternal } catch { Write-Warning "Rollback failed: $($_.Exception.Message)" }
+        throw $installError
     }
 
-    Write-Host "Using NSSM: $nssm" -ForegroundColor Gray
-
-    # Install service with NSSM
-    & $nssm install $ServiceName $applicationPath $arguments
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Failed to install service"
-        exit 1
-    }
-    
-    # Configure service properties
-    & $nssm set $ServiceName DisplayName $ServiceDisplayName
-    & $nssm set $ServiceName Description $ServiceDescription
-    & $nssm set $ServiceName AppDirectory $ScriptDir
-    & $nssm set $ServiceName Start SERVICE_AUTO_START
-    
-    # Configure restart on failure
-    & $nssm set $ServiceName AppExit Default Restart
-    & $nssm set $ServiceName AppRestartDelay 10000
-    
-    # Configure logging (stdout/stderr to files)
-    $logDir = Join-Path $ScriptDir "logs"
-    if (-not (Test-Path $logDir)) {
-        New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-    }
-    
-    & $nssm set $ServiceName AppStdout (Join-Path $logDir "service_stdout.log")
-    & $nssm set $ServiceName AppStderr (Join-Path $logDir "service_stderr.log")
-    & $nssm set $ServiceName AppStdoutCreationDisposition 4
-    & $nssm set $ServiceName AppStderrCreationDisposition 4
-    & $nssm set $ServiceName AppRotateFiles 1
-    & $nssm set $ServiceName AppRotateBytes 10485760
-    
-    Write-Host "`n✅ Service installed successfully!" -ForegroundColor Green
-    Write-Host @"
-
-Service Name: $ServiceName
-Display Name: $ServiceDisplayName
-
-To start the service:
-  .\Install-Service.ps1 -Start
-  OR
-  Start-Service $ServiceName
-
-To reinstall targeting Go v5 (default):
-    .\Install-Service.ps1 -Uninstall
-    .\Install-Service.ps1 -Install -Runtime go
-
-To change the embedded admin UI bind address:
-    .\Install-Service.ps1 -Uninstall
-    .\Install-Service.ps1 -Install -Runtime go -UIListen 127.0.0.1:8090
-
-To disable the embedded admin UI for the Go runtime:
-    .\Install-Service.ps1 -Uninstall
-    .\Install-Service.ps1 -Install -Runtime go -DisableUI
-
-To install legacy PowerShell runtime:
-    .\Install-Service.ps1 -Install -Runtime powershell -Version v4.0.0
-
-To view status:
-  .\Install-Service.ps1 -Status
-  OR
-  Get-Service $ServiceName
-
-To view logs:
-  - Service logs: $logDir\service_stdout.log
-  - Ping results: $logDir\ping_results.log
-"@ -ForegroundColor White
+    Write-Host "Service '$ServiceName' installed and verified." -ForegroundColor Green
+    Write-Host "Application: $($definition.Application)"
+    Write-Host "Working directory: $($definition.WorkingDirectory)"
+    Write-Host "Configuration: $($definition.ConfigPath)"
+    Write-Host "Endpoints: $($definition.EndpointsPath)"
+    Write-Host "Logs: $($definition.LogDirectory)"
+    Write-Host "Startup: $StartupType"
+    Write-Host "State: $((Get-ServiceObject).Status)"
 }
 
 function Uninstall-PingMonitorService {
-    Write-Host "Uninstalling $ServiceDisplayName..." -ForegroundColor Cyan
-    
-    $service = Get-ServiceStatus
-    if (-not $service) {
-        Write-Warning "Service '$ServiceName' is not installed."
+    Assert-Administrator
+    if (-not (Get-ServiceObject)) {
+        Write-Host "Service '$ServiceName' is not installed."
         return
     }
-    
-    # Stop service if running
-    if ($service.Status -eq 'Running') {
-        Write-Host "Stopping service..." -ForegroundColor Yellow
-        Stop-Service -Name $ServiceName -Force
-        Start-Sleep -Seconds 2
-    }
-    
-    # Get NSSM
-    $nssm = Test-NssmInstalled
-    if (-not $nssm) {
-        # Try using sc.exe as fallback
-        Write-Host "NSSM not found, using sc.exe..." -ForegroundColor Yellow
-        & sc.exe delete $ServiceName
-    }
-    else {
-        & $nssm remove $ServiceName confirm
-    }
-    
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "✅ Service uninstalled successfully!" -ForegroundColor Green
-    }
-    else {
-        Write-Error "Failed to uninstall service"
+    if ($PSCmdlet.ShouldProcess($ServiceName, 'Stop and remove Windows service')) {
+        Remove-ServiceInternal
+        Write-Host "Service '$ServiceName' removed." -ForegroundColor Green
     }
 }
 
 function Start-PingMonitorService {
-    $service = Get-ServiceStatus
-    if (-not $service) {
-        Write-Error "Service '$ServiceName' is not installed. Use -Install first."
-        return
-    }
-    
-    if ($service.Status -eq 'Running') {
-        Write-Host "Service is already running." -ForegroundColor Yellow
-        return
-    }
-    
-    Write-Host "Starting $ServiceDisplayName..." -ForegroundColor Cyan
-    Start-Service -Name $ServiceName
-    Start-Sleep -Seconds 2
-    
-    $service = Get-ServiceStatus
-    if ($service.Status -eq 'Running') {
-        Write-Host "✅ Service started successfully!" -ForegroundColor Green
-    }
-    else {
-        Write-Warning "Service may not have started. Status: $($service.Status)"
+    Assert-Administrator
+    $service = Get-ServiceObject
+    if (-not $service) { throw "Service '$ServiceName' is not installed." }
+    if ($service.Status -eq 'Running') { Write-Host "Service '$ServiceName' is already running."; return }
+    if ($PSCmdlet.ShouldProcess($ServiceName, 'Start Windows service')) {
+        Start-Service -Name $ServiceName
+        Wait-ServiceState -DesiredState 'Running' | Out-Null
+        Write-Host "Service '$ServiceName' is running." -ForegroundColor Green
     }
 }
 
 function Stop-PingMonitorService {
-    $service = Get-ServiceStatus
-    if (-not $service) {
-        Write-Error "Service '$ServiceName' is not installed."
-        return
+    Assert-Administrator
+    if ($PSCmdlet.ShouldProcess($ServiceName, 'Stop Windows service')) {
+        Stop-ServiceInternal | Out-Null
+        Write-Host "Service '$ServiceName' is stopped." -ForegroundColor Green
     }
-    
-    if ($service.Status -ne 'Running') {
-        Write-Host "Service is not running." -ForegroundColor Yellow
-        return
-    }
-    
-    Write-Host "Stopping $ServiceDisplayName..." -ForegroundColor Cyan
-    Stop-Service -Name $ServiceName -Force
-    Start-Sleep -Seconds 2
-    
-    $service = Get-ServiceStatus
-    if ($service.Status -eq 'Stopped') {
-        Write-Host "✅ Service stopped successfully!" -ForegroundColor Green
-    }
-    else {
-        Write-Warning "Service may not have stopped. Status: $($service.Status)"
+}
+
+function Restart-PingMonitorService {
+    Assert-Administrator
+    $service = Get-ServiceObject
+    if (-not $service) { throw "Service '$ServiceName' is not installed." }
+    if ($PSCmdlet.ShouldProcess($ServiceName, 'Restart Windows service')) {
+        if ($service.Status -ne 'Stopped') { Stop-ServiceInternal | Out-Null }
+        Start-Service -Name $ServiceName
+        Wait-ServiceState -DesiredState 'Running' | Out-Null
+        Write-Host "Service '$ServiceName' restarted successfully." -ForegroundColor Green
     }
 }
 
 function Show-ServiceStatus {
-    $service = Get-ServiceStatus
-    
-    Write-Host "`n========================================" -ForegroundColor Cyan
-    Write-Host "  Splunk Ping Monitor Service Status" -ForegroundColor Cyan
-    Write-Host "========================================`n" -ForegroundColor Cyan
-    
+    $service = Get-ServiceObject
     if (-not $service) {
-        Write-Host "Status: NOT INSTALLED" -ForegroundColor Yellow
-        Write-Host "`nUse -Install to install the service." -ForegroundColor Gray
-        return
+        $result = [pscustomobject]@{ ServiceName = $ServiceName; Installed = $false; Status = 'NotInstalled' }
     }
-    
-    $statusColor = switch ($service.Status) {
-        'Running' { 'Green' }
-        'Stopped' { 'Red' }
-        default { 'Yellow' }
+    else {
+        $cim = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'"
+        $script:NssmPath = try { Find-Nssm } catch { $null }
+        $result = [pscustomobject]@{
+            ServiceName       = $service.Name
+            DisplayName       = $service.DisplayName
+            Installed         = $true
+            Status            = $service.Status.ToString()
+            StartType         = $service.StartType.ToString()
+            ProcessId         = $cim.ProcessId
+            Application       = if ($script:NssmPath) { Get-NssmSetting @('Application') } else { $null }
+            Arguments         = if ($script:NssmPath) { Get-NssmSetting @('AppParameters') } else { $null }
+            WorkingDirectory  = if ($script:NssmPath) { Get-NssmSetting @('AppDirectory') } else { $null }
+            StdoutPath        = if ($script:NssmPath) { Get-NssmSetting @('AppStdout') } else { $null }
+            StderrPath        = if ($script:NssmPath) { Get-NssmSetting @('AppStderr') } else { $null }
+            ExitAction        = if ($script:NssmPath) { Get-NssmSetting @('AppExit', 'Default') } else { $null }
+        }
     }
-    
-    Write-Host "Service Name:    $($service.Name)"
-    Write-Host "Display Name:    $($service.DisplayName)"
-    Write-Host "Status:          $($service.Status)" -ForegroundColor $statusColor
-    Write-Host "Start Type:      $($service.StartType)"
-    
-    # Show recent log entries if available
-    $logPath = Join-Path $ScriptDir "logs\ping_results.log"
-    if (Test-Path $logPath) {
-        $logInfo = Get-Item $logPath
-        Write-Host "`nLog File:        $logPath"
-        Write-Host "Log Size:        $([math]::Round($logInfo.Length / 1KB, 2)) KB"
-        Write-Host "Last Modified:   $($logInfo.LastWriteTime)"
-    }
-    
-    Write-Host "`n----------------------------------------" -ForegroundColor Gray
-    Write-Host "Commands:" -ForegroundColor Gray
-    Write-Host "  Start:     .\Install-Service.ps1 -Start"
-    Write-Host "  Stop:      .\Install-Service.ps1 -Stop"
-    Write-Host "  Uninstall: .\Install-Service.ps1 -Uninstall"
+    if ($Json) { $result | ConvertTo-Json -Depth 4; return }
+    $result | Format-List
 }
-#endregion
 
-#region Main Execution
+function Test-ServiceDefinition {
+    $definition = Get-DesiredServiceDefinition
+    $script:NssmPath = Find-Nssm
+    $result = [pscustomobject]@{
+        Valid             = $true
+        NssmPath          = $script:NssmPath
+        ServiceName       = $definition.ServiceName
+        Runtime           = $definition.Runtime
+        RuntimeVersion    = $definition.RuntimeVersion
+        Application       = $definition.Application
+        Arguments         = $definition.ArgumentString
+        WorkingDirectory  = $definition.WorkingDirectory
+        ConfigPath        = $definition.ConfigPath
+        EndpointsPath     = $definition.EndpointsPath
+        UIListen          = $definition.UIListen
+        LogDirectory      = $definition.LogDirectory
+        StartupType       = $definition.StartupType
+    }
+    if ($Json) { $result | ConvertTo-Json -Depth 4; return }
+    Write-Host 'Service definition is valid.' -ForegroundColor Green
+    $result | Format-List
+}
+
 switch ($PSCmdlet.ParameterSetName) {
     'Install' { Install-PingMonitorService }
     'Uninstall' { Uninstall-PingMonitorService }
     'Start' { Start-PingMonitorService }
     'Stop' { Stop-PingMonitorService }
-    'Status' { Show-ServiceStatus }
+    'Restart' { Restart-PingMonitorService }
+    'Validate' { Test-ServiceDefinition }
+    default { Show-ServiceStatus }
 }
-#endregion

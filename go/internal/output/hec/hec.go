@@ -6,354 +6,273 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"path/filepath"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
-	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
+	"github.com/google/uuid"
 )
 
 type Writer struct {
-	cfg           config.HEC
-	hostname      string
-	client        *http.Client
-	buf           bytes.Buffer
-	eventCount    int
-	bufferBytes   int
-	droppedEvents int
-	capThreshold  int // bytes
-	lastWarn      time.Time
-	nextAttempt   time.Time
-	failures      int
+	cfg      config.HEC
+	hostname string
+	client   *http.Client
+	channel  string
+	ackURL   string
 }
 
-func New(cfg config.HEC, hostname string) (*Writer, error) {
-	if cfg.URL == "" || cfg.Token == "" {
+func New(cfg config.HEC, hostname string, collectorID string) (*Writer, error) {
+	if strings.TrimSpace(cfg.URL) == "" || strings.TrimSpace(cfg.Token) == "" {
 		return nil, errors.New("hec enabled but url/token not configured")
 	}
-
-	client := httpcfg.NewClient(cfg.VerifySSL, cfg.SSLProtocol, 10*time.Second)
-
-	w := &Writer{cfg: cfg, hostname: hostname, client: client, capThreshold: 2 * 1024 * 1024}
-	return w, nil
-}
-
-func (w *Writer) AddOne(ev interface{}) error {
-	return w.add(ev)
-}
-
-func (w *Writer) AddMany(list interface{}) error {
-	// Manager calls AddMany for []models.PingEvent.
-	switch vv := list.(type) {
-	case []models.PingEvent:
-		for i := range vv {
-			if err := w.add(vv[i]); err != nil {
-				return err
-			}
+	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(cfg.URL))
+	if err != nil || parsedURL.Host == "" || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") {
+		return nil, fmt.Errorf("HEC URL must be an absolute http(s) URL: %q", cfg.URL)
+	}
+	channel := strings.TrimSpace(cfg.Channel)
+	if channel == "" {
+		channel = uuid.NewSHA1(uuid.NameSpaceURL, []byte("ping-monitor:"+collectorID)).String()
+	}
+	if _, err := uuid.Parse(channel); err != nil {
+		return nil, fmt.Errorf("HEC channel must be a GUID: %w", err)
+	}
+	ackURL := ""
+	if cfg.UseACK {
+		var err error
+		ackURL, err = deriveACKURL(cfg.URL)
+		if err != nil {
+			return nil, err
 		}
-	default:
-		// If unknown slice type, let json marshal it as array (still acceptable for buffering caps).
-		return w.add(vv)
 	}
-	return nil
+	return &Writer{
+		cfg: cfg, hostname: hostname,
+		client:  httpcfg.NewClient(cfg.VerifySSL, cfg.SSLProtocol, 10*time.Second),
+		channel: channel, ackURL: ackURL,
+	}, nil
 }
 
-func (w *Writer) add(event interface{}) error {
-	// Expect event has a timestamp field formatted as ISO 8601.
-	unix := int64(0)
-	switch e := event.(type) {
-	case models.PingEvent:
-		unix = util.UnixSecondsFromISO(e.Timestamp)
-	case models.SummaryEvent:
-		unix = util.UnixSecondsFromISO(e.Timestamp)
-	default:
-		// best-effort: no timestamp
-		unix = time.Now().UTC().Unix()
+func (w *Writer) BatchSize() int {
+	if w.cfg.BatchSize < 1 {
+		return 100
 	}
-
-	he := models.HECEvent{
-		Time:       unix,
-		Host:       w.hostname,
-		Source:     "ping_monitor",
-		SourceType: w.cfg.SourceType,
-		Index:      w.cfg.Index,
-		Event:      event,
-	}
-
-	b, err := json.Marshal(he)
-	if err != nil {
-		return err
-	}
-	bytesToAdd := len(b) + 1
-
-	if (w.eventCount+1) > w.cfg.MaxBufferEvents || (w.bufferBytes+bytesToAdd) > parseSizeBytes(w.cfg.MaxBufferBytes, 5*1024*1024) {
-		w.droppedEvents++
-		return nil
-	}
-
-	if w.eventCount > 0 {
-		w.buf.WriteByte('\n')
-	}
-	w.buf.Write(b)
-	w.eventCount++
-	w.bufferBytes += bytesToAdd
-
-	if w.eventCount >= w.cfg.BatchSize {
-		flushCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		return w.Flush(flushCtx)
-	}
-	return nil
+	return w.cfg.BatchSize
 }
 
-func (w *Writer) Flush(ctx context.Context) error {
-	if w.eventCount == 0 {
+func (w *Writer) SendEvents(ctx context.Context, events []json.RawMessage) error {
+	if len(events) == 0 {
 		return nil
 	}
-	// Avoid tight retry loops when Add triggers Flush on every event after BatchSize.
-	if !w.nextAttempt.IsZero() && time.Now().Before(w.nextAttempt) {
-		return nil
+	lines := make([]json.RawMessage, 0, len(events))
+	for _, event := range events {
+		var timestamp struct {
+			Timestamp string `json:"timestamp"`
+		}
+		_ = json.Unmarshal(event, &timestamp)
+		unix := util.UnixTimeFromISO(timestamp.Timestamp)
+		if unix <= 0 {
+			unix = float64(time.Now().UTC().UnixNano()) / float64(time.Second)
+		}
+		envelope := models.HECEvent{
+			Time: unix, Host: w.hostname, Source: "ping_monitor",
+			SourceType: w.cfg.SourceType, Index: w.cfg.Index, Event: event,
+		}
+		encoded, err := json.Marshal(envelope)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, encoded)
 	}
-	body := w.buf.Bytes()
-	ok := w.postWithRetry(ctx, body)
-	if ok {
-		w.failures = 0
-		w.nextAttempt = time.Time{}
-		w.resetBuffer()
-		return nil
-	}
-
-	w.failures++
-	w.nextAttempt = time.Now().Add(w.nextAttemptDelay())
-	w.warnRateLimited("hec delivery failed; will retry", map[string]interface{}{
-		"hec_url":          w.cfg.URL,
-		"buffer_events":    w.eventCount,
-		"buffer_bytes":     w.bufferBytes,
-		"drop_on_failure":  w.cfg.DropOnFailure,
-		"consec_failures":  w.failures,
-		"next_attempt_sec": int(w.nextAttempt.Sub(time.Now()).Seconds()),
-	})
-
-	if w.cfg.DropOnFailure {
-		w.resetBuffer()
-		return nil
-	}
-	// Keep buffer for a later retry, but do not fail the whole process.
-	return nil
+	return w.SendPayloads(ctx, lines)
 }
 
-func (w *Writer) nextAttemptDelay() time.Duration {
-	baseDelayMs := 1000
-	if w.cfg.Retry.Enabled {
-		baseDelayMs = max(100, w.cfg.Retry.BaseDelayMs)
-	} else if w.cfg.RetryDelayMs > 0 {
-		baseDelayMs = max(100, w.cfg.RetryDelayMs)
+// SendPayloads sends already-formed HEC JSON envelopes as one request.
+func (w *Writer) SendPayloads(ctx context.Context, payloads []json.RawMessage) error {
+	if len(payloads) == 0 {
+		return nil
 	}
-
-	d := time.Duration(baseDelayMs) * time.Millisecond
-	// Exponential backoff between flush calls, capped.
-	shift := w.failures - 1
-	if shift < 0 {
-		shift = 0
+	lines := make([][]byte, len(payloads))
+	for i := range payloads {
+		lines[i] = payloads[i]
 	}
-	if shift > 6 {
-		shift = 6
-	}
-	d = d * time.Duration(1<<shift)
-	if d > 30*time.Second {
-		d = 30 * time.Second
-	}
-	return d
+	body := bytes.Join(lines, []byte("\n"))
+	return w.postWithRetry(ctx, body)
 }
 
-func (w *Writer) warnRateLimited(msg string, fields map[string]interface{}) {
-	// Keep logs helpful during outages without spamming.
-	if time.Since(w.lastWarn) < 30*time.Second {
-		return
-	}
-	w.lastWarn = time.Now()
-	diagnostics.LogWarn(msg, fields)
-}
-
-func (w *Writer) postWithRetry(ctx context.Context, body []byte) bool {
-	attempts := 0
+func (w *Writer) postWithRetry(ctx context.Context, body []byte) error {
 	maxAttempts := 1
 	baseDelay := 0
 	jitterPct := 0
 	backoff := "fixed"
-
 	if w.cfg.Retry.Enabled {
-		if w.cfg.Retry.MaxAttempts > 0 {
-			maxAttempts = w.cfg.Retry.MaxAttempts
-		}
-		baseDelay = w.cfg.Retry.BaseDelayMs
-		jitterPct = w.cfg.Retry.JitterPct
-		backoff = w.cfg.Retry.Backoff
+		maxAttempts = max(1, w.cfg.Retry.MaxAttempts)
+		baseDelay = max(0, w.cfg.Retry.BaseDelayMs)
+		jitterPct = max(0, w.cfg.Retry.JitterPct)
+		backoff = strings.ToLower(w.cfg.Retry.Backoff)
 	} else if w.cfg.RetryCount > 0 {
 		maxAttempts = max(1, w.cfg.RetryCount+1)
 		baseDelay = max(0, w.cfg.RetryDelayMs)
-		jitterPct = 0
-		backoff = "fixed"
 	}
 
-	for attempts < maxAttempts {
-		attempts++
-		if w.postOnce(ctx, body) {
-			return true
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := w.postOnce(ctx, body); err == nil {
+			return nil
+		} else {
+			lastErr = err
 		}
-		if attempts >= maxAttempts {
+		if attempt == maxAttempts {
 			break
 		}
 		delay := time.Duration(baseDelay) * time.Millisecond
 		if backoff == "exponential" {
-			shift := attempts - 1
-			if shift < 0 {
-				shift = 0
-			}
-			delay = delay * time.Duration(1<<shift)
+			delay *= time.Duration(1 << min(attempt-1, 6))
 		}
-		if jitterPct > 0 {
-			// deterministic jitter is fine; avoid rand import here.
-			adj := int64(delay) * int64(jitterPct) / 100
-			delay = time.Duration(max64(0, int64(delay)-adj))
+		if jitterPct > 0 && delay > 0 {
+			span := int64(delay) * int64(jitterPct) / 100
+			if span > 0 {
+				delay += time.Duration((time.Now().UnixNano() % (span*2 + 1)) - span)
+			}
 		}
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
-			return false
+			return errors.Join(lastErr, ctx.Err())
 		}
 	}
-	return false
+	return fmt.Errorf("HEC delivery failed after %d attempt(s): %w", maxAttempts, lastErr)
 }
 
-func (w *Writer) postOnce(ctx context.Context, body []byte) bool {
+func (w *Writer) postOnce(ctx context.Context, body []byte) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return false
+		return err
 	}
-	req.Header.Set("Authorization", "Splunk "+w.cfg.Token)
-	req.Header.Set("Content-Type", "application/json")
+	w.setHeaders(req)
 	resp, err := w.client.Do(req)
 	if err != nil {
-		w.deadLetter(body)
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return true
-	}
-	w.deadLetter(body)
-	return false
-}
-
-func (w *Writer) deadLetter(body []byte) {
-	if !w.cfg.DropOnFailure {
-		return
-	}
-	if strings.TrimSpace(w.cfg.DeadLetterPath) == "" {
-		return
-	}
-	if w.cfg.DeadLetterRotationSizeMB > 0 {
-		_ = rotateIfNeeded(w.cfg.DeadLetterPath, w.cfg.DeadLetterRotationSizeMB)
-	}
-	// Best-effort append; ignore errors.
-	_ = appendFile(w.cfg.DeadLetterPath, body)
-}
-
-func (w *Writer) resetBuffer() {
-	if cap(w.buf.Bytes()) > w.capThreshold {
-		w.buf = bytes.Buffer{}
-	} else {
-		w.buf.Reset()
-	}
-	w.eventCount = 0
-	w.bufferBytes = 0
-}
-
-func (w *Writer) Close() error {
-	w.resetBuffer()
-	return nil
-}
-
-func parseSizeBytes(s string, def int) int {
-	s = strings.TrimSpace(strings.ToUpper(s))
-	if s == "" {
-		return def
-	}
-	var n float64
-	var unit string
-	_, _ = fmt.Sscanf(s, "%f%s", &n, &unit)
-	mult := 1.0
-	switch unit {
-	case "KB":
-		mult = 1024
-	case "MB":
-		mult = 1024 * 1024
-	case "GB":
-		mult = 1024 * 1024 * 1024
-	case "TB":
-		mult = 1024 * 1024 * 1024 * 1024
-	case "":
-		mult = 1
-	default:
-		mult = 1
-	}
-	if n <= 0 {
-		return def
-	}
-	return int(n * mult)
-}
-
-func appendFile(path string, body []byte) error {
-	// Ensure newline in file.
-	b := body
-	if len(b) == 0 || b[len(b)-1] != '\n' {
-		b = append(b, '\n')
-	}
-	f, err := openAppend(path)
-	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.Write(b)
-	return err
-}
-
-func openAppend(path string) (*os.File, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
+	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	closeErr := resp.Body.Close()
+	if readErr != nil {
+		return readErr
 	}
-	return os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-}
-
-func rotateIfNeeded(path string, maxMB int) error {
-	if maxMB <= 0 {
+	if closeErr != nil {
+		return closeErr
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HEC returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+	}
+	if !w.cfg.UseACK {
 		return nil
 	}
-	st, err := os.Stat(path)
+	ackID, err := parseACKID(responseBody)
 	if err != nil {
-		return nil
+		return fmt.Errorf("HEC indexer acknowledgment response invalid: %w", err)
 	}
-	if st.Size() < int64(maxMB)*1024*1024 {
-		return nil
-	}
-	stamp := time.Now().UTC().Format("20060102_150405")
-	arch := path
-	if filepath.Ext(arch) == ".log" {
-		arch = arch[:len(arch)-4]
-	}
-	arch = fmt.Sprintf("%s_%s.log", arch, stamp)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return os.Rename(path, arch)
+	return w.waitForACK(ctx, ackID)
 }
+
+func (w *Writer) waitForACK(parent context.Context, ackID string) error {
+	timeout := time.Duration(max(1, w.cfg.ACKTimeoutSeconds)) * time.Second
+	poll := time.Duration(max(50, w.cfg.ACKPollIntervalMs)) * time.Millisecond
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	requestBody, _ := json.Marshal(map[string][]json.RawMessage{
+		"acks": {json.RawMessage(ackID)},
+	})
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.ackURL, bytes.NewReader(requestBody))
+		if err != nil {
+			return err
+		}
+		w.setHeaders(req)
+		resp, err := w.client.Do(req)
+		if err == nil {
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+			_ = resp.Body.Close()
+			if readErr == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				var result struct {
+					ACKs map[string]bool `json:"acks"`
+				}
+				if json.Unmarshal(body, &result) == nil && result.ACKs[ackID] {
+					return nil
+				}
+			}
+		}
+		select {
+		case <-time.After(poll):
+		case <-ctx.Done():
+			return fmt.Errorf("HEC indexer acknowledgment %s was not confirmed within %s: %w", ackID, timeout, ctx.Err())
+		}
+	}
+}
+
+func (w *Writer) setHeaders(req *http.Request) {
+	req.Header.Set("Authorization", "Splunk "+w.cfg.Token)
+	req.Header.Set("Content-Type", "application/json")
+	if w.cfg.UseACK {
+		req.Header.Set("X-Splunk-Request-Channel", w.channel)
+	}
+}
+
+func deriveACKURL(endpoint string) (string, error) {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return "", fmt.Errorf("parse HEC URL: %w", err)
+	}
+	marker := "/services/collector"
+	index := strings.Index(parsed.Path, marker)
+	if index < 0 {
+		return "", fmt.Errorf("HEC URL must contain %s", marker)
+	}
+	parsed.Path = parsed.Path[:index] + marker + "/ack"
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String(), nil
+}
+
+func parseACKID(body []byte) (string, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+	var raw json.RawMessage
+	for key, value := range response {
+		if strings.EqualFold(key, "ackId") || strings.EqualFold(key, "ackID") {
+			raw = value
+			break
+		}
+	}
+	if len(raw) == 0 {
+		return "", errors.New("ackId is missing")
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		if _, err := strconv.ParseInt(text, 10, 64); err != nil {
+			return "", fmt.Errorf("ackId %q is not numeric", text)
+		}
+		return text, nil
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err != nil {
+		return "", fmt.Errorf("ackId has unsupported type: %s", raw)
+	}
+	if _, err := number.Int64(); err != nil {
+		return "", fmt.Errorf("ackId %q is not an integer", number.String())
+	}
+	return number.String(), nil
+}
+
+func (w *Writer) Close() error { return nil }
 
 func max(a, b int) int {
 	if a > b {
@@ -362,8 +281,8 @@ func max(a, b int) int {
 	return b
 }
 
-func max64(a, b int64) int64 {
-	if a > b {
+func min(a, b int) int {
+	if a < b {
 		return a
 	}
 	return b

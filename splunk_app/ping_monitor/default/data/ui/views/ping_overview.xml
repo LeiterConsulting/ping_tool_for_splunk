@@ -67,6 +67,7 @@
       <fieldForValue>group</fieldForValue>
       <search>
         <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | stats count by group | fields group | sort group</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -84,6 +85,7 @@
       <fieldForValue>entitytype</fieldForValue>
       <search>
         <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary entitytype=*
+| `ping_normalize`
 | stats count by entitytype | fields entitytype | sort entitytype</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -97,6 +99,7 @@
       <fieldForValue>device</fieldForValue>
       <search>
         <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary device=*
+| `ping_normalize`
 | stats count by device | fields device | sort device</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -110,6 +113,7 @@
       <fieldForValue>vendor</fieldForValue>
       <search>
         <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary vendor=*
+| `ping_normalize`
 | stats count by vendor | fields vendor | sort vendor</query>
         <earliest>-24h@h</earliest>
         <latest>now</latest>
@@ -136,6 +140,7 @@
         <title>Total Endpoints</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats dc(target_ip) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
@@ -153,6 +158,7 @@
         <title>Overall Availability</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=round((success/total)*100, 2)
@@ -174,6 +180,7 @@
         <title>Average Latency</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats avg(avg_latency_ms) as avg_latency
 | eval avg_latency=round(avg_latency, 2)</query>
@@ -194,6 +201,7 @@
         <title>Hosts with Issues</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss &gt; 0
@@ -217,6 +225,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | timechart span=5m avg(eval(100-packet_loss_pct)) as availability by group</query>
           <earliest>$time_range.earliest$</earliest>
@@ -241,6 +250,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | timechart span=5m avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency</query>
           <earliest>$time_range.earliest$</earliest>
@@ -260,6 +270,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats avg(avg_latency_ms) as avg_latency, max(max_latency_ms) as max_latency, min(min_latency_ms) as min_latency by hostname
 | sort -avg_latency
@@ -283,6 +294,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | timechart span=5m avg(packet_loss_pct) as avg_packet_loss by hostname</query>
           <earliest>$time_range.earliest$</earliest>
@@ -302,6 +314,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | eval loss_bucket=case(
     packet_loss_pct==0, "0% (No Loss)",
@@ -329,9 +342,14 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats latest(_time) as last_check_epoch,
+		latest(hostname) as hostname,
+		latest(target_ip) as target_ip,
         latest(packet_loss_pct) as packet_loss,
+		latest(effective_state) as effective_state,
+        latest(stale_after_seconds) as stale_after_seconds,
         latest(avg_latency_ms) as avg_latency,
         latest(min_latency_ms) as min_latency,
         latest(max_latency_ms) as max_latency,
@@ -342,14 +360,10 @@
         values(entitytype) as entitytype,
         values(device) as device,
         values(vendor) as vendor
-        by hostname, target_ip
+        by endpoint_key
 | eval last_check=strftime(last_check_epoch, "%Y-%m-%d %H:%M:%S")
-| eval status=case(
-    packet_loss==0, "Healthy",
-    packet_loss&gt;0 AND packet_loss&lt;50, "Degraded",
-    packet_loss&gt;=50 AND packet_loss&lt;100, "Critical",
-    packet_loss==100, "Down"
-)
+| `ping_apply_stale_state(last_check_epoch, stale_after_seconds)`
+| `ping_apply_status_label`
 | eval avg_latency=if(avg_latency&gt;0, round(avg_latency, 2)." ms", "N/A")
 | eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
 | eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
@@ -373,6 +387,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats sum(pings_successful) as success, sum(pings_sent) as total by group
 | eval availability=round((success/total)*100, 2)
@@ -394,6 +409,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats dc(hostname) as host_count by group
 | sort -host_count</query>
@@ -413,6 +429,7 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=ping
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | eval status_label=if(status=="success", "Success", "Failed")
 | eval latency_display=if(latency_ms&gt;0, latency_ms." ms", "N/A")
@@ -617,6 +634,8 @@
       <table>
         <search>
           <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.state_code") as state_code,
+        latest("ping.stale_after_seconds") as stale_after_seconds,
         latest("ping.avg_latency_ms") as avg_latency,
         latest("ping.min_latency_ms") as min_latency,
         latest("ping.max_latency_ms") as max_latency,
@@ -625,12 +644,10 @@
         WHERE index="$pm_metrics_index$" (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
         BY hostname, target_ip, group
 | eval last_check=strftime(_time, "%Y-%m-%d %H:%M:%S")
-| eval status=case(
-    packet_loss==0, "Healthy",
-    packet_loss&gt;0 AND packet_loss&lt;50, "Degraded",
-    packet_loss&gt;=50 AND packet_loss&lt;100, "Critical",
-    packet_loss==100, "Down"
-)
+| eval packet_loss_pct=packet_loss
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| `ping_apply_status_label`
 | eval avg_latency=if(avg_latency&gt;0, round(avg_latency, 2)." ms", "N/A")
 | eval min_latency=if(min_latency&gt;0, round(min_latency, 2)." ms", "N/A")
 | eval max_latency=if(max_latency&gt;0, round(max_latency, 2)." ms", "N/A")
@@ -702,6 +719,7 @@
         <title>Endpoints (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats dc(target_ip) as total_endpoints</query>
           <earliest>$time_range.earliest$</earliest>
@@ -735,6 +753,7 @@
         <title>Availability (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats sum(pings_successful) as success, sum(pings_sent) as total
 | eval availability=round((success/total)*100, 2)
@@ -778,6 +797,7 @@
         <title>Average Latency (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary avg_latency_ms&gt;0
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats avg(avg_latency_ms) as avg_latency
 | eval avg_latency=round(avg_latency, 2)</query>
@@ -816,6 +836,7 @@
         <title>Hosts with Issues (Events)</title>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats latest(packet_loss_pct) as packet_loss by hostname
 | where packet_loss &gt; 0
@@ -856,6 +877,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | timechart span=5m avg(eval(100-packet_loss_pct)) as "Events Availability"
 | join type=outer _time [| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" span=5m | eval "Metrics Availability"=100-packet_loss | fields _time "Metrics Availability"]
@@ -882,26 +904,28 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats latest(packet_loss_pct) as events_loss, 
+        latest(_time) as events_last_check,
         latest(avg_latency_ms) as events_latency,
+        latest(effective_state) as effective_state,
+        latest(stale_after_seconds) as stale_after_seconds,
         latest(group) as group
         by hostname, target_ip
-| eval events_status=case(
-  events_loss==0, "Healthy",
-  events_loss&gt;0 AND events_loss&lt;50, "Degraded",
-  events_loss&gt;=50 AND events_loss&lt;100, "Critical",
-  events_loss==100, "Down"
-)
+| `ping_apply_stale_state(events_last_check, stale_after_seconds)`
+| `ping_apply_health_label`
+| rename health_status as events_status
 | join type=outer hostname [| mstats latest("ping.packet_loss_pct") as metrics_loss,
+        latest("ping.state_code") as state_code,
+        latest("ping.stale_after_seconds") as stale_after_seconds,
         latest("ping.avg_latency_ms") as metrics_latency
         WHERE index="$pm_metrics_index$" BY hostname
-| eval metrics_status=case(
-  metrics_loss==0, "Healthy",
-  metrics_loss&gt;0 AND metrics_loss&lt;50, "Degraded",
-  metrics_loss&gt;=50 AND metrics_loss&lt;100, "Critical",
-  metrics_loss==100, "Down"
-)]
+| eval packet_loss_pct=metrics_loss
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| `ping_apply_health_label`
+| rename health_status as metrics_status]
 | eval events_latency=round(events_latency, 2)
 | eval metrics_latency=round(metrics_latency, 2)
 | eval match=if(events_status==metrics_status, "Match", "Mismatch")
@@ -925,6 +949,7 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | search (group="$group_filter$" OR "$group_filter$"="*") hostname=$hostname_filter$ (entitytype="$entitytype_filter$" OR "$entitytype_filter$"="*") (device="$device_filter$" OR "$device_filter$"="*") (vendor="$vendor_filter$" OR "$vendor_filter$"="*")
 | stats sum(pings_successful) as success, sum(pings_sent) as total by group
 | eval events_availability=round((success/total)*100, 2)

@@ -548,13 +548,17 @@
                       <span>Retry Delay (ms)</span>
                       <input id="cfg-hec-retry-delay-ms" class="text-input" type="number" min="0">
                     </label>
-                    <label class="field-group field-span-2">
-                      <span>Dead Letter Path</span>
-                      <input id="cfg-hec-dead-letter-path" class="text-input" type="text">
+                    <label class="field-group">
+                      <span>ACK Timeout (seconds)</span>
+                      <input id="cfg-hec-ack-timeout" class="text-input" type="number" min="1">
                     </label>
                     <label class="field-group">
-                      <span>Dead Letter Rotation (MB)</span>
-                      <input id="cfg-hec-dead-letter-rotation" class="text-input" type="number" min="0">
+                      <span>ACK Poll Interval (ms)</span>
+                      <input id="cfg-hec-ack-poll" class="text-input" type="number" min="50">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>ACK Channel GUID (blank = stable collector GUID)</span>
+                      <input id="cfg-hec-channel" class="text-input" type="text">
                     </label>
                   </div>
                   <div class="checkbox-stack">
@@ -563,12 +567,12 @@
                       <span>Verify TLS certificates.</span>
                     </label>
                     <label class="checkbox-row">
-                      <input id="cfg-hec-drop-on-failure" type="checkbox">
-                      <span>Drop event batches when delivery fails.</span>
-                    </label>
-                    <label class="checkbox-row">
                       <input id="cfg-hec-retry-enabled" type="checkbox">
                       <span>Enable structured retry policy.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-hec-use-ack" type="checkbox">
+                      <span>Require Splunk indexer acknowledgment.</span>
                     </label>
                   </div>
                   <div class="field-grid">
@@ -646,6 +650,18 @@
                       <span>Max Buffer Bytes</span>
                       <input id="cfg-metrics-max-buffer-bytes" class="text-input" type="text">
                     </label>
+                    <label class="field-group">
+                      <span>ACK Timeout (seconds)</span>
+                      <input id="cfg-metrics-ack-timeout" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>ACK Poll Interval (ms)</span>
+                      <input id="cfg-metrics-ack-poll" class="text-input" type="number" min="50">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>ACK Channel GUID (blank = stable collector GUID)</span>
+                      <input id="cfg-metrics-channel" class="text-input" type="text">
+                    </label>
                   </div>
                   <div class="checkbox-stack">
                     <label class="checkbox-row">
@@ -659,6 +675,37 @@
                     <label class="checkbox-row">
                       <input id="cfg-metrics-use-metrics-index" type="checkbox">
                       <span>Use Splunk metrics index semantics.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="cfg-metrics-use-ack" type="checkbox">
+                      <span>Require Splunk indexer acknowledgment.</span>
+                    </label>
+                  </div>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Durable Delivery</h3>
+                      <p class="summary-note">Every completed network-output cycle is persisted before delivery. Capacity exhaustion fails closed instead of discarding signal.</p>
+                    </div>
+                  </div>
+                  <div class="field-grid">
+                    <label class="field-group field-span-2">
+                      <span>Outbox Path</span>
+                      <input id="cfg-delivery-spool-path" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Maximum Outbox Bytes</span>
+                      <input id="cfg-delivery-max-bytes" class="text-input" type="text">
+                    </label>
+                    <label class="field-group">
+                      <span>Maximum Envelopes</span>
+                      <input id="cfg-delivery-max-envelopes" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Drain Batch Limit</span>
+                      <input id="cfg-delivery-drain-max" class="text-input" type="number" min="1">
                     </label>
                   </div>
                 </article>

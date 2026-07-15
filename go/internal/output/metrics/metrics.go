@@ -1,164 +1,65 @@
 package metrics
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"net/http"
-	"strings"
-	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
-	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
-	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/hec"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 )
 
-type Buffer struct {
-	cfg          config.Metrics
-	hostname     string
-	client       *http.Client
-	buf          bytes.Buffer
-	count        int
-	bytes        int
-	capThreshold int
-	lastWarn     time.Time
-	nextAttempt  time.Time
-	failures     int
+type Sender struct {
+	cfg       config.Metrics
+	hostname  string
+	transport *hec.Writer
 }
 
-func New(cfg config.Metrics, hostname string) *Buffer {
-	client := httpcfg.NewClient(cfg.VerifySSL, cfg.SSLProtocol, 10*time.Second)
-	return &Buffer{cfg: cfg, hostname: hostname, client: client, capThreshold: 2 * 1024 * 1024}
-}
-
-func (b *Buffer) AddSummary(sum models.SummaryEvent) error {
-	if !b.cfg.Enabled {
-		return nil
+func New(cfg config.Metrics, hostname string, collectorID string) (*Sender, error) {
+	if !cfg.Enabled {
+		return nil, nil
 	}
-	me := buildPayload(sum, b.cfg, b.hostname)
-	js, err := json.Marshal(me)
+	if cfg.HECURL == "" || cfg.Token == "" {
+		return nil, errors.New("metrics enabled but hec_url/token not configured")
+	}
+	transport, err := hec.New(config.HEC{
+		Enabled: true, URL: cfg.HECURL, Token: cfg.Token, VerifySSL: cfg.VerifySSL,
+		SSLProtocol: cfg.SSLProtocol, BatchSize: cfg.BatchSize,
+		Retry:  config.Retry{Enabled: true, MaxAttempts: 3, BaseDelayMs: 250, JitterPct: 20, Backoff: "exponential"},
+		UseACK: cfg.UseACK, ACKTimeoutSeconds: cfg.ACKTimeoutSeconds,
+		ACKPollIntervalMs: cfg.ACKPollIntervalMs, Channel: cfg.Channel,
+	}, hostname, collectorID+":metrics")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	bytesToAdd := len(js) + 1
-	maxEvents := b.cfg.MaxBufferEvents
-	if maxEvents < 1 {
-		maxEvents = 5000
-	}
-	maxBytes := parseSizeBytes(b.cfg.MaxBufferBytes, 5*1024*1024)
-	if (b.count+1) > maxEvents || (b.bytes+bytesToAdd) > maxBytes {
-		return nil // drop-newest
-	}
-	if b.count > 0 {
-		b.buf.WriteByte('\n')
-	}
-	b.buf.Write(js)
-	b.count++
-	b.bytes += bytesToAdd
-	return nil
+	return &Sender{cfg: cfg, hostname: hostname, transport: transport}, nil
 }
 
-func (b *Buffer) Flush(ctx context.Context) error {
-	if !b.cfg.Enabled {
-		return nil
+func (s *Sender) BatchSize() int {
+	if s.cfg.BatchSize < 1 {
+		return 100
 	}
-	if b.count == 0 {
-		return nil
-	}
-	if b.cfg.HECURL == "" || b.cfg.Token == "" {
-		b.reset()
-		return errors.New("metrics enabled but hec_url/token not configured")
-	}
-	if !b.nextAttempt.IsZero() && time.Now().Before(b.nextAttempt) {
-		return nil
-	}
-
-	body := b.buf.Bytes()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, b.cfg.HECURL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Splunk "+b.cfg.Token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.client.Do(req)
-	if err != nil {
-		b.failures++
-		b.nextAttempt = time.Now().Add(b.nextAttemptDelay())
-		b.warnRateLimited("metrics delivery failed; will retry", map[string]interface{}{
-			"hec_url":          b.cfg.HECURL,
-			"buffer_events":    b.count,
-			"buffer_bytes":     b.bytes,
-			"consec_failures":  b.failures,
-			"next_attempt_sec": int(b.nextAttempt.Sub(time.Now()).Seconds()),
-		})
-		return nil
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		b.failures++
-		b.nextAttempt = time.Now().Add(b.nextAttemptDelay())
-		b.warnRateLimited("metrics delivery failed (non-2xx); will retry", map[string]interface{}{
-			"hec_url":          b.cfg.HECURL,
-			"status":           resp.StatusCode,
-			"buffer_events":    b.count,
-			"buffer_bytes":     b.bytes,
-			"consec_failures":  b.failures,
-			"next_attempt_sec": int(b.nextAttempt.Sub(time.Now()).Seconds()),
-		})
-		return nil
-	}
-	b.failures = 0
-	b.nextAttempt = time.Time{}
-	b.reset()
-	return nil
+	return s.cfg.BatchSize
 }
 
-func (b *Buffer) nextAttemptDelay() time.Duration {
-	baseDelayMs := 1000
-	d := time.Duration(baseDelayMs) * time.Millisecond
-	shift := b.failures - 1
-	if shift < 0 {
-		shift = 0
+func (s *Sender) SendSummaries(ctx context.Context, summaries []models.SummaryEvent) error {
+	payloads := make([]json.RawMessage, 0, len(summaries))
+	for _, summary := range summaries {
+		encoded, err := json.Marshal(buildPayload(summary, s.cfg, s.hostname))
+		if err != nil {
+			return err
+		}
+		payloads = append(payloads, encoded)
 	}
-	if shift > 6 {
-		shift = 6
-	}
-	d = d * time.Duration(1<<shift)
-	if d > 30*time.Second {
-		d = 30 * time.Second
-	}
-	return d
+	return s.transport.SendPayloads(ctx, payloads)
 }
 
-func (b *Buffer) warnRateLimited(msg string, fields map[string]interface{}) {
-	if time.Since(b.lastWarn) < 30*time.Second {
-		return
-	}
-	b.lastWarn = time.Now()
-	diagnostics.LogWarn(msg, fields)
-}
-
-func (b *Buffer) Close() error {
-	b.reset()
-	return nil
-}
-
-func (b *Buffer) reset() {
-	if cap(b.buf.Bytes()) > b.capThreshold {
-		b.buf = bytes.Buffer{}
-	} else {
-		b.buf.Reset()
-	}
-	b.count = 0
-	b.bytes = 0
-}
+func (s *Sender) Close() error { return s.transport.Close() }
 
 func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) models.MetricsEvent {
-	unix := util.UnixSecondsFromISO(sum.Timestamp)
+	unix := util.UnixTimeFromISO(sum.Timestamp)
 	eventName := cfg.EventName
 	if eventName == "" {
 		eventName = "metric"
@@ -169,66 +70,82 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 	}
 	useCompat := cfg.CompatMode && !cfg.UseMetricsIndex
 	if !useCompat {
-		eventName = "metric" // required by metrics index
+		eventName = "metric"
 	}
 
 	fields := map[string]interface{}{
-		"metric_name:ping.avg_latency_ms":   sum.AvgLatencyMs,
-		"metric_name:ping.min_latency_ms":   float64(sum.MinLatencyMs),
-		"metric_name:ping.max_latency_ms":   float64(sum.MaxLatencyMs),
-		"metric_name:ping.packet_loss_pct":  sum.PacketLossPct,
-		"metric_name:ping.pings_sent":       sum.PingsSent,
-		"metric_name:ping.pings_successful": sum.PingsSuccessful,
-		"hostname":                          sum.Hostname,
-		"target_ip":                         sum.TargetIP,
-		"dev":                               sum.Dev,
-		"group":                             sum.Group,
-		"description":                       sum.Description,
-		"entitytype":                        sum.EntityType,
-		"device":                            sum.Device,
-		"vendor":                            sum.Vendor,
-		"additional_notes":                  sum.Notes,
+		"metric_name:ping.pings_sent":          sum.PingsSent,
+		"metric_name:ping.pings_successful":    sum.PingsSuccessful,
+		"metric_name:ping.measurement_valid":   boolMetric(sum.MeasurementValid),
+		"metric_name:ping.schema_version":      sum.SchemaVersion,
+		"metric_name:ping.state_code":          stateMetric(sum.State),
+		"metric_name:ping.observation_code":    observationMetric(sum.ObservationStatus),
+		"metric_name:ping.state_confidence":    confidenceMetric(sum.StateConfidence),
+		"metric_name:ping.stale_after_seconds": sum.StaleAfterSeconds,
+		"hostname":                             sum.Hostname, "target_ip": sum.TargetIP,
+		"collector_id": sum.CollectorID, "endpoint_id": sum.EndpointID,
+		"state": sum.State, "observation_status": sum.ObservationStatus,
+		"state_reason": sum.StateReason, "probe_backend": sum.ProbeBackend,
+		"dev": sum.Dev, "group": sum.Group, "description": sum.Description,
+		"entitytype": sum.EntityType, "device": sum.Device, "vendor": sum.Vendor,
+		"additional_notes": sum.Notes,
+	}
+	if sum.PacketLossPct != nil {
+		fields["metric_name:ping.packet_loss_pct"] = *sum.PacketLossPct
+	}
+	if sum.AvgLatencyMs != nil {
+		fields["metric_name:ping.avg_latency_ms"] = *sum.AvgLatencyMs
+	}
+	if sum.MinLatencyMs != nil {
+		fields["metric_name:ping.min_latency_ms"] = *sum.MinLatencyMs
+	}
+	if sum.MaxLatencyMs != nil {
+		fields["metric_name:ping.max_latency_ms"] = *sum.MaxLatencyMs
 	}
 
-	return models.MetricsEvent{
-		Time:       unix,
-		Host:       hostname,
-		Source:     "ping_monitor",
-		SourceType: sourcetype,
-		Index:      cfg.Index,
-		Event:      eventName,
-		Fields:     fields,
+	return models.MetricsEvent{Time: unix, Host: hostname, Source: "ping_monitor", SourceType: sourcetype, Index: cfg.Index, Event: eventName, Fields: fields}
+}
+
+func boolMetric(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func stateMetric(value string) float64 {
+	switch value {
+	case "up":
+		return 1
+	case "degraded":
+		return 0.5
+	case "down":
+		return 0
+	default:
+		return -1
 	}
 }
 
-func parseSizeBytes(s string, def int) int {
-	// shared with hec; keep minimal duplication
-	if s == "" {
-		return def
-	}
-	// crude parse: digits + suffix
-	// Accept same set as v4: KB/MB/GB/TB.
-	s = strings.TrimSpace(strings.ToUpper(s))
-	var n float64
-	var unit string
-	_, _ = fmt.Sscanf(s, "%f%s", &n, &unit)
-	mult := 1.0
-	switch unit {
-	case "KB":
-		mult = 1024
-	case "MB":
-		mult = 1024 * 1024
-	case "GB":
-		mult = 1024 * 1024 * 1024
-	case "TB":
-		mult = 1024 * 1024 * 1024 * 1024
-	case "":
-		mult = 1
+func observationMetric(value string) float64 {
+	switch value {
+	case "reply":
+		return 1
+	case "partial_reply":
+		return 0.5
+	case "no_reply":
+		return 0
 	default:
-		mult = 1
+		return -1
 	}
-	if n <= 0 {
-		return def
+}
+
+func confidenceMetric(value string) float64 {
+	switch value {
+	case "confirmed":
+		return 1
+	case "pending":
+		return 0.5
+	default:
+		return 0
 	}
-	return int(n * mult)
 }

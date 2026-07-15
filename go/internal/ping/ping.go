@@ -16,15 +16,27 @@ import (
 )
 
 type PingResult struct {
-	Timestamp time.Time
-	Success   bool
-	LatencyMs int
-	TTL       int
-	Error     string
+	Sequence            int
+	SentAt              time.Time
+	ReceivedAt          time.Time
+	Timestamp           time.Time
+	Success             bool
+	LatencyMs           float64
+	LatencyMeasured     bool
+	LatencySource       string
+	LatencyResolutionMs float64
+	LatencyCensored     bool
+	LatencyUpperBoundMs float64
+	ProbeElapsedMs      float64
+	ICMPStatusCode      *uint32
+	TTL                 int
+	Error               string
+	Backend             string
 }
 
 type Pinger interface {
 	Ping(ctx context.Context, ip string, count int, perPingTimeout time.Duration) ([]PingResult, error)
+	Backend() string
 }
 
 type GoPinger struct {
@@ -34,18 +46,14 @@ type GoPinger struct {
 }
 
 func NewPinger(mode string, onFallback func(ip string, from string, to string, reason string)) Pinger {
-	m := strings.ToLower(strings.TrimSpace(mode))
-	switch m {
-	case "exec":
-		return &ExecPinger{}
-	case "raw":
-		return &GoPinger{fallback: nil, onFallback: onFallback}
-	case "", "auto":
-		return &GoPinger{fallback: &ExecPinger{}, onFallback: onFallback}
-	default:
-		// Unknown value: fail-safe to auto.
-		return &GoPinger{fallback: &ExecPinger{}, onFallback: onFallback}
+	return newPinger(mode, onFallback)
+}
+
+func (p *GoPinger) Backend() string {
+	if p.fallback != nil && p.rawDisabled.Load() {
+		return p.fallback.Backend()
 	}
+	return "udp_icmp"
 }
 
 func (p *GoPinger) Ping(ctx context.Context, ip string, count int, perPingTimeout time.Duration) ([]PingResult, error) {
@@ -62,26 +70,37 @@ func (p *GoPinger) Ping(ctx context.Context, ip string, count int, perPingTimeou
 	// Use unprivileged mode when possible; go-ping will fall back as needed.
 	pg.SetPrivileged(false)
 	pg.Count = count
-	pg.Interval = 10 * time.Millisecond
-	pg.Timeout = time.Duration(count)*perPingTimeout + 250*time.Millisecond
+	pg.Interval = probeInterval(perPingTimeout)
+	pg.Timeout = time.Duration(count-1)*pg.Interval + perPingTimeout + 50*time.Millisecond
 
-	results := make([]PingResult, 0, count)
-	seen := 0
+	sequenceOrder := make([]int, 0, count)
+	sentAt := make(map[int]time.Time, count)
+	received := make(map[int]PingResult, count)
+	pg.OnSend = func(pkt *ping.Packet) {
+		sequenceOrder = append(sequenceOrder, pkt.Seq)
+		sentAt[pkt.Seq] = time.Now()
+	}
 
 	pg.OnRecv = func(pkt *ping.Packet) {
-		seen++
 		ttl := -1
 		// Packet.Ttl is set on some platforms.
 		if pkt.Ttl > 0 {
 			ttl = pkt.Ttl
 		}
-		results = append(results, PingResult{
-			Timestamp: time.Now(),
-			Success:   true,
-			LatencyMs: int(pkt.Rtt.Milliseconds()),
-			TTL:       ttl,
-			Error:     "",
-		})
+		receivedAt := time.Now()
+		received[pkt.Seq] = PingResult{
+			Sequence:            pkt.Seq,
+			SentAt:              sentAt[pkt.Seq],
+			ReceivedAt:          receivedAt,
+			Timestamp:           receivedAt,
+			Success:             true,
+			LatencyMs:           float64(pkt.Rtt) / float64(time.Millisecond),
+			LatencyMeasured:     true,
+			LatencySource:       "go_ping_rtt",
+			LatencyResolutionMs: 0.001,
+			TTL:                 ttl,
+			Backend:             "udp_icmp",
+		}
 	}
 
 	// If we don't receive, we'll fill failures after Run.
@@ -110,17 +129,43 @@ func (p *GoPinger) Ping(ctx context.Context, ip string, count int, perPingTimeou
 		}
 	}
 
-	// Fill missing results as failures.
-	for i := seen; i < count; i++ {
+	completedAt := time.Now()
+	for len(sequenceOrder) < count {
+		sequenceOrder = append(sequenceOrder, -1-len(sequenceOrder))
+	}
+	results := make([]PingResult, 0, count)
+	for index, sequence := range sequenceOrder[:count] {
+		if result, ok := received[sequence]; ok {
+			result.Sequence = index + 1
+			results = append(results, result)
+			continue
+		}
+		sent := sentAt[sequence]
+		if sent.IsZero() {
+			sent = time.Now()
+		}
 		results = append(results, PingResult{
-			Timestamp: time.Now(),
+			Sequence:  index + 1,
+			SentAt:    sent,
+			Timestamp: completedAt,
 			Success:   false,
-			LatencyMs: -1,
 			TTL:       -1,
 			Error:     "timeout",
+			Backend:   "udp_icmp",
 		})
 	}
 	return results, nil
+}
+
+func probeInterval(perPingTimeout time.Duration) time.Duration {
+	interval := perPingTimeout / 2
+	if interval < 10*time.Millisecond {
+		return 10 * time.Millisecond
+	}
+	if interval > 250*time.Millisecond {
+		return 250 * time.Millisecond
+	}
+	return interval
 }
 
 func looksLikeICMPUnavailable(err error) bool {
@@ -144,6 +189,8 @@ func looksLikeICMPUnavailable(err error) bool {
 // It is slower than raw ICMP, but works in many restricted environments.
 type ExecPinger struct{}
 
+func (p *ExecPinger) Backend() string { return "exec" }
+
 var (
 	winTimeRe  = regexp.MustCompile(`(?i)time[=<]\s*(\d+)\s*ms`)
 	winTTLRe   = regexp.MustCompile(`(?i)ttl=(\d+)`)
@@ -156,32 +203,61 @@ func (p *ExecPinger) Ping(ctx context.Context, ip string, count int, perPingTime
 		count = 1
 	}
 	results := make([]PingResult, 0, count)
+	interval := probeInterval(perPingTimeout)
+	lastStarted := time.Time{}
 	for i := 0; i < count; i++ {
-		pr := p.pingOnce(ctx, ip, perPingTimeout)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !lastStarted.IsZero() {
+			remaining := interval - time.Since(lastStarted)
+			if remaining > 0 {
+				timer := time.NewTimer(remaining)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					if !timer.Stop() {
+						<-timer.C
+					}
+					return nil, ctx.Err()
+				}
+			}
+		}
+		lastStarted = time.Now()
+		pr := p.pingOnce(ctx, ip, i+1, perPingTimeout)
 		results = append(results, pr)
 	}
 	return results, nil
 }
 
-func (p *ExecPinger) pingOnce(ctx context.Context, ip string, perPingTimeout time.Duration) PingResult {
-	t := time.Now()
+func (p *ExecPinger) pingOnce(ctx context.Context, ip string, sequence int, perPingTimeout time.Duration) PingResult {
+	sentAt := time.Now()
 	cmd, args := buildPingCommand(ip, perPingTimeout)
-	out, err := exec.CommandContext(ctx, cmd, args...).CombinedOutput()
+	attemptCtx, cancel := context.WithTimeout(ctx, perPingTimeout+500*time.Millisecond)
+	defer cancel()
+	out, err := exec.CommandContext(attemptCtx, cmd, args...).CombinedOutput()
+	completedAt := time.Now()
 	text := string(out)
 	if err != nil {
 		// Non-zero exit often means timeout/unreachable.
-		return PingResult{Timestamp: t, Success: false, LatencyMs: -1, TTL: -1, Error: summarizePingError(err, text)}
+		return PingResult{Sequence: sequence, SentAt: sentAt, Timestamp: completedAt, Success: false, TTL: -1, Error: summarizePingError(err, text), Backend: "exec", ProbeElapsedMs: float64(completedAt.Sub(sentAt)) / float64(time.Millisecond)}
 	}
 
-	lat, ttl, ok := parsePingOutput(text)
+	measurement, ttl, ok := parsePingOutput(text)
 	if !ok {
 		// Some ping variants still return 0 even if all failed.
 		if strings.Contains(strings.ToLower(text), "timed out") || strings.Contains(strings.ToLower(text), "unreachable") {
-			return PingResult{Timestamp: t, Success: false, LatencyMs: -1, TTL: -1, Error: "timeout"}
+			return PingResult{Sequence: sequence, SentAt: sentAt, Timestamp: completedAt, Success: false, TTL: -1, Error: "timeout", Backend: "exec", ProbeElapsedMs: float64(completedAt.Sub(sentAt)) / float64(time.Millisecond)}
 		}
-		return PingResult{Timestamp: t, Success: false, LatencyMs: -1, TTL: -1, Error: "no_reply"}
+		return PingResult{Sequence: sequence, SentAt: sentAt, Timestamp: completedAt, Success: false, TTL: -1, Error: "backend_parse_error", Backend: "exec", ProbeElapsedMs: float64(completedAt.Sub(sentAt)) / float64(time.Millisecond)}
 	}
-	return PingResult{Timestamp: t, Success: true, LatencyMs: lat, TTL: ttl, Error: ""}
+	return PingResult{
+		Sequence: sequence, SentAt: sentAt, ReceivedAt: completedAt, Timestamp: completedAt, Success: true,
+		LatencyMs: measurement.ValueMs, LatencyMeasured: measurement.Measured,
+		LatencySource: measurement.Source, LatencyResolutionMs: measurement.ResolutionMs,
+		LatencyCensored: measurement.Censored, LatencyUpperBoundMs: measurement.UpperBoundMs,
+		ProbeElapsedMs: float64(completedAt.Sub(sentAt)) / float64(time.Millisecond), TTL: ttl, Backend: "exec",
+	}
 }
 
 func buildPingCommand(ip string, perPingTimeout time.Duration) (string, []string) {
@@ -206,14 +282,26 @@ func buildPingCommand(ip string, perPingTimeout time.Duration) (string, []string
 	}
 }
 
-func parsePingOutput(text string) (latencyMs int, ttl int, ok bool) {
+type latencyMeasurement struct {
+	ValueMs      float64
+	Measured     bool
+	Source       string
+	ResolutionMs float64
+	Censored     bool
+	UpperBoundMs float64
+}
+
+func parsePingOutput(text string) (measurement latencyMeasurement, ttl int, ok bool) {
 	ttl = -1
-	latencyMs = -1
 
 	if runtime.GOOS == "windows" {
 		if m := winTimeRe.FindStringSubmatch(text); len(m) == 2 {
-			if v, err := strconv.Atoi(m[1]); err == nil {
-				latencyMs = v
+			if v, err := strconv.ParseFloat(m[1], 64); err == nil {
+				if strings.Contains(strings.ToLower(m[0]), "time<") {
+					measurement = latencyMeasurement{Source: "os_ping_reported", ResolutionMs: 1, Censored: true, UpperBoundMs: v}
+				} else {
+					measurement = latencyMeasurement{ValueMs: v, Measured: true, Source: "os_ping_reported", ResolutionMs: 1}
+				}
 			}
 		}
 		if m := winTTLRe.FindStringSubmatch(text); len(m) == 2 {
@@ -221,12 +309,13 @@ func parsePingOutput(text string) (latencyMs int, ttl int, ok bool) {
 				ttl = v
 			}
 		}
-		return latencyMs, ttl, latencyMs >= 0
+		return measurement, ttl, measurement.Measured || measurement.Censored
 	}
 
 	if m := unixTimeRe.FindStringSubmatch(text); len(m) == 2 {
 		if v, err := strconv.ParseFloat(m[1], 64); err == nil {
-			latencyMs = int(math.Round(v))
+			resolution := decimalResolution(m[1])
+			measurement = latencyMeasurement{ValueMs: v, Measured: true, Source: "os_ping_reported", ResolutionMs: resolution}
 		}
 	}
 	if m := unixTTLRe.FindStringSubmatch(text); len(m) == 2 {
@@ -234,12 +323,28 @@ func parsePingOutput(text string) (latencyMs int, ttl int, ok bool) {
 			ttl = v
 		}
 	}
-	return latencyMs, ttl, latencyMs >= 0
+	return measurement, ttl, measurement.Measured
+}
+
+func decimalResolution(value string) float64 {
+	parts := strings.SplitN(value, ".", 2)
+	if len(parts) != 2 {
+		return 1
+	}
+	resolution := 1.0
+	for range parts[1] {
+		resolution /= 10
+	}
+	return resolution
 }
 
 func summarizePingError(err error, output string) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
+	}
+	var executableError *exec.Error
+	if errors.As(err, &executableError) {
+		return "backend_unavailable"
 	}
 	low := strings.ToLower(output)
 	if strings.Contains(low, "timed out") {

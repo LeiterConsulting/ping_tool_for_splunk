@@ -7,6 +7,8 @@ const state = {
   selectedEndpointIndex: -1,
   selectedEndpointIndices: new Set(),
   savedConfig: null,
+  config: null,
+  configSecrets: {},
   tables: {
     endpoint: {
       page: 1,
@@ -144,7 +146,6 @@ const elements = {
     hecVerifySSL: document.getElementById('cfg-hec-verify-ssl'),
     hecSSLProtocol: document.getElementById('cfg-hec-ssl-protocol'),
     hecBatchSize: document.getElementById('cfg-hec-batch-size'),
-    hecDropOnFailure: document.getElementById('cfg-hec-drop-on-failure'),
     hecMaxBufferEvents: document.getElementById('cfg-hec-max-buffer-events'),
     hecMaxBufferBytes: document.getElementById('cfg-hec-max-buffer-bytes'),
     hecRetryEnabled: document.getElementById('cfg-hec-retry-enabled'),
@@ -154,8 +155,10 @@ const elements = {
     hecBackoff: document.getElementById('cfg-hec-backoff'),
     hecRetryCount: document.getElementById('cfg-hec-retry-count'),
     hecRetryDelayMs: document.getElementById('cfg-hec-retry-delay-ms'),
-    hecDeadLetterPath: document.getElementById('cfg-hec-dead-letter-path'),
-    hecDeadLetterRotation: document.getElementById('cfg-hec-dead-letter-rotation'),
+    hecUseACK: document.getElementById('cfg-hec-use-ack'),
+    hecACKTimeout: document.getElementById('cfg-hec-ack-timeout'),
+    hecACKPoll: document.getElementById('cfg-hec-ack-poll'),
+    hecChannel: document.getElementById('cfg-hec-channel'),
     metricsEnabled: document.getElementById('cfg-metrics-enabled'),
     metricsMode: document.getElementById('cfg-metrics-mode'),
     metricsIndex: document.getElementById('cfg-metrics-index'),
@@ -170,6 +173,14 @@ const elements = {
     metricsBatchSize: document.getElementById('cfg-metrics-batch-size'),
     metricsMaxBufferEvents: document.getElementById('cfg-metrics-max-buffer-events'),
     metricsMaxBufferBytes: document.getElementById('cfg-metrics-max-buffer-bytes'),
+    metricsUseACK: document.getElementById('cfg-metrics-use-ack'),
+    metricsACKTimeout: document.getElementById('cfg-metrics-ack-timeout'),
+    metricsACKPoll: document.getElementById('cfg-metrics-ack-poll'),
+    metricsChannel: document.getElementById('cfg-metrics-channel'),
+    deliverySpoolPath: document.getElementById('cfg-delivery-spool-path'),
+    deliveryMaxBytes: document.getElementById('cfg-delivery-max-bytes'),
+    deliveryMaxEnvelopes: document.getElementById('cfg-delivery-max-envelopes'),
+    deliveryDrainMax: document.getElementById('cfg-delivery-drain-max'),
   },
 };
 
@@ -328,7 +339,7 @@ const settingsFieldHelp = {
     'HEC Token',
     'Supplies the authorization token sent in the Splunk header for event delivery.',
     'Plain token string issued by Splunk HEC.',
-    ['The UI masks the token, but the runtime stores and uses the underlying value from the config file.'],
+    ['Existing tokens are write-only and are never returned by the API. Leave this blank to preserve the configured token, or enter a new value to replace it.'],
   ),
   'cfg-hec-index': helpTopic(
     'HEC Index',
@@ -381,33 +392,11 @@ const settingsFieldHelp = {
     nonNegativeIntegerFormat,
     ['Ignored when structured retry is enabled.'],
   ),
-  'cfg-hec-dead-letter-path': helpTopic(
-    'Dead Letter Path',
-    'Optional file used to preserve failed HEC payloads when drop_on_failure is enabled.',
-    filePathFormat,
-    ['Only used when Drop Event Batches When Delivery Fails is checked.'],
-  ),
-  'cfg-hec-dead-letter-rotation': helpTopic(
-    'Dead Letter Rotation (MB)',
-    'Rotates the dead-letter file once it reaches the configured size.',
-    nonNegativeIntegerFormat,
-    ['Only applies when a dead-letter path is set. Zero keeps the file unrotated.'],
-  ),
   'cfg-hec-verify-ssl': helpTopic(
     'Verify TLS Certificates',
     'Controls whether the runtime validates the remote HEC server certificate.',
     checkboxFormat,
     ['Turn this off only for controlled troubleshooting or self-signed environments where you accept the risk.'],
-  ),
-  'cfg-hec-drop-on-failure': helpTopic(
-    'Drop Event Batches When Delivery Fails',
-    'Controls whether failed HEC batches are discarded from memory after a failed flush attempt.',
-    checkboxFormat,
-    [
-      'Checked means the runtime clears the failed batch from memory after failure.',
-      'If a dead-letter path is set, the failed payload is appended there before the in-memory buffer is cleared.',
-      'Unchecked keeps the batch buffered for later retry attempts across cycles.',
-    ],
   ),
   'cfg-hec-retry-enabled': helpTopic(
     'Enable Structured Retry Policy',
@@ -473,7 +462,7 @@ const settingsFieldHelp = {
     'Metrics Token',
     'Supplies the authorization token used for the metrics HEC stream.',
     'Plain token string issued by Splunk HEC.',
-    ['The UI masks the token, but the runtime stores and uses the underlying value from the config file.'],
+    ['Existing tokens are write-only and are never returned by the API. Leave this blank to preserve the configured token, or enter a new value to replace it.'],
   ),
   'cfg-metrics-ssl-protocol': helpTopic(
     'Metrics SSL Protocol',
@@ -567,6 +556,7 @@ function emptyEndpoint() {
 
 function normalizeEndpoint(endpoint) {
   return {
+	endpoint_id: String(endpoint.endpoint_id || '').trim(),
     ip: String(endpoint.ip || '').trim(),
     hostname: String(endpoint.hostname || '').trim(),
     group: String(endpoint.group || 'default').trim() || 'default',
@@ -1169,7 +1159,9 @@ function loadEndpointForm(endpoint) {
 }
 
 function readEndpointForm() {
+	const current = state.endpoints[state.selectedEndpointIndex] || {};
   return normalizeEndpoint({
+	endpoint_id: current.endpoint_id,
     ip: readTextValue(elements.endpointFields.ip),
     hostname: readTextValue(elements.endpointFields.hostname),
     group: readTextValue(elements.endpointFields.group),
@@ -1394,13 +1386,16 @@ function renderDiscovery() {
   }).join('');
 }
 
-function loadConfigForm(cfg) {
+function loadConfigForm(cfg, secrets = {}) {
+	state.config = deepClone(cfg || {});
+	state.configSecrets = deepClone(secrets || {});
   const ping = cfg.ping || {};
   const diagnostics = cfg.diagnostics || {};
   const debug = cfg.debug || {};
   const hec = cfg.hec || {};
   const retry = hec.retry || {};
   const metrics = cfg.metrics || {};
+  const delivery = cfg.delivery || {};
 
   elements.settingsFields.pingsPerCycle.value = cfg.pings_per_cycle ?? '';
   elements.settingsFields.cycleInterval.value = cfg.cycle_interval_seconds ?? '';
@@ -1417,12 +1412,12 @@ function loadConfigForm(cfg) {
   elements.settingsFields.hecEnabled.checked = Boolean(hec.enabled);
   elements.settingsFields.hecURL.value = hec.url || '';
   elements.settingsFields.hecToken.value = hec.token || '';
+  elements.settingsFields.hecToken.placeholder = secrets.hec_token_configured ? 'Configured — enter to replace' : 'Enter HEC token';
   elements.settingsFields.hecIndex.value = hec.index || '';
   elements.settingsFields.hecSourcetype.value = hec.sourcetype || '';
   elements.settingsFields.hecVerifySSL.checked = Boolean(hec.verify_ssl);
   elements.settingsFields.hecSSLProtocol.value = hec.ssl_protocol || '';
   elements.settingsFields.hecBatchSize.value = hec.batch_size ?? '';
-  elements.settingsFields.hecDropOnFailure.checked = Boolean(hec.drop_on_failure);
   elements.settingsFields.hecMaxBufferEvents.value = hec.max_buffer_events ?? '';
   elements.settingsFields.hecMaxBufferBytes.value = hec.max_buffer_bytes || '';
   elements.settingsFields.hecRetryEnabled.checked = Boolean(retry.enabled);
@@ -1432,13 +1427,16 @@ function loadConfigForm(cfg) {
   elements.settingsFields.hecBackoff.value = retry.backoff || '';
   elements.settingsFields.hecRetryCount.value = hec.retry_count ?? '';
   elements.settingsFields.hecRetryDelayMs.value = hec.retry_delay_ms ?? '';
-  elements.settingsFields.hecDeadLetterPath.value = hec.dead_letter_path || '';
-  elements.settingsFields.hecDeadLetterRotation.value = hec.dead_letter_rotation_size_mb ?? '';
+  elements.settingsFields.hecUseACK.checked = Boolean(hec.use_ack);
+  elements.settingsFields.hecACKTimeout.value = hec.ack_timeout_seconds ?? 60;
+  elements.settingsFields.hecACKPoll.value = hec.ack_poll_interval_ms ?? 1000;
+  elements.settingsFields.hecChannel.value = hec.channel || '';
   elements.settingsFields.metricsEnabled.checked = Boolean(metrics.enabled);
   elements.settingsFields.metricsMode.value = metrics.mode || 'dual';
   elements.settingsFields.metricsIndex.value = metrics.index || '';
   elements.settingsFields.metricsHECURL.value = metrics.hec_url || '';
   elements.settingsFields.metricsToken.value = metrics.token || '';
+  elements.settingsFields.metricsToken.placeholder = secrets.metrics_token_configured ? 'Configured — enter to replace' : 'Enter metrics token';
   elements.settingsFields.metricsVerifySSL.checked = Boolean(metrics.verify_ssl);
   elements.settingsFields.metricsSSLProtocol.value = metrics.ssl_protocol || '';
   elements.settingsFields.metricsCompatMode.checked = Boolean(metrics.compat_mode);
@@ -1448,10 +1446,20 @@ function loadConfigForm(cfg) {
   elements.settingsFields.metricsBatchSize.value = metrics.batch_size ?? '';
   elements.settingsFields.metricsMaxBufferEvents.value = metrics.max_buffer_events ?? '';
   elements.settingsFields.metricsMaxBufferBytes.value = metrics.max_buffer_bytes || '';
+  elements.settingsFields.metricsUseACK.checked = Boolean(metrics.use_ack);
+  elements.settingsFields.metricsACKTimeout.value = metrics.ack_timeout_seconds ?? 60;
+  elements.settingsFields.metricsACKPoll.value = metrics.ack_poll_interval_ms ?? 1000;
+  elements.settingsFields.metricsChannel.value = metrics.channel || '';
+  elements.settingsFields.deliverySpoolPath.value = delivery.spool_path || '';
+  elements.settingsFields.deliveryMaxBytes.value = delivery.max_spool_bytes || '512MB';
+  elements.settingsFields.deliveryMaxEnvelopes.value = delivery.max_envelopes ?? 10000;
+  elements.settingsFields.deliveryDrainMax.value = delivery.drain_max_envelopes ?? 100;
 }
 
 function readConfigForm() {
+	const preserved = deepClone(state.config || {});
   return {
+	...preserved,
     pings_per_cycle: readNumberValue(elements.settingsFields.pingsPerCycle, 4),
     cycle_interval_seconds: readNumberValue(elements.settingsFields.cycleInterval, 60),
     timeout_ms: readNumberValue(elements.settingsFields.timeoutMs, 1000),
@@ -1463,6 +1471,11 @@ function readConfigForm() {
     ping: {
       mode: readTextValue(elements.settingsFields.pingMode) || 'auto',
     },
+	health: deepClone(preserved.health || {
+	  down_after_failures: 3,
+	  recovery_after_successes: 2,
+	  stale_after_intervals: 2,
+	}),
     diagnostics: {
       enabled: elements.settingsFields.diagnosticsEnabled.checked,
       handle_probe_mode: readTextValue(elements.settingsFields.handleProbeMode) || 'none',
@@ -1471,6 +1484,7 @@ function readConfigForm() {
       emit_memory_stats: elements.settingsFields.emitMemoryStats.checked,
     },
     hec: {
+	  ...(preserved.hec || {}),
       enabled: elements.settingsFields.hecEnabled.checked,
       url: readTextValue(elements.settingsFields.hecURL),
       token: readTextValue(elements.settingsFields.hecToken),
@@ -1479,10 +1493,10 @@ function readConfigForm() {
       verify_ssl: elements.settingsFields.hecVerifySSL.checked,
       ssl_protocol: readTextValue(elements.settingsFields.hecSSLProtocol) || 'Default',
       batch_size: readNumberValue(elements.settingsFields.hecBatchSize, 100),
-      drop_on_failure: elements.settingsFields.hecDropOnFailure.checked,
       max_buffer_events: readNumberValue(elements.settingsFields.hecMaxBufferEvents, 5000),
       max_buffer_bytes: readTextValue(elements.settingsFields.hecMaxBufferBytes) || '5MB',
       retry: {
+		...(preserved.hec?.retry || {}),
         enabled: elements.settingsFields.hecRetryEnabled.checked,
         max_attempts: readNumberValue(elements.settingsFields.hecMaxAttempts, 3),
         base_delay_ms: readNumberValue(elements.settingsFields.hecBaseDelayMs, 250),
@@ -1491,10 +1505,13 @@ function readConfigForm() {
       },
       retry_count: readNumberValue(elements.settingsFields.hecRetryCount, 0),
       retry_delay_ms: readNumberValue(elements.settingsFields.hecRetryDelayMs, 250),
-      dead_letter_path: readTextValue(elements.settingsFields.hecDeadLetterPath),
-      dead_letter_rotation_size_mb: readNumberValue(elements.settingsFields.hecDeadLetterRotation, 0),
+      use_ack: elements.settingsFields.hecUseACK.checked,
+      ack_timeout_seconds: readNumberValue(elements.settingsFields.hecACKTimeout, 60),
+      ack_poll_interval_ms: readNumberValue(elements.settingsFields.hecACKPoll, 1000),
+      channel: readTextValue(elements.settingsFields.hecChannel),
     },
     metrics: {
+	  ...(preserved.metrics || {}),
       enabled: elements.settingsFields.metricsEnabled.checked,
       mode: readTextValue(elements.settingsFields.metricsMode) || 'dual',
       index: readTextValue(elements.settingsFields.metricsIndex),
@@ -1509,7 +1526,18 @@ function readConfigForm() {
       batch_size: readNumberValue(elements.settingsFields.metricsBatchSize, 100),
       max_buffer_events: readNumberValue(elements.settingsFields.metricsMaxBufferEvents, 5000),
       max_buffer_bytes: readTextValue(elements.settingsFields.metricsMaxBufferBytes) || '5MB',
+      use_ack: elements.settingsFields.metricsUseACK.checked,
+      ack_timeout_seconds: readNumberValue(elements.settingsFields.metricsACKTimeout, 60),
+      ack_poll_interval_ms: readNumberValue(elements.settingsFields.metricsACKPoll, 1000),
+      channel: readTextValue(elements.settingsFields.metricsChannel),
     },
+    delivery: {
+	  ...(preserved.delivery || {}),
+	  spool_path: readTextValue(elements.settingsFields.deliverySpoolPath) || './data/outbox',
+	  max_spool_bytes: readTextValue(elements.settingsFields.deliveryMaxBytes) || '512MB',
+	  max_envelopes: readNumberValue(elements.settingsFields.deliveryMaxEnvelopes, 10000),
+	  drain_max_envelopes: readNumberValue(elements.settingsFields.deliveryDrainMax, 100),
+	},
   };
 }
 
@@ -1558,7 +1586,7 @@ async function reloadAllData(showSuccess = false) {
     state.endpoints = deepClone(endpointsPayload.items || []);
     state.savedEndpoints = deepClone(endpointsPayload.items || []);
     state.selectedEndpointIndices.clear();
-    loadConfigForm(configPayload.config || {});
+    loadConfigForm(configPayload.config || {}, configPayload.secrets || {});
     state.savedConfig = readConfigForm();
     state.discovery.available = Boolean(status.discovery_available);
     if (!state.discovery.running && state.discovery.items.length === 0 && !state.discovery.summary) {
@@ -1675,7 +1703,7 @@ function setEndpointModeForSelection(isDev) {
 async function saveConfig() {
   try {
     const payload = await putJson('/api/config', { config: readConfigForm() });
-    loadConfigForm(payload.config || {});
+    loadConfigForm(payload.config || {}, payload.secrets || {});
     state.savedConfig = readConfigForm();
     renderStatus();
     renderConfigButtons();
@@ -1710,7 +1738,7 @@ async function testOutput(target) {
 async function reloadConfig() {
   try {
     const payload = await fetchJson('/api/config');
-    loadConfigForm(payload.config || {});
+    loadConfigForm(payload.config || {}, payload.secrets || {});
     state.savedConfig = readConfigForm();
     renderConfigButtons();
     setMessage(elements.settingsBanner, 'success', `Reloaded ${payload.config_format.toUpperCase()} config from disk.`);
@@ -1723,7 +1751,7 @@ function resetConfigChanges() {
   if (!state.savedConfig) {
     return;
   }
-  loadConfigForm(state.savedConfig);
+  loadConfigForm(state.savedConfig, state.configSecrets);
   renderConfigButtons();
   setMessage(elements.settingsBanner, 'success', 'Reverted settings form to the last saved file state.');
 }

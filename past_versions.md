@@ -2,7 +2,7 @@
 
 This file archives the historical runtime notes, older release summaries, and changelog entries that were previously mixed into the top-level README.
 
-For the current published release, use [README.md](README.md) and [RELEASE_NOTES_v5.3.1.md](RELEASE_NOTES_v5.3.1.md).
+For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.5.0.md](RELEASE_NOTES_v5.5.0.md).
 
 ## Historical Runtime Summary
 

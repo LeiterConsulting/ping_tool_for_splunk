@@ -80,25 +80,27 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
 | stats latest(_time) as last_check,
+        latest(hostname) as hostname,
         latest(packet_loss_pct) as packet_loss,
         latest(avg_latency_ms) as latency,
+        latest(effective_state) as effective_state,
+        latest(stale_after_seconds) as stale_after_seconds,
+        latest(observation_status) as observation_status,
+        latest(state_confidence) as state_confidence,
+        latest(signal_quality) as signal_quality,
         latest(target_ip) as ip_address,
         latest(group) as group,
         latest(entitytype) as entitytype,
         latest(device) as device,
         latest(vendor) as vendor
-        by hostname
-| eval health_status = case(
-    packet_loss == 0, "Healthy",
-    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down",
-    true(), "Unknown"
-)
+        by endpoint_key
+| `ping_apply_stale_state(last_check, stale_after_seconds)`
+| `ping_apply_health_label`
 | eval last_check_human = strftime(last_check, "%Y-%m-%d %H:%M:%S")
 | eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
-| table hostname, ip_address, health_status, packet_loss, latency_display, group, entitytype, device, vendor, last_check_human
+| table hostname, ip_address, health_status, observation_status, state_confidence, signal_quality, packet_loss, latency_display, group, entitytype, device, vendor, last_check_human
 | rename packet_loss as "Packet Loss %", latency_display as "Latency", last_check_human as "Last Check"
 | sort health_status, hostname</query>
           <earliest>$time_range.earliest$</earliest>
@@ -117,16 +119,15 @@
       <table>
         <search>
           <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.state_code") as state_code,
+        latest("ping.stale_after_seconds") as stale_after_seconds,
         latest("ping.avg_latency_ms") as latency
         WHERE index="$pm_metrics_index$"
         BY hostname, target_ip, group
-| eval health_status = case(
-    packet_loss == 0, "Healthy",
-    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down",
-    true(), "Unknown"
-)
+| eval packet_loss_pct=packet_loss
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| `ping_apply_health_label`
 | eval last_check_human = strftime(_time, "%Y-%m-%d %H:%M:%S")
 | eval latency_display = if(latency > 0, round(latency, 2)." ms", "N/A")
 | table hostname, target_ip, health_status, packet_loss, latency_display, group, last_check_human
@@ -148,14 +149,10 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats latest(packet_loss_pct) as packet_loss by hostname
-| eval health_status = case(
-    packet_loss == 0, "Healthy",
-    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down",
-    true(), "Unknown"
-)
+| `ping_normalize`
+| stats latest(_time) as last_check, latest(effective_state) as effective_state, latest(stale_after_seconds) as stale_after_seconds by endpoint_key
+| `ping_apply_stale_state(last_check, stale_after_seconds)`
+| `ping_apply_health_label`
 | stats count by health_status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -169,13 +166,8 @@
       <chart>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| eval health_status = case(
-    packet_loss_pct == 0, "Healthy",
-    packet_loss_pct > 0 AND packet_loss_pct &lt; 50, "Degraded",
-    packet_loss_pct >= 50 AND packet_loss_pct &lt; 100, "Critical",
-    packet_loss_pct == 100, "Down",
-    true(), "Unknown"
-)
+| `ping_normalize`
+| `ping_apply_health_label`
 | timechart span=1h count by health_status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -194,14 +186,11 @@
       <title>Health Distribution (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname
-| eval health_status = case(
-    packet_loss == 0, "Healthy",
-    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down",
-    true(), "Unknown"
-)
+          <query>| mstats latest("ping.packet_loss_pct") as packet_loss, latest("ping.state_code") as state_code, latest("ping.stale_after_seconds") as stale_after_seconds WHERE index="$pm_metrics_index$" BY hostname
+| eval packet_loss_pct=packet_loss
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| `ping_apply_health_label`
 | stats count by health_status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -214,14 +203,10 @@
       <title>Health Trend Over Time (Metrics)</title>
       <chart>
         <search>
-          <query>| mstats avg("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname span=1h
-| eval health_status = case(
-    packet_loss == 0, "Healthy",
-    packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-    packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-    packet_loss == 100, "Down",
-    true(), "Unknown"
-)
+          <query>| mstats avg("ping.packet_loss_pct") as packet_loss, latest("ping.state_code") as state_code WHERE index="$pm_metrics_index$" BY hostname span=1h
+| eval packet_loss_pct=packet_loss
+| `ping_apply_metric_state`
+| `ping_apply_health_label`
 | timechart span=1h count by health_status</query>
           <earliest>$time_range.earliest$</earliest>
           <latest>$time_range.latest$</latest>
@@ -240,18 +225,21 @@
       <title>Unhealthy Assets - Potential Service Impact (Events)</title>
       <table>
         <search>
-          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary packet_loss_pct>0
-| stats latest(packet_loss_pct) as packet_loss, 
+          <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
+| `ping_normalize`
+| stats latest(_time) as last_check,
+        latest(stale_after_seconds) as stale_after_seconds,
+        latest(packet_loss_pct) as packet_loss,
+        latest(hostname) as hostname,
         latest(avg_latency_ms) as latency, 
+        latest(effective_state) as effective_state,
         latest(target_ip) as ip,
         latest(group) as group,
         latest(entitytype) as entitytype
-        by hostname
-| eval health_status = case(
-  packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-  packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-  packet_loss == 100, "Down"
-)
+        by endpoint_key
+| `ping_apply_stale_state(last_check, stale_after_seconds)`
+| where effective_state!="up" OR packet_loss&gt;0
+| `ping_apply_health_label`
 | eval latency = round(latency, 2)
 | table health_status, hostname, ip, packet_loss, latency, group, entitytype
 | rename health_status as "Status", packet_loss as "Loss %", latency as "Latency ms"
@@ -272,14 +260,15 @@
       <table>
         <search>
           <query>| mstats latest("ping.packet_loss_pct") as packet_loss,
+        latest("ping.state_code") as state_code,
+        latest("ping.stale_after_seconds") as stale_after_seconds,
         latest("ping.avg_latency_ms") as latency
         WHERE index="$pm_metrics_index$" BY hostname, target_ip, group
-| where packet_loss > 0
-| eval health_status = case(
-  packet_loss > 0 AND packet_loss &lt; 50, "Degraded",
-  packet_loss >= 50 AND packet_loss &lt; 100, "Critical",
-  packet_loss == 100, "Down"
-)
+| eval packet_loss_pct=packet_loss
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| where effective_state!="up" OR packet_loss&gt;0
+| `ping_apply_health_label`
 | eval latency = round(latency, 2)
 | table health_status, hostname, target_ip, packet_loss, latency, group
 | rename health_status as "Status", target_ip as "IP", packet_loss as "Loss %", latency as "Latency ms"
@@ -300,10 +289,11 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats latest(packet_loss_pct) as packet_loss, dc(hostname) as asset_count by entitytype
-| eval healthy = if(packet_loss == 0, 1, 0)
-| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by entitytype
-| eval health_pct = round((healthy_count / total) * 100, 1)
+| `ping_normalize`
+| stats latest(_time) as last_check, latest(effective_state) as effective_state, latest(stale_after_seconds) as stale_after_seconds by entitytype, endpoint_key
+| `ping_apply_stale_state(last_check, stale_after_seconds)`
+| stats count as assets, count(eval(effective_state="up")) as healthy_count by entitytype
+| eval health_pct = round((healthy_count / assets) * 100, 1)
 | eval status = case(
   health_pct >= 99, "Excellent",
   health_pct >= 90, "Good",
@@ -311,7 +301,6 @@
   health_pct >= 50, "Impaired",
   true(), "Critical"
 )
-| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by entitytype
 | sort -health_pct
 | rename entitytype as "Entity Type", assets as "Assets", health_pct as "Health %", status as "Status"</query>
           <earliest>$time_range.earliest$</earliest>
@@ -326,10 +315,11 @@
       <table>
         <search>
           <query>index=$pm_index$ sourcetype=$pm_sourcetype$ record_type=summary
-| stats latest(packet_loss_pct) as packet_loss, dc(hostname) as asset_count by group
-| eval healthy = if(packet_loss == 0, 1, 0)
-| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
-| eval health_pct = round((healthy_count / total) * 100, 1)
+| `ping_normalize`
+| stats latest(_time) as last_check, latest(effective_state) as effective_state, latest(stale_after_seconds) as stale_after_seconds by group, endpoint_key
+| `ping_apply_stale_state(last_check, stale_after_seconds)`
+| stats count as assets, count(eval(effective_state="up")) as healthy_count by group
+| eval health_pct = round((healthy_count / assets) * 100, 1)
 | eval status = case(
   health_pct >= 99, "Excellent",
   health_pct >= 90, "Good",
@@ -337,7 +327,6 @@
   health_pct >= 50, "Impaired",
   true(), "Critical"
 )
-| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
 | sort -health_pct
 | rename group as "Group", assets as "Assets", health_pct as "Health %", status as "Status"</query>
           <earliest>$time_range.earliest$</earliest>
@@ -355,11 +344,11 @@
       <title>Service Health by Group (Metrics)</title>
       <table>
         <search>
-          <query>| mstats latest("ping.packet_loss_pct") as packet_loss WHERE index="$pm_metrics_index$" BY hostname, group
-| stats first(packet_loss) as packet_loss, dc(hostname) as asset_count by group
-| eval healthy = if(packet_loss == 0, 1, 0)
-| eventstats sum(healthy) as healthy_count, sum(asset_count) as total by group
-| eval health_pct = round((healthy_count / total) * 100, 1)
+          <query>| mstats latest("ping.state_code") as state_code, latest("ping.stale_after_seconds") as stale_after_seconds WHERE index="$pm_metrics_index$" BY hostname, group
+| `ping_apply_metric_state`
+| `ping_apply_stale_state(_time, stale_after_seconds)`
+| stats count as assets, count(eval(effective_state="up")) as healthy_count by group
+| eval health_pct = round((healthy_count / assets) * 100, 1)
 | eval status = case(
   health_pct >= 99, "Excellent",
   health_pct >= 90, "Good",
@@ -367,7 +356,6 @@
   health_pct >= 50, "Impaired",
   true(), "Critical"
 )
-| stats first(asset_count) as assets, first(health_pct) as health_pct, first(status) as status by group
 | sort -health_pct
 | rename group as "Group", assets as "Assets", health_pct as "Health %", status as "Status"</query>
           <earliest>$time_range.earliest$</earliest>

@@ -43,18 +43,33 @@ func LogRuntimeSnapshot(phase string, goroutines int) {
 	write(ll)
 }
 
-func LogCycleSummary(cycle int, success int, failed int, partial int, durationMs int64) {
+func LogCycleSummary(cycle int, success int, failed int, partial int, durationMs int64, overrunMs int64, dispatchDelayMs int64, worstCaseLoadPct float64) {
 	ll := logLine{
-		"ts":          time.Now().UTC().Format(time.RFC3339Nano),
-		"level":       "info",
-		"msg":         "cycle complete",
-		"cycle":       cycle,
-		"success":     success,
-		"failed":      failed,
-		"partial":     partial,
-		"duration_ms": durationMs,
+		"ts":                  time.Now().UTC().Format(time.RFC3339Nano),
+		"level":               "info",
+		"msg":                 "cycle complete",
+		"cycle":               cycle,
+		"success":             success,
+		"failed":              failed,
+		"partial":             partial,
+		"duration_ms":         durationMs,
+		"overrun_ms":          overrunMs,
+		"dispatch_delay_ms":   dispatchDelayMs,
+		"worst_case_load_pct": worstCaseLoadPct,
 	}
 	write(ll)
+}
+
+func LogScheduleCapacity(endpoints int, workers int, probeBudgetMs int64, intervalMs int64, dispatchDelayMs int64, worstCaseLoadPct float64) {
+	level := "info"
+	if worstCaseLoadPct >= 80 {
+		level = "warn"
+	}
+	write(logLine{
+		"ts": time.Now().UTC().Format(time.RFC3339Nano), "level": level, "msg": "scheduler capacity",
+		"endpoints": endpoints, "workers": workers, "probe_budget_ms": probeBudgetMs,
+		"interval_ms": intervalMs, "dispatch_delay_ms": dispatchDelayMs, "worst_case_load_pct": worstCaseLoadPct,
+	})
 }
 
 func LogInfo(msg string, fields map[string]interface{}) {

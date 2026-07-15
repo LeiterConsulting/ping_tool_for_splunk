@@ -2,6 +2,27 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
+## Version 2.9.0
+
+### What's New in v2.9.0
+
+- **Signal truth contract**: Current health is derived from the collector-emitted state, never reconstructed from a single packet-loss sample. Observation status, state confidence, signal quality, and state source remain visible alongside the health label.
+- **Schema v3 latency semantics**: Exact, censored, resolution, source, and upper-bound fields distinguish measured RTT from platform values such as Windows `<1 ms`; dashboards no longer invent a midpoint.
+- **Metrics state parity**: New numeric state and observation metrics allow the metrics dashboards to use the same collector decision as events. Pre-v3 metrics remain usable through explicitly labeled legacy inference.
+- **Historical continuity**: `ping_normalize` continues to read v1/v2 history and v3 data. Legacy inferred state is labeled rather than presented as collector-confirmed truth.
+- **Cadence-aware freshness**: Schema v3 summaries and metrics carry the collector's computed stale threshold, so current-state searches follow the configured cycle and freshness policy instead of assuming a fixed two-minute window. Older history uses a documented 120-second compatibility fallback.
+
+## Version 2.8.0
+
+### What's New in v2.8.0
+
+- **Mixed-schema normalization**: The `ping_normalize` search macro supports historical v1 events alongside schema v2 events. It deduplicates v2 by event identity and normalizes legacy summary data to the intended one-observation-per-endpoint-per-minute cadence, preserving useful history from the former dual-listener period.
+- **Trustworthy health state**: Current endpoint tables use the collector's hysteretic `up`, `degraded`, `down`, and `unknown` state, and explicitly mark data older than two collection intervals as `Stale`.
+- **Stable endpoint identity**: Current-state searches group by `endpoint_id`, avoiding collisions when multiple targets share a hostname.
+- **Invalid measurement handling**: v2 probe/backend errors remain `unknown` and no longer masquerade as zero loss or zero latency. Historical v1 packet-loss semantics remain searchable.
+- **Macro execution repair**: Core data-access macros now emit a valid generating `search` command when invoked at the start of a saved search or ad-hoc search.
+- **Bounded current-state search**: The latest-status helper scans only the recent operational window instead of all retained legacy events.
+
 ## Version 2.7.6
 
 ### What's New in v2.7.6
@@ -20,13 +41,13 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.7.6_build34_20260625.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.9.0_build39_20260715.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
 ## Paired Go Runtime
 
-This Splunk app is intended to pair with the current Go runtime release, `v5.3.1`.
+This Splunk app is intended to pair with the current Go runtime release, `v5.5.0`.
 
 - Drop `pingmonitor.exe` into an existing deployment folder and it will pick up the co-located `config.psd1` and `endpoints.csv` on startup.
 - If the embedded admin UI is enabled, those active files are loaded into the UI immediately so the existing deployment can be managed without rebuilding configuration by hand.

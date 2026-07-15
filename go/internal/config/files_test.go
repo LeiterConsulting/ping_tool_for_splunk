@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
@@ -31,6 +32,9 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 	}
 	if loaded[1].Hostname != "qa-api" || !loaded[1].Dev {
 		t.Fatalf("unexpected second endpoint: %#v", loaded[1])
+	}
+	if loaded[0].EndpointID == "" || loaded[1].EndpointID == "" || loaded[0].EndpointID == loaded[1].EndpointID {
+		t.Fatalf("stable endpoint IDs were not generated: %#v", loaded)
 	}
 	backups, err := filepath.Glob(path + ".*.bak")
 	if err != nil {
@@ -109,5 +113,29 @@ func TestSaveConfigPSD1_RoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("Stat(%s) error = %v", path, err)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("config permissions = %v, want 0600", info.Mode().Perm())
+		}
+	}
+}
+
+func TestLoadDoesNotHideInvalidPreferredConfig(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	path := filepath.Join(root, "config.psd1")
+	if err := os.WriteFile(path, []byte("@{ broken = @{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Load(context.Background(), path, root); err == nil {
+		t.Fatal("Load() silently replaced an invalid preferred config")
+	}
+	if _, err := os.Stat(filepath.Join(root, "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("Load() created a fallback config after parse failure: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 # Logs (keep structure, ignore content)
 logs/*.log
 logs/*_*.log
+logs/*.png
 
 # Keep the logs directory
 !logs/.gitkeep
@@ -23,6 +24,9 @@ Desktop.ini
 *~
 
 # Sensitive files (tokens, credentials)
+.env
+.env.*
+!.env.example
 *.secret
 *.credentials
 
@@ -35,8 +39,13 @@ discovered_endpoints.csv
 # Internal development documentation (not shipped)
 documentation/
 
-# Test suite and artifacts (not shipped)
-tests/
+# Runtime identity, lock, and health-state checkpoints
+*.collector_id
+*.state.json
+*.psd1.lock
+*.yaml.lock
+*.yml.lock
+*.json.lock
 
 # Future feature ideas
 future_features/

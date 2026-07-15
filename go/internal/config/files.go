@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +18,8 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"gopkg.in/yaml.v3"
 )
+
+var endpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
 
 type SourceInfo struct {
 	Path   string `json:"path"`
@@ -124,7 +128,7 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
-	if err := writer.Write([]string{"ip", "hostname", "group", "description", "entitytype", "device", "vendor", "additional_notes", "dev"}); err != nil {
+	if err := writer.Write([]string{"ip", "hostname", "group", "description", "entitytype", "device", "vendor", "additional_notes", "endpoint_id", "dev"}); err != nil {
 		return err
 	}
 	for _, endpoint := range endpoints {
@@ -141,6 +145,7 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 			strings.TrimSpace(endpoint.Device),
 			strings.TrimSpace(endpoint.Vendor),
 			strings.TrimSpace(endpoint.AdditionalNotes),
+			models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
 			strconv.FormatBool(endpoint.Dev),
 		}
 		if err := writer.Write(record); err != nil {
@@ -155,13 +160,40 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 }
 
 func ValidateEndpoints(endpoints []models.Endpoint) error {
+	seenTargets := make(map[string]int, len(endpoints))
+	seenIDs := make(map[string]int, len(endpoints))
 	for index, endpoint := range endpoints {
-		if strings.TrimSpace(endpoint.IP) == "" {
+		target := strings.TrimSpace(endpoint.IP)
+		if target == "" {
 			return fmt.Errorf("endpoint %d is missing ip", index+1)
 		}
-		if strings.TrimSpace(endpoint.Hostname) == "" {
+		parsedIP := net.ParseIP(target)
+		if parsedIP == nil {
+			return fmt.Errorf("endpoint %d has invalid IP address %q; DNS names are not accepted in the ip column", index+1, target)
+		}
+		canonicalTarget := strings.ToLower(parsedIP.String())
+		if first, exists := seenTargets[canonicalTarget]; exists {
+			return fmt.Errorf("endpoint %d duplicates target IP %q from endpoint %d", index+1, canonicalTarget, first)
+		}
+		seenTargets[canonicalTarget] = index + 1
+
+		hostname := strings.TrimSpace(endpoint.Hostname)
+		if hostname == "" {
 			return fmt.Errorf("endpoint %d is missing hostname", index+1)
 		}
+		if len(hostname) > 253 || strings.ContainsAny(hostname, "\r\n\t") {
+			return fmt.Errorf("endpoint %d has invalid hostname %q", index+1, hostname)
+		}
+
+		endpointID := models.StableEndpointID(endpoint.EndpointID, canonicalTarget)
+		if !endpointIDPattern.MatchString(endpointID) {
+			return fmt.Errorf("endpoint %d has invalid endpoint_id %q", index+1, endpointID)
+		}
+		key := strings.ToLower(endpointID)
+		if first, exists := seenIDs[key]; exists {
+			return fmt.Errorf("endpoint %d duplicates endpoint_id %q from endpoint %d", index+1, endpointID, first)
+		}
+		seenIDs[key] = index + 1
 	}
 	return nil
 }
@@ -172,7 +204,7 @@ func writeJSONFile(path string, cfg Config) error {
 		return err
 	}
 	b = append(b, '\n')
-	return writeWithBackup(path, b)
+	return writeWithBackupMode(path, b, 0o600)
 }
 
 func writeYAMLFile(path string, cfg Config) error {
@@ -180,16 +212,20 @@ func writeYAMLFile(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return writeWithBackup(path, b)
+	return writeWithBackupMode(path, b, 0o600)
 }
 
 func writeWithBackup(path string, content []byte) error {
+	return writeWithBackupMode(path, content, 0o644)
+}
+
+func writeWithBackupMode(path string, content []byte, mode os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 	if _, err := os.Stat(path); err == nil {
 		backupPath := fmt.Sprintf("%s.%s.bak", path, time.Now().UTC().Format("20060102T150405Z"))
-		if copyErr := copyFile(path, backupPath); copyErr != nil {
+		if copyErr := copyFile(path, backupPath, mode); copyErr != nil {
 			return copyErr
 		}
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -197,7 +233,7 @@ func writeWithBackup(path string, content []byte) error {
 	}
 
 	tempPath := filepath.Join(filepath.Dir(path), fmt.Sprintf(".%s.%d.tmp", filepath.Base(path), time.Now().UnixNano()))
-	if err := os.WriteFile(tempPath, content, 0o644); err != nil {
+	if err := os.WriteFile(tempPath, content, mode); err != nil {
 		return err
 	}
 	if _, err := os.Stat(path); err == nil {
@@ -213,12 +249,12 @@ func writeWithBackup(path string, content []byte) error {
 	return nil
 }
 
-func copyFile(src string, dst string) error {
+func copyFile(src string, dst string, mode os.FileMode) error {
 	b, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(dst, b, 0o644)
+	return os.WriteFile(dst, b, mode)
 }
 
 func isSupportedConfigExt(path string) bool {

@@ -29,6 +29,12 @@ type Ping struct {
 	Mode string `json:"mode" yaml:"mode"`
 }
 
+type Health struct {
+	DownAfterFailures      int `json:"down_after_failures" yaml:"down_after_failures"`
+	RecoveryAfterSuccesses int `json:"recovery_after_successes" yaml:"recovery_after_successes"`
+	StaleAfterIntervals    int `json:"stale_after_intervals" yaml:"stale_after_intervals"`
+}
+
 type Retry struct {
 	Enabled     bool   `json:"enabled" yaml:"enabled"`
 	MaxAttempts int    `json:"max_attempts" yaml:"max_attempts"`
@@ -54,23 +60,38 @@ type HEC struct {
 	RetryDelayMs             int    `json:"retry_delay_ms" yaml:"retry_delay_ms"`
 	DeadLetterPath           string `json:"dead_letter_path" yaml:"dead_letter_path"`
 	DeadLetterRotationSizeMB int    `json:"dead_letter_rotation_size_mb" yaml:"dead_letter_rotation_size_mb"`
+	UseACK                   bool   `json:"use_ack" yaml:"use_ack"`
+	ACKTimeoutSeconds        int    `json:"ack_timeout_seconds" yaml:"ack_timeout_seconds"`
+	ACKPollIntervalMs        int    `json:"ack_poll_interval_ms" yaml:"ack_poll_interval_ms"`
+	Channel                  string `json:"channel" yaml:"channel"`
 }
 
 type Metrics struct {
-	Enabled         bool   `json:"enabled" yaml:"enabled"`
-	Mode            string `json:"mode" yaml:"mode"`
-	Index           string `json:"index" yaml:"index"`
-	HECURL          string `json:"hec_url" yaml:"hec_url"`
-	Token           string `json:"token" yaml:"token"`
-	VerifySSL       bool   `json:"verify_ssl" yaml:"verify_ssl"`
-	SSLProtocol     string `json:"ssl_protocol" yaml:"ssl_protocol"`
-	CompatMode      bool   `json:"compat_mode" yaml:"compat_mode"`
-	SourceType      string `json:"sourcetype" yaml:"sourcetype"`
-	EventName       string `json:"event_name" yaml:"event_name"`
-	UseMetricsIndex bool   `json:"use_metrics_index" yaml:"use_metrics_index"`
-	BatchSize       int    `json:"batch_size" yaml:"batch_size"`
-	MaxBufferEvents int    `json:"max_buffer_events" yaml:"max_buffer_events"`
-	MaxBufferBytes  string `json:"max_buffer_bytes" yaml:"max_buffer_bytes"`
+	Enabled           bool   `json:"enabled" yaml:"enabled"`
+	Mode              string `json:"mode" yaml:"mode"`
+	Index             string `json:"index" yaml:"index"`
+	HECURL            string `json:"hec_url" yaml:"hec_url"`
+	Token             string `json:"token" yaml:"token"`
+	VerifySSL         bool   `json:"verify_ssl" yaml:"verify_ssl"`
+	SSLProtocol       string `json:"ssl_protocol" yaml:"ssl_protocol"`
+	CompatMode        bool   `json:"compat_mode" yaml:"compat_mode"`
+	SourceType        string `json:"sourcetype" yaml:"sourcetype"`
+	EventName         string `json:"event_name" yaml:"event_name"`
+	UseMetricsIndex   bool   `json:"use_metrics_index" yaml:"use_metrics_index"`
+	BatchSize         int    `json:"batch_size" yaml:"batch_size"`
+	MaxBufferEvents   int    `json:"max_buffer_events" yaml:"max_buffer_events"`
+	MaxBufferBytes    string `json:"max_buffer_bytes" yaml:"max_buffer_bytes"`
+	UseACK            bool   `json:"use_ack" yaml:"use_ack"`
+	ACKTimeoutSeconds int    `json:"ack_timeout_seconds" yaml:"ack_timeout_seconds"`
+	ACKPollIntervalMs int    `json:"ack_poll_interval_ms" yaml:"ack_poll_interval_ms"`
+	Channel           string `json:"channel" yaml:"channel"`
+}
+
+type Delivery struct {
+	SpoolPath         string `json:"spool_path" yaml:"spool_path"`
+	MaxSpoolBytes     string `json:"max_spool_bytes" yaml:"max_spool_bytes"`
+	MaxEnvelopes      int    `json:"max_envelopes" yaml:"max_envelopes"`
+	DrainMaxEnvelopes int    `json:"drain_max_envelopes" yaml:"drain_max_envelopes"`
 }
 
 type Config struct {
@@ -83,10 +104,12 @@ type Config struct {
 	LogRotationSizeMB    int         `json:"log_rotation_size_mb" yaml:"log_rotation_size_mb"`
 	EmitIndividualPings  bool        `json:"emit_individual_pings" yaml:"emit_individual_pings"`
 	Ping                 Ping        `json:"ping" yaml:"ping"`
+	Health               Health      `json:"health" yaml:"health"`
 	Diagnostics          Diagnostics `json:"diagnostics" yaml:"diagnostics"`
 	Debug                Debug       `json:"debug" yaml:"debug"`
 	HEC                  HEC         `json:"hec" yaml:"hec"`
 	Metrics              Metrics     `json:"metrics" yaml:"metrics"`
+	Delivery             Delivery    `json:"delivery" yaml:"delivery"`
 }
 
 func Defaults(root string) Config {
@@ -100,6 +123,7 @@ func Defaults(root string) Config {
 		LogRotationSizeMB:    50,
 		EmitIndividualPings:  true,
 		Ping:                 Ping{Mode: "auto"},
+		Health:               Health{DownAfterFailures: 3, RecoveryAfterSuccesses: 2, StaleAfterIntervals: 2},
 		Diagnostics:          Diagnostics{Enabled: false, HandleProbeMode: "none"},
 		Debug:                Debug{EmitMemoryStats: false},
 		HEC: HEC{
@@ -111,7 +135,7 @@ func Defaults(root string) Config {
 			VerifySSL:                true,
 			SSLProtocol:              "Default",
 			BatchSize:                100,
-			DropOnFailure:            true,
+			DropOnFailure:            false,
 			MaxBufferEvents:          5000,
 			MaxBufferBytes:           "5MB",
 			Retry:                    Retry{Enabled: false, MaxAttempts: 3, BaseDelayMs: 250, JitterPct: 20, Backoff: "exponential"},
@@ -119,22 +143,34 @@ func Defaults(root string) Config {
 			RetryDelayMs:             250,
 			DeadLetterPath:           "",
 			DeadLetterRotationSizeMB: 0,
+			UseACK:                   false,
+			ACKTimeoutSeconds:        60,
+			ACKPollIntervalMs:        1000,
 		},
 		Metrics: Metrics{
-			Enabled:         false,
-			Mode:            "dual",
-			Index:           "",
-			HECURL:          "",
-			Token:           "",
-			VerifySSL:       true,
-			SSLProtocol:     "Default",
-			CompatMode:      true,
-			SourceType:      "ping_monitor:metrics",
-			EventName:       "metric",
-			UseMetricsIndex: false,
-			BatchSize:       100,
-			MaxBufferEvents: 5000,
-			MaxBufferBytes:  "5MB",
+			Enabled:           false,
+			Mode:              "dual",
+			Index:             "",
+			HECURL:            "",
+			Token:             "",
+			VerifySSL:         true,
+			SSLProtocol:       "Default",
+			CompatMode:        true,
+			SourceType:        "ping_monitor:metrics",
+			EventName:         "metric",
+			UseMetricsIndex:   false,
+			BatchSize:         100,
+			MaxBufferEvents:   5000,
+			MaxBufferBytes:    "5MB",
+			UseACK:            false,
+			ACKTimeoutSeconds: 60,
+			ACKPollIntervalMs: 1000,
+		},
+		Delivery: Delivery{
+			SpoolPath:         filepath.Join(root, "data", "outbox"),
+			MaxSpoolBytes:     "512MB",
+			MaxEnvelopes:      10000,
+			DrainMaxEnvelopes: 100,
 		},
 	}
 }
@@ -144,11 +180,13 @@ func Load(ctx context.Context, path string, root string) (Config, string, error)
 	if strings.HasSuffix(strings.ToLower(path), ".psd1") {
 		if _, err := os.Stat(path); err == nil {
 			cfg, err := loadFromPSD1(ctx, path, root)
-			if err == nil {
-				cfg = resolvePaths(cfg, filepath.Dir(path), root)
-				return cfg, "config.psd1", nil
+			if err != nil {
+				return Config{}, "", fmt.Errorf("load %s: %w", path, err)
 			}
-			// fall through to other sources
+			cfg = resolvePaths(cfg, filepath.Dir(path), root)
+			return cfg, "config.psd1", nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return Config{}, "", err
 		}
 	}
 
@@ -167,22 +205,25 @@ func Load(ctx context.Context, path string, root string) (Config, string, error)
 		switch strings.ToLower(filepath.Ext(c)) {
 		case ".psd1":
 			cfg, err := loadFromPSD1(ctx, c, root)
-			if err == nil {
-				cfg = resolvePaths(cfg, filepath.Dir(c), root)
-				return cfg, "config.psd1", nil
+			if err != nil {
+				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
 			}
+			cfg = resolvePaths(cfg, filepath.Dir(c), root)
+			return cfg, "config.psd1", nil
 		case ".yaml", ".yml":
 			cfg, err := loadFromYAML(c, root)
-			if err == nil {
-				cfg = resolvePaths(cfg, filepath.Dir(c), root)
-				return cfg, "config.yaml", nil
+			if err != nil {
+				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
 			}
+			cfg = resolvePaths(cfg, filepath.Dir(c), root)
+			return cfg, "config.yaml", nil
 		case ".json":
 			cfg, err := loadFromJSON(c, root)
-			if err == nil {
-				cfg = resolvePaths(cfg, filepath.Dir(c), root)
-				return cfg, "config.json", nil
+			if err != nil {
+				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
 			}
+			cfg = resolvePaths(cfg, filepath.Dir(c), root)
+			return cfg, "config.json", nil
 		}
 	}
 
@@ -269,6 +310,9 @@ func resolvePaths(cfg Config, configDir string, root string) Config {
 	if cfg.HEC.DeadLetterPath != "" && !filepath.IsAbs(cfg.HEC.DeadLetterPath) {
 		cfg.HEC.DeadLetterPath = filepath.Clean(filepath.Join(configDir, cfg.HEC.DeadLetterPath))
 	}
+	if cfg.Delivery.SpoolPath != "" && !filepath.IsAbs(cfg.Delivery.SpoolPath) {
+		cfg.Delivery.SpoolPath = filepath.Clean(filepath.Join(configDir, cfg.Delivery.SpoolPath))
+	}
 	// If configDir is empty for some reason, ensure defaults still resolve under root.
 	if cfg.LogPath == "" {
 		cfg.LogPath = filepath.Join(root, "logs", "ping_results.log")
@@ -288,6 +332,11 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 
 	if m, ok := getMap(raw, "ping"); ok {
 		cfg.Ping.Mode = getString(m, "mode", cfg.Ping.Mode)
+	}
+	if m, ok := getMap(raw, "health"); ok {
+		cfg.Health.DownAfterFailures = getInt(m, "down_after_failures", cfg.Health.DownAfterFailures)
+		cfg.Health.RecoveryAfterSuccesses = getInt(m, "recovery_after_successes", cfg.Health.RecoveryAfterSuccesses)
+		cfg.Health.StaleAfterIntervals = getInt(m, "stale_after_intervals", cfg.Health.StaleAfterIntervals)
 	}
 
 	if m, ok := getMap(raw, "diagnostics"); ok {
@@ -313,6 +362,10 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 		cfg.HEC.RetryDelayMs = getInt(m, "retry_delay_ms", cfg.HEC.RetryDelayMs)
 		cfg.HEC.DeadLetterPath = getString(m, "dead_letter_path", cfg.HEC.DeadLetterPath)
 		cfg.HEC.DeadLetterRotationSizeMB = getInt(m, "dead_letter_rotation_size_mb", cfg.HEC.DeadLetterRotationSizeMB)
+		cfg.HEC.UseACK = getBool(m, "use_ack", cfg.HEC.UseACK)
+		cfg.HEC.ACKTimeoutSeconds = getInt(m, "ack_timeout_seconds", cfg.HEC.ACKTimeoutSeconds)
+		cfg.HEC.ACKPollIntervalMs = getInt(m, "ack_poll_interval_ms", cfg.HEC.ACKPollIntervalMs)
+		cfg.HEC.Channel = getString(m, "channel", cfg.HEC.Channel)
 		if r, ok := getMap(m, "retry"); ok {
 			cfg.HEC.Retry.Enabled = getBool(r, "enabled", cfg.HEC.Retry.Enabled)
 			cfg.HEC.Retry.MaxAttempts = getInt(r, "max_attempts", cfg.HEC.Retry.MaxAttempts)
@@ -336,6 +389,16 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 		cfg.Metrics.BatchSize = getInt(m, "batch_size", cfg.Metrics.BatchSize)
 		cfg.Metrics.MaxBufferEvents = getInt(m, "max_buffer_events", cfg.Metrics.MaxBufferEvents)
 		cfg.Metrics.MaxBufferBytes = getString(m, "max_buffer_bytes", cfg.Metrics.MaxBufferBytes)
+		cfg.Metrics.UseACK = getBool(m, "use_ack", cfg.Metrics.UseACK)
+		cfg.Metrics.ACKTimeoutSeconds = getInt(m, "ack_timeout_seconds", cfg.Metrics.ACKTimeoutSeconds)
+		cfg.Metrics.ACKPollIntervalMs = getInt(m, "ack_poll_interval_ms", cfg.Metrics.ACKPollIntervalMs)
+		cfg.Metrics.Channel = getString(m, "channel", cfg.Metrics.Channel)
+	}
+	if m, ok := getMap(raw, "delivery"); ok {
+		cfg.Delivery.SpoolPath = getString(m, "spool_path", cfg.Delivery.SpoolPath)
+		cfg.Delivery.MaxSpoolBytes = getString(m, "max_spool_bytes", cfg.Delivery.MaxSpoolBytes)
+		cfg.Delivery.MaxEnvelopes = getInt(m, "max_envelopes", cfg.Delivery.MaxEnvelopes)
+		cfg.Delivery.DrainMaxEnvelopes = getInt(m, "drain_max_envelopes", cfg.Delivery.DrainMaxEnvelopes)
 	}
 }
 
@@ -358,11 +421,44 @@ func normalize(cfg Config) Config {
 	if cfg.Ping.Mode == "" {
 		cfg.Ping.Mode = "auto"
 	}
+	if cfg.Health.DownAfterFailures < 1 {
+		cfg.Health.DownAfterFailures = 3
+	}
+	if cfg.Health.RecoveryAfterSuccesses < 1 {
+		cfg.Health.RecoveryAfterSuccesses = 2
+	}
+	if cfg.Health.StaleAfterIntervals < 1 {
+		cfg.Health.StaleAfterIntervals = 2
+	}
 	if cfg.OutputMode != "file" && cfg.OutputMode != "hec" && cfg.OutputMode != "both" {
 		cfg.OutputMode = "file"
 	}
 	if cfg.Metrics.Mode == "" {
 		cfg.Metrics.Mode = "dual"
+	}
+	if cfg.HEC.ACKTimeoutSeconds < 1 {
+		cfg.HEC.ACKTimeoutSeconds = 60
+	}
+	if cfg.HEC.ACKPollIntervalMs < 50 {
+		cfg.HEC.ACKPollIntervalMs = 1000
+	}
+	if cfg.Metrics.ACKTimeoutSeconds < 1 {
+		cfg.Metrics.ACKTimeoutSeconds = 60
+	}
+	if cfg.Metrics.ACKPollIntervalMs < 50 {
+		cfg.Metrics.ACKPollIntervalMs = 1000
+	}
+	if cfg.Delivery.SpoolPath == "" {
+		cfg.Delivery.SpoolPath = filepath.Join("data", "outbox")
+	}
+	if cfg.Delivery.MaxSpoolBytes == "" {
+		cfg.Delivery.MaxSpoolBytes = "512MB"
+	}
+	if cfg.Delivery.MaxEnvelopes < 1 {
+		cfg.Delivery.MaxEnvelopes = 10000
+	}
+	if cfg.Delivery.DrainMaxEnvelopes < 1 {
+		cfg.Delivery.DrainMaxEnvelopes = 100
 	}
 	return cfg
 }
@@ -464,7 +560,19 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 	}
 	idx := map[string]int{}
 	for i, h := range headers {
-		idx[strings.ToLower(strings.TrimSpace(h))] = i
+		name := strings.ToLower(strings.TrimSpace(h))
+		if name == "" {
+			continue
+		}
+		if _, exists := idx[name]; exists {
+			return nil, fmt.Errorf("endpoints CSV has duplicate %q header", name)
+		}
+		idx[name] = i
+	}
+	for _, required := range []string{"ip", "hostname"} {
+		if _, ok := idx[required]; !ok {
+			return nil, fmt.Errorf("endpoints CSV is missing required %q header", required)
+		}
 	}
 	get := func(row []string, name string) string {
 		p, ok := idx[name]
@@ -475,6 +583,7 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 	}
 
 	var eps []models.Endpoint
+	record := 1
 	for {
 		row, err := r.Read()
 		if err != nil {
@@ -483,15 +592,21 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 			}
 			return nil, err
 		}
+		record++
 		ip := get(row, "ip")
 		hn := get(row, "hostname")
 		if ip == "" || hn == "" {
-			continue
+			return nil, fmt.Errorf("endpoints CSV record %d must contain both ip and hostname", record)
+		}
+		dev, err := parseCSVBoolStrict(get(row, "dev"))
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: %w", record, err)
 		}
 		ep := models.Endpoint{
+			EndpointID:      models.StableEndpointID(get(row, "endpoint_id"), ip),
 			IP:              ip,
 			Hostname:        hn,
-			Dev:             parseCSVBool(get(row, "dev")),
+			Dev:             dev,
 			Group:           firstNonEmpty(get(row, "group"), "default"),
 			Description:     get(row, "description"),
 			EntityType:      get(row, "entitytype"),
@@ -504,6 +619,9 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 	if len(eps) == 0 && !allowEmpty {
 		return nil, errors.New("no valid endpoints found in CSV")
 	}
+	if err := ValidateEndpoints(eps); err != nil {
+		return nil, fmt.Errorf("invalid endpoints CSV: %w", err)
+	}
 	return eps, nil
 }
 
@@ -511,8 +629,8 @@ func writeEndpointsTemplate(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev\n" +
-		"127.0.0.1,localhost,default,loopback,,, ,false\n"
+	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev\n" +
+		"127.0.0.1,localhost,default,loopback,,,,,false\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -524,11 +642,18 @@ func firstNonEmpty(v string, def string) string {
 }
 
 func parseCSVBool(v string) bool {
+	parsed, _ := parseCSVBoolStrict(v)
+	return parsed
+}
+
+func parseCSVBoolStrict(v string) (bool, error) {
 	s := strings.TrimSpace(strings.ToLower(v))
 	switch s {
 	case "1", "true", "yes", "y", "on", "dev":
-		return true
+		return true, nil
+	case "", "0", "false", "no", "n", "off", "prod":
+		return false, nil
 	default:
-		return false
+		return false, fmt.Errorf("invalid dev value %q", v)
 	}
 }

@@ -1,5 +1,5 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.3.1)
+# Splunk Ping Monitor Configuration (Go v5.5.0)
 # ============================================
 # Preferred configuration file for pingmonitor.exe.
 # Relative paths are resolved from the directory containing this file.
@@ -34,11 +34,18 @@
     # PING ENGINE
     # ----------------------------------------
     ping = @{
-        # auto = raw ICMP with exec fallback
-        # raw  = raw ICMP only
+        # auto = native ICMP with exec fallback
+        # raw  = native/raw ICMP only
         # exec = OS ping only
         mode = "auto"
     }
+
+	# Hysteresis prevents a single missed reply from flipping a device down.
+	health = @{
+		down_after_failures = 3
+		recovery_after_successes = 2
+		stale_after_intervals = 2
+	}
 
     # ----------------------------------------
     # DIAGNOSTICS
@@ -65,7 +72,9 @@
         ssl_protocol = "Default"     # Default | Tls12 | Tls13 | Tls11 | Tls
 
         batch_size = 100
-        drop_on_failure = $true
+        # Deprecated compatibility setting. v5.5+ never drops failed cycles;
+        # completed cycles remain in the durable outbox until delivered.
+        drop_on_failure = $false
         max_buffer_events = 5000
         max_buffer_bytes = "5MB"
 
@@ -84,6 +93,13 @@
         # Optional dead-letter file for dropped batches
         dead_letter_path = ""
         dead_letter_rotation_size_mb = 0
+
+        # A normal HTTP 2xx confirms HEC acceptance. Enable indexer ACK when
+        # delivery health must mean that Splunk has indexed the batch.
+        use_ack = $false
+        ack_timeout_seconds = 60
+        ack_poll_interval_ms = 1000
+        channel = ""                 # blank = stable GUID derived from collector_id
     }
 
     # ----------------------------------------
@@ -106,5 +122,19 @@
         batch_size = 100
         max_buffer_events = 5000
         max_buffer_bytes = "5MB"
+        use_ack = $false
+        ack_timeout_seconds = 60
+        ack_poll_interval_ms = 1000
+        channel = ""
+    }
+
+    # ----------------------------------------
+    # DURABLE NETWORK DELIVERY
+    # ----------------------------------------
+    delivery = @{
+        spool_path = "./data/outbox"
+        max_spool_bytes = "512MB"
+        max_envelopes = 10000
+        drain_max_envelopes = 100
     }
 }
