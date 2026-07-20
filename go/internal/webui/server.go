@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
@@ -172,9 +173,18 @@ type outputTestResponse struct {
 	Warnings     []string `json:"warnings,omitempty"`
 }
 
+type advisorApplyRequest struct {
+	Profile           string `json:"profile"`
+	ApplySafe         bool   `json:"apply_safe"`
+	ApplyProfile      bool   `json:"apply_profile"`
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
+}
+
 type apiServer struct {
 	opts            Options
 	writeMu         sync.Mutex
+	benchmarkMu     sync.Mutex
 	statusConfigMu  sync.RWMutex
 	statusConfig    config.Config
 	hasStatusConfig bool
@@ -241,6 +251,10 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/status", server.handleStatus)
 	mux.HandleFunc("/api/endpoints", server.handleEndpoints)
 	mux.HandleFunc("/api/config", server.handleConfig)
+	mux.HandleFunc("/api/advisor", server.handleAdvisor)
+	mux.HandleFunc("/api/advisor/profiles", server.handleAdvisorProfiles)
+	mux.HandleFunc("/api/advisor/apply", server.handleAdvisorApply)
+	mux.HandleFunc("/api/advisor/benchmark", server.handleAdvisorBenchmark)
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
@@ -539,6 +553,107 @@ func (s *apiServer) setEffectiveStatusConfig(cfg config.Config) {
 	defer s.statusConfigMu.Unlock()
 	s.statusConfig = cfg
 	s.hasStatusConfig = true
+}
+
+func (s *apiServer) advisorOptions(profile string) advisor.AnalyzeOptions {
+	return advisor.AnalyzeOptions{
+		ConfigPath: s.opts.ConfigPath, EndpointsPath: s.opts.EndpointsPath,
+		RootDir: s.opts.RootDir, Profile: profile, ProductVersion: s.opts.Version,
+	}
+}
+
+func (s *apiServer) handleAdvisor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	report := advisor.AnalyzeDeployment(r.Context(), s.advisorOptions(r.URL.Query().Get("profile")))
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *apiServer) handleAdvisorProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, advisor.Profiles())
+}
+
+func (s *apiServer) handleAdvisorApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request advisorApplyRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !request.ApplySafe && !request.ApplyProfile {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "select at least one fix to apply"})
+		return
+	}
+	if _, err := advisor.GetProfile(request.Profile); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	configInfo, err := config.ResolveConfigSource(s.opts.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	configRevision, configErr := revision.File(configInfo.Path)
+	endpointsRevision, endpointsErr := revision.File(s.opts.EndpointsPath)
+	if configErr != nil || endpointsErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify deployment revisions"})
+		return
+	}
+	if request.ConfigRevision == "" || request.ConfigRevision != configRevision {
+		writeRevisionConflict(w, "config file changed after advisor analysis", configRevision)
+		return
+	}
+	if request.EndpointsRevision == "" || request.EndpointsRevision != endpointsRevision {
+		writeRevisionConflict(w, "endpoint file changed after advisor analysis", endpointsRevision)
+		return
+	}
+
+	result, err := advisor.Apply(r.Context(), advisor.ApplyOptions{
+		AnalyzeOptions: s.advisorOptions(request.Profile),
+		ApplySafe:      request.ApplySafe, ApplyProfile: request.ApplyProfile,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if result.ConfigChanged && s.opts.Runtime.Snapshot().Mode != "monitor" && result.Report.LoadedConfig != nil {
+		s.setEffectiveStatusConfig(*result.Report.LoadedConfig)
+	}
+	diagnostics.LogInfo("configuration advisor applied fixes", map[string]interface{}{
+		"profile": request.Profile, "fixes": result.AppliedFixes,
+		"config_changed": result.ConfigChanged, "endpoints_changed": result.EndpointsChanged,
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *apiServer) handleAdvisorBenchmark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.benchmarkMu.TryLock() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "an advisor benchmark is already running"})
+		return
+	}
+	defer s.benchmarkMu.Unlock()
+	result, err := advisor.BenchmarkDeployment(r.Context(), s.advisorOptions(r.URL.Query().Get("profile")))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *apiServer) handleDiscoveryRun(w http.ResponseWriter, r *http.Request) {

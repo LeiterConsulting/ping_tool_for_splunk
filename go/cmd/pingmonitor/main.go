@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/buildinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
@@ -25,6 +26,12 @@ import (
 )
 
 func main() {
+	if handled, exitCode := runAdvisorCommand(os.Args[1:]); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
 	var (
 		configPath    = flag.String("config", "config.psd1", "Path to config.psd1 (preferred) or config.yaml/config.json")
 		endpointsPath = flag.String("endpoints", "endpoints.csv", "Path to endpoints.csv")
@@ -55,9 +62,21 @@ func main() {
 
 	resolvedConfigPath := resolveRuntimePath(*configPath, root, "config.psd1")
 	resolvedEndpointsPath := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
+	if *validateOnly {
+		report := advisor.AnalyzeDeployment(context.Background(), advisor.AnalyzeOptions{
+			ConfigPath: resolvedConfigPath, EndpointsPath: resolvedEndpointsPath,
+			RootDir: root, Profile: "current", ProductVersion: buildinfo.Version,
+		})
+		advisor.WriteText(os.Stdout, report)
+		if !report.Summary.ReadyToRun {
+			os.Exit(2)
+		}
+		fmt.Printf("\nvalidation successful: config=%s endpoints=%d\n", report.ConfigSource, report.Inventory.SchedulableEndpoints)
+		return
+	}
 
 	var deploymentLock *singleinstance.Lock
-	if !*uiOnly && !*validateOnly {
+	if !*uiOnly {
 		lockPath := resolvedConfigPath + ".lock"
 		var lockErr error
 		deploymentLock, lockErr = singleinstance.Acquire(lockPath)
@@ -68,13 +87,11 @@ func main() {
 		defer deploymentLock.Close()
 	}
 	collectorID := ""
-	if !*validateOnly {
-		var err error
-		collectorID, err = identity.LoadOrCreateCollectorID(resolvedConfigPath + ".collector_id")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
-			os.Exit(2)
-		}
+	var err error
+	collectorID, err = identity.LoadOrCreateCollectorID(resolvedConfigPath + ".collector_id")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
+		os.Exit(2)
 	}
 
 	sigCh := make(chan os.Signal, 2)
@@ -120,14 +137,6 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "endpoints load failed: %v\n", err)
 		os.Exit(2)
-	}
-	if *validateOnly {
-		if err := engine.ValidateSchedule(cfg, len(endpoints)); err != nil {
-			fmt.Fprintf(os.Stderr, "scheduler validation failed: %v\n", err)
-			os.Exit(2)
-		}
-		fmt.Printf("validation successful: config=%s endpoints=%d\n", cfgSource, len(endpoints))
-		return
 	}
 	configRevision, _ := revision.File(resolvedConfigPath)
 	endpointsRevision, _ := revision.File(resolvedEndpointsPath)

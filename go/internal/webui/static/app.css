@@ -450,6 +450,153 @@ button:disabled {
   background: radial-gradient(circle, rgba(229, 166, 58, 0.18), transparent 70%);
 }
 
+.summary-card.accent-red::after {
+  background: radial-gradient(circle, rgba(214, 69, 69, 0.2), transparent 70%);
+}
+
+.advisor-toolbar {
+  align-items: end;
+}
+
+.advisor-profile-field {
+  min-width: 230px;
+}
+
+.advisor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.panel-heading-row,
+.advisor-finding-heading,
+.advisor-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.advisor-schedule-status {
+  width: fit-content;
+  padding: 0.35rem 0.65rem;
+  border: 1px solid var(--border-650);
+  border-radius: 999px;
+  color: var(--text-100);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.advisor-schedule-status.advisor-fit {
+  border-color: rgba(115, 191, 105, 0.55);
+  background: rgba(115, 191, 105, 0.12);
+}
+
+.advisor-schedule-status.advisor-blocked {
+  border-color: rgba(214, 69, 69, 0.6);
+  background: rgba(214, 69, 69, 0.14);
+}
+
+.advisor-stat-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+}
+
+.advisor-stat-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid rgba(42, 54, 66, 0.72);
+}
+
+.advisor-stat-list div:last-child {
+  border-bottom: 0;
+}
+
+.advisor-stat-list dt {
+  color: var(--text-500);
+}
+
+.advisor-stat-list dd {
+  margin: 0;
+  color: var(--text-100);
+  text-align: right;
+}
+
+.advisor-findings,
+.advisor-changes {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.advisor-finding {
+  padding: 1rem;
+  border: 1px solid var(--border-700);
+  border-left: 4px solid var(--primary-400);
+  border-radius: var(--radius-md);
+  background: rgba(12, 17, 22, 0.45);
+}
+
+.advisor-finding.severity-blocker {
+  border-left-color: var(--red-400);
+}
+
+.advisor-finding.severity-warning {
+  border-left-color: var(--amber-400);
+}
+
+.advisor-finding.severity-opportunity {
+  border-left-color: var(--teal-400);
+}
+
+.advisor-finding h4,
+.advisor-finding p {
+  margin: 0.5rem 0 0;
+}
+
+.advisor-finding ul {
+  margin-bottom: 0;
+}
+
+.advisor-severity,
+.advisor-code {
+  color: var(--text-500);
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.advisor-recommendation {
+  color: var(--text-300);
+}
+
+.advisor-change-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(170px, 0.8fr) minmax(240px, 1.5fr);
+  gap: 1rem;
+  padding: 0.8rem;
+  border: 1px solid rgba(42, 54, 66, 0.72);
+  border-radius: var(--radius-sm);
+}
+
+.advisor-change-row code,
+.advisor-change-row strong {
+  color: var(--text-100);
+}
+
+.advisor-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.empty-copy {
+  margin: 0;
+  color: var(--text-500);
+}
+
 .summary-card.accent-slate::after {
   background: radial-gradient(circle, rgba(115, 131, 149, 0.18), transparent 70%);
 }
@@ -997,6 +1144,14 @@ td {
     grid-template-columns: 1fr 1fr;
   }
 
+  .advisor-change-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .advisor-change-row span:last-child {
+    grid-column: 1 / -1;
+  }
+
   .field-grid-third {
     grid-template-columns: 1fr;
   }
@@ -1059,6 +1214,15 @@ td {
     grid-template-columns: 1fr;
   }
 
+  .advisor-grid,
+  .advisor-change-row {
+    grid-template-columns: 1fr;
+  }
+
+  .advisor-change-row span:last-child {
+    grid-column: auto;
+  }
+
   .page-header,
   .section-heading,
   .panel-header,
@@ -1072,6 +1236,7 @@ td {
   }
 
   #overview,
+  #advisor,
   #inventory,
   #discovery,
   #settings {

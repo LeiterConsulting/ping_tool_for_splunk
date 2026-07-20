@@ -91,6 +91,97 @@ func TestEndpointsAPI(t *testing.T) {
 	}
 }
 
+func TestAdvisorAPIAnalyzeAndApplySafeFixes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	cfg.HEC.Token = "advisor-test-hec-secret"
+	cfg.Metrics.Token = "advisor-test-metrics-secret"
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev\n" +
+		" 10.0.0.1 ,host-a,default,,,,,,false\n" +
+		"10.0.0.1,host-a,default,,,,,,false\n"
+	if err := os.WriteFile(endpointsPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "v5.7.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	analyzeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(analyzeResponse, httptest.NewRequest(http.MethodGet, "/api/advisor?profile=standard", nil))
+	if analyzeResponse.Code != http.StatusOK {
+		t.Fatalf("analyze status = %d: %s", analyzeResponse.Code, analyzeResponse.Body.String())
+	}
+	if strings.Contains(analyzeResponse.Body.String(), "advisor-test-hec-secret") || strings.Contains(analyzeResponse.Body.String(), "advisor-test-metrics-secret") {
+		t.Fatal("advisor response exposed a write-only output token")
+	}
+	var report struct {
+		Summary struct {
+			SafeFixes int `json:"safe_fixes"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(analyzeResponse.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.SafeFixes == 0 {
+		t.Fatal("advisor did not offer safe inventory cleanup")
+	}
+
+	configRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	requestBody, _ := json.Marshal(advisorApplyRequest{
+		Profile: "standard", ApplySafe: true,
+		ConfigRevision: configRevision, EndpointsRevision: endpointsRevision,
+	})
+	applyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(applyResponse, httptest.NewRequest(http.MethodPost, "/api/advisor/apply", bytes.NewReader(requestBody)))
+	if applyResponse.Code != http.StatusOK {
+		t.Fatalf("apply status = %d: %s", applyResponse.Code, applyResponse.Body.String())
+	}
+	loaded, err := config.LoadEndpoints(endpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].IP != "10.0.0.1" {
+		t.Fatalf("safe apply produced endpoints = %#v", loaded)
+	}
+}
+
+func TestAdvisorAPIRejectsStaleRevision(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody, _ := json.Marshal(advisorApplyRequest{
+		Profile: "standard", ApplyProfile: true,
+		ConfigRevision: "stale", EndpointsRevision: "stale",
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/advisor/apply", bytes.NewReader(requestBody)))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", response.Code, response.Body.String())
+	}
+}
+
 func TestEndpointsAPI_PutRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
 	endpointsPath := filepath.Join(tempDir, "endpoints.csv")

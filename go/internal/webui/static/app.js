@@ -14,6 +14,10 @@ const state = {
   config: null,
   configSecrets: {},
   runtimeRefreshPending: false,
+  advisor: null,
+  advisorProfiles: [],
+  advisorBenchmark: null,
+  advisorBusy: false,
   tables: {
     endpoint: {
       page: 1,
@@ -73,6 +77,25 @@ const elements = {
   summaryProduction: document.getElementById('summary-production'),
   summaryDev: document.getElementById('summary-dev'),
   summaryGroups: document.getElementById('summary-groups'),
+  advisorBanner: document.getElementById('advisor-banner'),
+  advisorProfile: document.getElementById('advisor-profile'),
+  advisorAnalyzeButton: document.getElementById('advisor-analyze-button'),
+  advisorBenchmarkButton: document.getElementById('advisor-benchmark-button'),
+  advisorApplySafeButton: document.getElementById('advisor-apply-safe-button'),
+  advisorApplyProfileButton: document.getElementById('advisor-apply-profile-button'),
+  advisorBlockers: document.getElementById('advisor-blockers'),
+  advisorWarnings: document.getElementById('advisor-warnings'),
+  advisorSafeFixes: document.getElementById('advisor-safe-fixes'),
+  advisorReadiness: document.getElementById('advisor-readiness'),
+  advisorReadinessNote: document.getElementById('advisor-readiness-note'),
+  advisorInventoryChip: document.getElementById('advisor-inventory-chip'),
+  advisorCurrentSchedule: document.getElementById('advisor-current-schedule'),
+  advisorProposedSchedule: document.getElementById('advisor-proposed-schedule'),
+  advisorProposalTitle: document.getElementById('advisor-proposal-title'),
+  advisorFindings: document.getElementById('advisor-findings'),
+  advisorChanges: document.getElementById('advisor-changes'),
+  advisorBenchmarkPanel: document.getElementById('advisor-benchmark-panel'),
+  advisorBenchmarkResults: document.getElementById('advisor-benchmark-results'),
   endpointBanner: document.getElementById('endpoint-banner'),
   endpointDirtyPill: document.getElementById('endpoint-dirty-pill'),
   endpointSelectionStatus: document.getElementById('endpoint-selection-status'),
@@ -203,7 +226,7 @@ const elements = {
   },
 };
 
-const sectionHashes = ['#overview', '#inventory', '#discovery', '#settings'];
+const sectionHashes = ['#overview', '#advisor', '#inventory', '#discovery', '#settings'];
 
 const checkboxFormat = 'Checked or unchecked.';
 const positiveIntegerFormat = 'Whole number, 1 or higher.';
@@ -1774,6 +1797,178 @@ function renderOutputTestDetails(result) {
   elements.outputTestDetails.classList.remove('hidden');
 }
 
+function scheduleMarkup(plan) {
+  if (!plan) {
+    return '<p class="empty-copy">A schedule cannot be modeled until the config and at least one valid endpoint are available.</p>';
+  }
+  const fitLabel = plan.fits ? 'Fits worst case' : 'Does not fit';
+  const fitClass = plan.fits ? 'advisor-fit' : 'advisor-blocked';
+  return `
+    <div class="advisor-schedule-status ${fitClass}">${escapeHtml(fitLabel)}</div>
+    <dl class="advisor-stat-list">
+      <div><dt>Endpoints</dt><dd>${escapeHtml(plan.endpoint_count)}</dd></div>
+      <div><dt>Probe budget</dt><dd>${(Number(plan.probe_budget_ms || 0) / 1000).toFixed(2)}s</dd></div>
+      <div><dt>Modeled cycle</dt><dd>${(Number(plan.worst_case_cycle_ms || 0) / 1000).toFixed(2)}s / ${escapeHtml(plan.interval_seconds)}s</dd></div>
+      <div><dt>Workers</dt><dd>${escapeHtml(plan.workers)} current · ${escapeHtml(plan.required_workers)} minimum · ${escapeHtml(plan.recommended_workers)} recommended</dd></div>
+      <div><dt>Headroom</dt><dd>${escapeHtml(plan.capacity_headroom_pct)}%</dd></div>
+    </dl>`;
+}
+
+function renderAdvisor() {
+  const report = state.advisor;
+  const busy = state.advisorBusy;
+  elements.advisorAnalyzeButton.disabled = busy;
+  elements.advisorBenchmarkButton.disabled = busy;
+  elements.advisorProfile.disabled = busy;
+  if (!report) {
+    elements.advisorApplySafeButton.disabled = true;
+    elements.advisorApplyProfileButton.disabled = true;
+    return;
+  }
+
+  const summary = report.summary || {};
+  const inventory = report.inventory || {};
+  elements.advisorBlockers.textContent = summary.blockers ?? 0;
+  elements.advisorWarnings.textContent = summary.warnings ?? 0;
+  elements.advisorSafeFixes.textContent = summary.safe_fixes ?? 0;
+  elements.advisorReadiness.textContent = summary.ready_to_run ? 'Ready' : 'Blocked';
+  elements.advisorReadinessNote.textContent = summary.ready_to_run
+    ? 'No startup blockers were found in the files on disk.'
+    : 'Resolve blockers, then analyze again before starting the service.';
+  elements.advisorInventoryChip.textContent = `${inventory.rows || 0} rows · ${inventory.schedulable_endpoints || 0} unique schedulable`;
+  elements.advisorCurrentSchedule.innerHTML = scheduleMarkup(report.schedule);
+
+  const proposal = report.proposal;
+  elements.advisorProposalTitle.textContent = proposal?.profile?.name || 'Proposed schedule';
+  elements.advisorProposedSchedule.innerHTML = scheduleMarkup(proposal?.schedule);
+  const findings = report.findings || [];
+  elements.advisorFindings.innerHTML = findings.length
+    ? findings.map((finding) => `
+      <article class="advisor-finding severity-${escapeHtml(finding.severity)}">
+        <div class="advisor-finding-heading">
+          <span class="advisor-severity">${escapeHtml(finding.severity)}</span>
+          <span class="advisor-code">${escapeHtml(finding.code)}</span>
+        </div>
+        <h4>${escapeHtml(finding.title)}</h4>
+        <p>${escapeHtml(finding.message)}</p>
+        ${(finding.evidence || []).length ? `<ul>${finding.evidence.map((item) => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}
+        ${finding.recommendation ? `<p class="advisor-recommendation"><strong>Recommendation:</strong> ${escapeHtml(finding.recommendation)}</p>` : ''}
+      </article>`).join('')
+    : '<p class="empty-copy">No findings were returned.</p>';
+
+  const changes = proposal?.changes || [];
+  elements.advisorChanges.innerHTML = changes.length
+    ? changes.map((change) => `
+      <div class="advisor-change-row">
+        <code>${escapeHtml(change.path)}</code>
+        <span><del>${escapeHtml(change.before)}</del> → <strong>${escapeHtml(change.after)}</strong></span>
+        <span>${escapeHtml(change.reason)}</span>
+      </div>`).join('')
+    : '<p class="empty-copy">The selected profile does not require configuration changes.</p>';
+
+  const hasInventoryBlocker = findings.some((finding) => finding.category === 'inventory' && finding.severity === 'blocker');
+  elements.advisorApplySafeButton.disabled = busy || Number(summary.safe_fixes || 0) === 0;
+  elements.advisorApplyProfileButton.disabled = busy || !changes.length || hasInventoryBlocker;
+}
+
+async function loadAdvisorProfiles() {
+  const profiles = await fetchJson('/api/advisor/profiles');
+  state.advisorProfiles = Array.isArray(profiles) ? profiles : [];
+  const selected = elements.advisorProfile.value || 'standard';
+  elements.advisorProfile.innerHTML = state.advisorProfiles
+    .map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`)
+    .join('');
+  if (state.advisorProfiles.some((profile) => profile.id === selected)) {
+    elements.advisorProfile.value = selected;
+  }
+}
+
+async function loadAdvisor(showSuccess = false) {
+  state.advisorBusy = true;
+  renderAdvisor();
+  try {
+    const profile = elements.advisorProfile.value || 'standard';
+    state.advisor = await fetchJson(`/api/advisor?profile=${encodeURIComponent(profile)}`);
+    state.configRevision = state.advisor.config_revision || state.configRevision;
+    state.endpointsRevision = state.advisor.endpoints_revision || state.endpointsRevision;
+    renderAdvisor();
+    if (showSuccess) {
+      setMessage(elements.advisorBanner, state.advisor.summary?.ready_to_run ? 'success' : 'warning', 'Analysis refreshed from the deployment files on disk.');
+    }
+  } catch (error) {
+    setMessage(elements.advisorBanner, 'error', error instanceof Error ? error.message : 'Advisor analysis failed.');
+  } finally {
+    state.advisorBusy = false;
+    renderAdvisor();
+  }
+}
+
+async function applyAdvisorFixes(kind) {
+  if (!state.advisor || state.advisorBusy) {
+    return;
+  }
+  if (hasUnsavedChanges() && !window.confirm('Applying advisor changes writes directly to disk. Discard the unsaved endpoint/config drafts and continue?')) {
+    return;
+  }
+  const applySafe = kind === 'safe';
+  const profileName = state.advisor.proposal?.profile?.name || elements.advisorProfile.value;
+  const prompt = applySafe
+    ? 'Apply only the listed safe inventory cleanup? A timestamped backup will be retained.'
+    : `Apply the ${profileName} settings shown in the preview? The collector must be restarted afterward.`;
+  if (!window.confirm(prompt)) {
+    return;
+  }
+  state.advisorBusy = true;
+  renderAdvisor();
+  try {
+    const result = await postJson('/api/advisor/apply', {
+      profile: elements.advisorProfile.value || 'standard',
+      apply_safe: applySafe,
+      apply_profile: kind === 'profile',
+      config_revision: state.advisor.config_revision,
+      endpoints_revision: state.advisor.endpoints_revision,
+    });
+    state.advisor = result.report;
+    const applied = (result.applied_fixes || []).join(', ') || 'No changes were needed';
+    setMessage(elements.advisorBanner, 'success', `${applied}. ${result.restart_required ? 'Restart the collector to activate config changes.' : 'Inventory changes are ready for runtime reload.'}`);
+    await reloadAllData(false);
+  } catch (error) {
+    setMessage(elements.advisorBanner, 'error', error instanceof Error ? error.message : 'Advisor changes could not be applied.');
+  } finally {
+    state.advisorBusy = false;
+    renderAdvisor();
+  }
+}
+
+async function runAdvisorBenchmark() {
+  state.advisorBusy = true;
+  renderAdvisor();
+  setMessage(elements.advisorBanner, 'warning', 'Running a bounded local benchmark. No monitored devices will be pinged.');
+  try {
+    const profile = elements.advisorProfile.value || 'standard';
+    state.advisorBenchmark = await postJson(`/api/advisor/benchmark?profile=${encodeURIComponent(profile)}`, {});
+    const result = state.advisorBenchmark;
+    elements.advisorBenchmarkPanel.classList.remove('hidden');
+    elements.advisorBenchmarkResults.textContent = [
+      `Completed: ${formatTimestamp(result.generated_at)}`,
+      `Total duration: ${result.duration_ms} ms`,
+      `Config + inventory analysis: ${result.config_inventory_ms} ms`,
+      `Planner throughput: ${Math.round(result.planner_ops_per_second || 0).toLocaleString()} operations/second`,
+      `Ping backend: ${result.ping_backend || 'unknown'} (${result.loopback_successes || 0}/${result.loopback_attempts || 0} loopback replies in ${result.loopback_duration_ms || 0} ms)`,
+      ...(result.ping_fallback ? [`Backend fallback: ${result.ping_fallback}`] : []),
+      `Deployment filesystem: ${Number(result.filesystem_mb_per_second || 0).toFixed(1)} MiB/second across ${result.filesystem_writes || 0} temporary writes`,
+      `Runtime goroutines observed: ${result.goroutines || 0}`,
+      ...(result.warnings || []).map((warning) => `Warning: ${warning}`),
+    ].join('\n');
+    setMessage(elements.advisorBanner, 'success', 'Benchmark complete. These host measurements are planning evidence, not device latency or SLA evidence.');
+  } catch (error) {
+    setMessage(elements.advisorBanner, 'error', error instanceof Error ? error.message : 'Benchmark failed.');
+  } finally {
+    state.advisorBusy = false;
+    renderAdvisor();
+  }
+}
+
 async function reloadAllData(showSuccess = false) {
   elements.refreshButton.disabled = true;
   elements.refreshButton.textContent = 'Reloading...';
@@ -1812,6 +2007,12 @@ async function reloadAllData(showSuccess = false) {
     setMessage(elements.settingsBanner, 'error', message);
     setMessage(elements.discoveryBanner, 'error', message);
   } finally {
+    try {
+      await loadAdvisorProfiles();
+      await loadAdvisor(false);
+    } catch (error) {
+      setMessage(elements.advisorBanner, 'error', error instanceof Error ? error.message : 'Unable to load advisor data.');
+    }
     elements.refreshButton.disabled = false;
     elements.refreshButton.textContent = 'Reload From Disk';
     requestAnimationFrame(() => {
@@ -1828,6 +2029,7 @@ function renderAll() {
   renderEndpointEditor();
   renderDiscovery();
   renderConfigButtons();
+  renderAdvisor();
 }
 
 async function saveEndpoints() {
@@ -2271,6 +2473,12 @@ elements.refreshButton.addEventListener('click', () => {
     reloadAllData(true);
   }
 });
+
+elements.advisorAnalyzeButton.addEventListener('click', () => loadAdvisor(true));
+elements.advisorBenchmarkButton.addEventListener('click', runAdvisorBenchmark);
+elements.advisorApplySafeButton.addEventListener('click', () => applyAdvisorFixes('safe'));
+elements.advisorApplyProfileButton.addEventListener('click', () => applyAdvisorFixes('profile'));
+elements.advisorProfile.addEventListener('change', () => loadAdvisor(false));
 
 elements.navLinks.forEach((link) => {
   link.addEventListener('click', (event) => {

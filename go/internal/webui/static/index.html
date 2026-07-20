@@ -18,6 +18,7 @@
       </div>
       <nav class="nav-list">
         <a class="nav-item active" href="#overview" aria-current="page">Overview</a>
+        <a class="nav-item" href="#advisor">Advisor</a>
         <a class="nav-item" href="#inventory">Endpoints</a>
         <a class="nav-item" href="#discovery">Discovery</a>
         <a class="nav-item" href="#settings">Settings</a>
@@ -118,6 +119,108 @@
               <p class="summary-note" id="endpoint-reload-copy">Comparing the file on disk with the active runtime set.</p>
             </article>
           </div>
+        </section>
+
+        <section id="advisor" class="section-stack">
+          <div class="section-heading">
+            <div>
+              <h2>Configuration Advisor</h2>
+              <p>Validate signal quality, inventory integrity, and worst-case capacity before the service starts.</p>
+            </div>
+            <div class="section-actions advisor-toolbar">
+              <label class="field-group advisor-profile-field">
+                <span>Operating profile</span>
+                <select id="advisor-profile" class="text-input">
+                  <option value="standard">Standard Monitoring</option>
+                </select>
+              </label>
+              <button class="secondary-button" id="advisor-analyze-button" type="button">Analyze</button>
+              <button class="secondary-button" id="advisor-benchmark-button" type="button">Run Safe Benchmark</button>
+            </div>
+          </div>
+
+          <div id="advisor-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
+
+          <div class="summary-grid advisor-summary-grid">
+            <article class="summary-card accent-red">
+              <p class="summary-label">Blockers</p>
+              <p class="summary-value" id="advisor-blockers">--</p>
+              <p class="summary-note">Must be resolved before monitoring can start</p>
+            </article>
+            <article class="summary-card accent-amber">
+              <p class="summary-label">Warnings</p>
+              <p class="summary-value" id="advisor-warnings">--</p>
+              <p class="summary-note">Reliability or signal-quality concerns</p>
+            </article>
+            <article class="summary-card accent-teal">
+              <p class="summary-label">Safe Fixes</p>
+              <p class="summary-value" id="advisor-safe-fixes">--</p>
+              <p class="summary-note">Unambiguous inventory cleanup available</p>
+            </article>
+            <article class="summary-card accent-slate">
+              <p class="summary-label">Readiness</p>
+              <p class="summary-value summary-value-text" id="advisor-readiness">Not analyzed</p>
+              <p class="summary-note" id="advisor-readiness-note">Run analysis against the files on disk.</p>
+            </article>
+          </div>
+
+          <div class="advisor-grid">
+            <article class="panel section-stack">
+              <div class="panel-heading-row">
+                <div>
+                  <p class="summary-label">Capacity Model</p>
+                  <h3 class="panel-title">Current schedule</h3>
+                </div>
+              </div>
+              <div id="advisor-current-schedule" class="advisor-schedule">Analysis has not run yet.</div>
+            </article>
+            <article class="panel section-stack">
+              <div class="panel-heading-row">
+                <div>
+                  <p class="summary-label">Selected Profile</p>
+                  <h3 class="panel-title" id="advisor-proposal-title">Proposed schedule</h3>
+                </div>
+              </div>
+              <div id="advisor-proposed-schedule" class="advisor-schedule">Select a profile to preview its impact.</div>
+            </article>
+          </div>
+
+          <article class="panel section-stack">
+            <div class="panel-heading-row">
+              <div>
+                <p class="summary-label">Truth in Signal</p>
+                <h3 class="panel-title">Findings and recommendations</h3>
+              </div>
+              <span class="meta-chip" id="advisor-inventory-chip">Inventory not analyzed</span>
+            </div>
+            <div id="advisor-findings" class="advisor-findings">
+              <p class="empty-copy">Run analysis to inspect the deployment.</p>
+            </div>
+          </article>
+
+          <article class="panel section-stack">
+            <div class="panel-heading-row">
+              <div>
+                <p class="summary-label">Controlled Remediation</p>
+                <h3 class="panel-title">Preview changes before applying</h3>
+              </div>
+            </div>
+            <div id="advisor-changes" class="advisor-changes">
+              <p class="empty-copy">No profile changes are currently proposed.</p>
+            </div>
+            <div class="advisor-actions">
+              <button class="secondary-button" id="advisor-apply-safe-button" type="button" disabled>Apply Safe Inventory Fixes</button>
+              <button class="primary-button" id="advisor-apply-profile-button" type="button" disabled>Apply Selected Profile</button>
+            </div>
+            <p class="field-help">Safe fixes only normalize valid inventory data and remove later, identical duplicates. Profile changes require confirmation and a collector restart.</p>
+          </article>
+
+          <article id="advisor-benchmark-panel" class="panel section-stack hidden">
+            <p class="summary-label">Local Host Benchmark</p>
+            <h3 class="panel-title">Non-SLA capacity evidence</h3>
+            <div id="advisor-benchmark-results" class="log-surface">Benchmark results will appear here.</div>
+            <p class="field-help">This bounded test measures planner and deployment-filesystem overhead and verifies the configured ping backend against loopback. It does not ping monitored devices, alter health state, or send events to Splunk.</p>
+          </article>
         </section>
 
         <section id="inventory" class="section-stack">

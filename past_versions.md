@@ -2,12 +2,13 @@
 
 This file archives the historical runtime notes, older release summaries, and changelog entries that were previously mixed into the top-level README.
 
-For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md).
+For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.7.0.md](RELEASE_NOTES_v5.7.0.md).
 
 ## Historical Runtime Summary
 
 | Runtime | Version | Status | Notes |
 |---------|---------|--------|-------|
+| Ping Monitor v5 (Go) | `v5.6.0` | Superseded by `v5.7.0` | Embedded operator interface and revision-safe administration |
 | Ping Monitor v5 (Go) | `v5.5.0` | Superseded by `v5.6.0` | Truthful latency metadata and durable asynchronous delivery |
 | Ping Monitor v5 (Go) | `v5.3.0` | Superseded by `v5.3.1` | First embedded local admin UI release |
 | Ping Monitor v5 (Go) | `v5.2.1` | Superseded | Endpoint CSV backward-compatibility hotfix |
@@ -19,6 +20,7 @@ For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.6.0.md
 
 ## Archived Release Notes
 
+- [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)
 - [RELEASE_NOTES_v5.3.0.md](RELEASE_NOTES_v5.3.0.md)
 - [RELEASE_NOTES_v5.2.1.md](RELEASE_NOTES_v5.2.1.md)
 - [RELEASE_NOTES_v5.2.0.md](RELEASE_NOTES_v5.2.0.md)
