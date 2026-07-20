@@ -4,9 +4,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.7.1`
+- Go runtime: `v5.7.2`
 - Splunk app: `2.9.2` build `41`
-- Current runtime release notes: [RELEASE_NOTES_v5.7.1.md](RELEASE_NOTES_v5.7.1.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.7.2.md](RELEASE_NOTES_v5.7.2.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.2.md](RELEASE_NOTES_splunk_app_2.9.2.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
@@ -14,7 +14,7 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.7.1 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.7.2 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -22,6 +22,7 @@ The top-level README now describes the current published release only. Older Pow
 ## What The Current Release Includes
 
 - Configuration Advisor with multi-error inventory validation, deterministic worst-case schedule modeling, operating profiles, revision-safe fixes, and a bounded non-SLA host benchmark.
+- Versioned, non-cacheable admin UI assets so browser sessions cannot mix an upgraded API with stale controls.
 - Operator-focused embedded admin UI with live collector/cycle/delivery truth, revision-safe endpoint and config editing, discovery, dev/prod marking, and HEC connectivity tests.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
 - Automatic `endpoints.csv` hot reload between monitoring cycles with last-known-good protection on invalid edits.

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ping Monitor</title>
-  <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/app.css?v={{ASSET_VERSION}}">
 </head>
 <body>
   <div class="app-shell">
@@ -38,7 +38,7 @@
         </div>
         <div class="header-actions">
           <span class="status-pill" id="mode-pill">Loading...</span>
-          <button class="secondary-button hidden" id="restart-collector-button" type="button">Restart Collector</button>
+          <button class="secondary-button restart-button hidden" id="restart-collector-button" type="button">Restart Collector</button>
           <button class="primary-button" id="refresh-button" type="button">Reload From Disk</button>
         </div>
       </header>
@@ -819,6 +819,6 @@
     </main>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>

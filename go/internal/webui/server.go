@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -272,7 +273,7 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
-	mux.Handle("/", staticHandler(staticRoot))
+	mux.Handle("/", staticHandler(staticRoot, opts.Version))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
@@ -1323,31 +1324,43 @@ func summarizeEndpoints(endpoints []models.Endpoint) endpointSummary {
 	return summary
 }
 
-func staticHandler(root fs.FS) http.Handler {
+func staticHandler(root fs.FS, version string) http.Handler {
 	fileServer := http.FileServer(http.FS(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cleanPath := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if cleanPath == "." || cleanPath == "" {
-			serveIndex(w, r, fileServer)
+			serveIndex(w, r, version)
 			return
 		}
 		if _, err := fs.Stat(root, cleanPath); err == nil {
+			setNoStoreHeaders(w)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		serveIndex(w, r, fileServer)
+		serveIndex(w, r, version)
 	})
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request, fileServer http.Handler) {
+func serveIndex(w http.ResponseWriter, r *http.Request, version string) {
 	b, err := fs.ReadFile(staticFiles, "static/index.html")
 	if err != nil {
 		http.Error(w, "ui shell unavailable", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	assetVersion := url.QueryEscape(version)
+	if assetVersion == "" {
+		assetVersion = "development"
+	}
+	b = bytes.ReplaceAll(b, []byte("{{ASSET_VERSION}}"), []byte(assetVersion))
+	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(b))
+}
+
+func setNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

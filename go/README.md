@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.7.1 is the current Go runtime. It adds a confirmation-gated in-app controlled restart to the v5.7 Configuration Advisor and deterministic capacity foundation.
+Ping Monitor v5.7.2 is the current Go runtime. It ensures the confirmation-gated controlled restart cannot be hidden by stale browser assets after an upgrade.
 
 ## Current Go Release
 
-- Version: `v5.7.1`
+- Version: `v5.7.2`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.7.1.md](../RELEASE_NOTES_v5.7.1.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.7.2.md](../RELEASE_NOTES_v5.7.2.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -172,7 +172,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.1`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.2`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

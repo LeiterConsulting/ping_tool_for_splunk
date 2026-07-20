@@ -273,6 +273,17 @@ td,
   border: 1px solid rgba(52, 67, 83, 0.95);
 }
 
+.restart-button {
+  color: var(--amber-400);
+  border-color: rgba(229, 166, 58, 0.72);
+  background: rgba(229, 166, 58, 0.12);
+}
+
+.restart-button:hover,
+.restart-button:focus-visible {
+  background: rgba(229, 166, 58, 0.2);
+}
+
 .danger-button {
   background: rgba(214, 69, 69, 0.12);
   color: #ffb9b9;

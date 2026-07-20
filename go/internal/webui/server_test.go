@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +35,40 @@ func requestBodyWithRevision(t *testing.T, path string, raw string) *bytes.Reade
 		t.Fatal(err)
 	}
 	return bytes.NewReader(encoded)
+}
+
+func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
+	staticRoot, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(staticRoot, "v5.7.2")
+
+	indexResponse := httptest.NewRecorder()
+	handler.ServeHTTP(indexResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	if indexResponse.Code != http.StatusOK {
+		t.Fatalf("index status = %d", indexResponse.Code)
+	}
+	for _, expected := range []string{"/app.css?v=v5.7.2", "/app.js?v=v5.7.2"} {
+		if !strings.Contains(indexResponse.Body.String(), expected) {
+			t.Fatalf("index does not contain versioned asset %q", expected)
+		}
+	}
+	if cacheControl := indexResponse.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
+	}
+
+	assetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, "/app.js?v=v5.7.2", nil))
+	if assetResponse.Code != http.StatusOK {
+		t.Fatalf("asset status = %d", assetResponse.Code)
+	}
+	if cacheControl := assetResponse.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("asset Cache-Control = %q, want no-store", cacheControl)
+	}
+	if assetResponse.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("asset Pragma = %q, want no-cache", assetResponse.Header().Get("Pragma"))
+	}
 }
 
 func TestEndpointsAPI(t *testing.T) {
