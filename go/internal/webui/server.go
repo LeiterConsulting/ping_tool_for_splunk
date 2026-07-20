@@ -44,15 +44,22 @@ const embeddedDiscoveryScriptPath = "embedded:DiscoverEndpoints.ps1"
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type Options struct {
-	ListenAddr          string
-	ConfigPath          string
-	EndpointsPath       string
-	RootDir             string
-	DiscoveryScriptPath string
-	Version             string
-	CollectorID         string
-	Runtime             *runtimeinfo.Tracker
-	EffectiveConfig     *config.Config
+	ListenAddr              string
+	ConfigPath              string
+	EndpointsPath           string
+	RootDir                 string
+	DiscoveryScriptPath     string
+	Version                 string
+	CollectorID             string
+	Runtime                 *runtimeinfo.Tracker
+	EffectiveConfig         *config.Config
+	EffectiveConfigProvider func() (config.Config, bool)
+	RequestRestart          func(RestartRequest) error
+}
+
+type RestartRequest struct {
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
 }
 
 type statusResponse struct {
@@ -181,6 +188,12 @@ type advisorApplyRequest struct {
 	EndpointsRevision string `json:"endpoints_revision"`
 }
 
+type runtimeRestartRequest struct {
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
+	Confirmed         bool   `json:"confirmed"`
+}
+
 type apiServer struct {
 	opts            Options
 	writeMu         sync.Mutex
@@ -255,6 +268,7 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/advisor/profiles", server.handleAdvisorProfiles)
 	mux.HandleFunc("/api/advisor/apply", server.handleAdvisorApply)
 	mux.HandleFunc("/api/advisor/benchmark", server.handleAdvisorBenchmark)
+	mux.HandleFunc("/api/runtime/restart", server.handleRuntimeRestart)
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
@@ -543,9 +557,83 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) effectiveStatusConfig() (config.Config, bool) {
+	if s.opts.EffectiveConfigProvider != nil {
+		return s.opts.EffectiveConfigProvider()
+	}
 	s.statusConfigMu.RLock()
 	defer s.statusConfigMu.RUnlock()
 	return s.statusConfig, s.hasStatusConfig
+}
+
+func (s *apiServer) handleRuntimeRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request runtimeRestartRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !request.Confirmed {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "restart requires explicit confirmation"})
+		return
+	}
+	if s.opts.Runtime.Snapshot().Mode != "monitor" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "collector restart is unavailable in configuration-only mode"})
+		return
+	}
+	if s.opts.RequestRestart == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "controlled restart is unavailable in this runtime"})
+		return
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.opts.Runtime.Snapshot().Restarting {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "collector restart is already in progress"})
+		return
+	}
+	configInfo, err := config.ResolveConfigSource(s.opts.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	configRevision, configErr := revision.File(configInfo.Path)
+	endpointsRevision, endpointsErr := revision.File(s.opts.EndpointsPath)
+	if configErr != nil || endpointsErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify deployment revisions"})
+		return
+	}
+	if request.ConfigRevision == "" || request.ConfigRevision != configRevision {
+		writeRevisionConflict(w, "config file changed after the restart prompt was opened", configRevision)
+		return
+	}
+	if request.EndpointsRevision == "" || request.EndpointsRevision != endpointsRevision {
+		writeRevisionConflict(w, "endpoint file changed after the restart prompt was opened", endpointsRevision)
+		return
+	}
+	runtimeSnapshot := s.opts.Runtime.Snapshot()
+	if runtimeSnapshot.EffectiveConfigRevision == configRevision {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the saved configuration is already active"})
+		return
+	}
+	report := advisor.AnalyzeDeployment(r.Context(), s.advisorOptions("current"))
+	if !report.Summary.ReadyToRun {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "restart blocked by configuration advisor findings", "report": report})
+		return
+	}
+	queued := RestartRequest{ConfigRevision: configRevision, EndpointsRevision: endpointsRevision}
+	s.opts.Runtime.RestartRequested()
+	if err := s.opts.RequestRestart(queued); err != nil {
+		s.opts.Runtime.RestartFailed(err)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	diagnostics.LogInfo("web ui requested controlled collector restart", map[string]interface{}{
+		"config_revision": configRevision, "endpoints_revision": endpointsRevision,
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "message": "controlled collector restart queued"})
 }
 
 func (s *apiServer) setEffectiveStatusConfig(cfg config.Config) {

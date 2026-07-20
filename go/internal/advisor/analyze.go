@@ -182,6 +182,9 @@ func hasFinding(findings []Finding, code string) bool {
 func noUnsafeInventoryBlockers(findings []Finding) bool {
 	for _, finding := range findings {
 		if finding.Category == "inventory" && finding.Severity == SeverityBlocker {
+			if finding.FixID == "remove_identical_duplicates" {
+				continue
+			}
 			return false
 		}
 	}

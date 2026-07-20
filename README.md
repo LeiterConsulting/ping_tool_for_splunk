@@ -4,9 +4,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.7.0`
+- Go runtime: `v5.7.1`
 - Splunk app: `2.9.2` build `41`
-- Current runtime release notes: [RELEASE_NOTES_v5.7.0.md](RELEASE_NOTES_v5.7.0.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.7.1.md](RELEASE_NOTES_v5.7.1.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.2.md](RELEASE_NOTES_splunk_app_2.9.2.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
@@ -14,7 +14,7 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.7.0 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.7.1 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -144,6 +144,7 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 - Endpoint edits made in the UI are written back to the live endpoint file that the runtime hot reloads.
 - Config and endpoint saves carry a file revision. A stale browser draft receives `409 Conflict` instead of silently overwriting a newer disk edit.
 - Config edits made in the UI are saved directly to the active config file, but engine-level settings are loaded at process start. Restart the runtime or service after config changes that should affect monitoring behavior.
+- When a saved config revision is not active, monitor mode exposes a confirmation-gated **Restart Collector** action. It performs a controlled in-process engine restart, revalidates revisions, and resumes the last known-good configuration if activation fails.
 - HEC tokens are write-only in the API. A blank token field preserves the stored token; the UI receives only a configured/not-configured flag.
 - When the UI saves config or endpoints over an existing file, it creates a timestamped `.bak` backup first.
 

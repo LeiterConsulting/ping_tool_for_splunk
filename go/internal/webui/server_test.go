@@ -182,6 +182,105 @@ func TestAdvisorAPIRejectsStaleRevision(t *testing.T) {
 	}
 }
 
+func TestRuntimeRestartAPIRequiresConfirmationAndQueuesValidatedRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n127.0.0.1,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldConfigRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	tracker := runtimeinfo.New("monitor", oldConfigRevision, endpointsRevision, 1)
+	cfg.ParallelThreads = 2
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	newConfigRevision, _ := filerevision.File(configPath)
+	queued := make(chan RestartRequest, 1)
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Runtime: tracker, RequestRestart: func(request RestartRequest) error { queued <- request; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unconfirmedBody, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: newConfigRevision, EndpointsRevision: endpointsRevision,
+	})
+	unconfirmed := httptest.NewRecorder()
+	handler.ServeHTTP(unconfirmed, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(unconfirmedBody)))
+	if unconfirmed.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed status = %d, want 400", unconfirmed.Code)
+	}
+
+	confirmedBody, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: newConfigRevision, EndpointsRevision: endpointsRevision, Confirmed: true,
+	})
+	confirmed := httptest.NewRecorder()
+	handler.ServeHTTP(confirmed, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(confirmedBody)))
+	if confirmed.Code != http.StatusAccepted {
+		t.Fatalf("confirmed status = %d, want 202: %s", confirmed.Code, confirmed.Body.String())
+	}
+	select {
+	case request := <-queued:
+		if request.ConfigRevision != newConfigRevision || request.EndpointsRevision != endpointsRevision {
+			t.Fatalf("queued request = %#v", request)
+		}
+	default:
+		t.Fatal("restart request was not queued")
+	}
+	if !tracker.Snapshot().Restarting {
+		t.Fatal("runtime tracker did not enter restarting state")
+	}
+}
+
+func TestRuntimeRestartAPIBlocksInvalidDeployment(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	oldRevision, _ := filerevision.File(configPath)
+	cfg.ParallelThreads = 2
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.1,broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	called := false
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Runtime:        runtimeinfo.New("monitor", oldRevision, endpointsRevision, 1),
+		RequestRestart: func(RestartRequest) error { called = true; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: configRevision, EndpointsRevision: endpointsRevision, Confirmed: true,
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(body)))
+	if response.Code != http.StatusBadRequest || called {
+		t.Fatalf("status = %d, callback called = %t: %s", response.Code, called, response.Body.String())
+	}
+}
+
 func TestEndpointsAPI_PutRoundTrip(t *testing.T) {
 	tempDir := t.TempDir()
 	endpointsPath := filepath.Join(tempDir, "endpoints.csv")

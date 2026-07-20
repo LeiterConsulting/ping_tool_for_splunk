@@ -14,6 +14,7 @@ const state = {
   config: null,
   configSecrets: {},
   runtimeRefreshPending: false,
+  runtimeRestartBusy: false,
   advisor: null,
   advisorProfiles: [],
   advisorBenchmark: null,
@@ -73,6 +74,7 @@ const elements = {
   discoveryStatusCopy: document.getElementById('discovery-status-copy'),
   contentScroll: document.querySelector('.content-scroll'),
   refreshButton: document.getElementById('refresh-button'),
+  restartCollectorButton: document.getElementById('restart-collector-button'),
   summaryTotal: document.getElementById('summary-total'),
   summaryProduction: document.getElementById('summary-production'),
   summaryDev: document.getElementById('summary-dev'),
@@ -1366,6 +1368,10 @@ function renderStatus() {
   elements.versionText.textContent = `${state.status.version} deployment UI`;
   elements.modePill.textContent = restartRequired ? 'Restart required' : titleCase(runtimeState);
   elements.modePill.dataset.tone = restartRequired || runtimeState === 'failed' ? 'warning' : 'healthy';
+  const showRestart = restartRequired && runtime.mode === 'monitor';
+  elements.restartCollectorButton.classList.toggle('hidden', !showRestart);
+  elements.restartCollectorButton.disabled = state.runtimeRestartBusy || state.configDirty || Boolean(runtime.restarting);
+  elements.restartCollectorButton.textContent = state.runtimeRestartBusy || runtime.restarting ? 'Restarting...' : 'Restart Collector';
   elements.configPathChip.textContent = state.status.config_path;
   elements.endpointPath.textContent = state.status.endpoints_path;
   elements.sidebarConfigSource.textContent = `Config: ${formatLabel}`;
@@ -1420,7 +1426,9 @@ function renderStatus() {
   elements.discoveryAvailability.textContent = state.status.discovery_available ? 'Discovery Available' : 'Discovery Not Available';
   elements.settingsSourceChip.textContent = `${formatLabel} · ${state.status.config_path}`;
 
-  if (runtime.fatal_error) {
+  if (runtime.last_restart_error) {
+    setMessage(elements.runtimeBanner, 'error', `Collector restart failed; the last known-good configuration resumed. ${runtime.last_restart_error}`);
+  } else if (runtime.fatal_error) {
     setMessage(elements.runtimeBanner, 'error', `Collector failed: ${runtime.fatal_error}`);
   } else if (runtime.last_endpoint_reload_error) {
     setMessage(elements.runtimeBanner, 'error', `Endpoint reload failed; the collector is using its last known-good set. ${runtime.last_endpoint_reload_error}`);
@@ -2121,6 +2129,54 @@ async function refreshRuntimeStatus() {
   }
 }
 
+async function restartCollector() {
+  if (!state.status || state.runtimeRestartBusy) {
+    return;
+  }
+  if (configIsDirty()) {
+    setMessage(elements.settingsBanner, 'warning', 'Save or reset the current configuration draft before restarting the collector.');
+    return;
+  }
+  const confirmed = window.confirm('Restart the collector now to activate the saved configuration? Monitoring will pause briefly while the current engine shuts down cleanly and reloads validated files.');
+  if (!confirmed) {
+    return;
+  }
+  state.runtimeRestartBusy = true;
+  let completionMessage = null;
+  renderStatus();
+  try {
+    await postJson('/api/runtime/restart', {
+      config_revision: state.configRevision || state.status.config_revision,
+      endpoints_revision: state.endpointsRevision || state.status.endpoints_revision,
+      confirmed: true,
+    });
+    setMessage(elements.runtimeBanner, 'warning', 'Controlled restart accepted. Waiting for the collector to activate the saved configuration...');
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      state.status = await fetchJson('/api/status');
+      const runtime = state.status.runtime || {};
+      renderStatus();
+      if (runtime.last_restart_error) {
+        throw new Error(runtime.last_restart_error);
+      }
+      if (!runtime.restarting && !state.status.config_restart_required && runtime.state === 'running') {
+        await reloadAllData(false);
+        completionMessage = { tone: 'success', text: 'Collector restarted successfully. The saved configuration is now active.' };
+        return;
+      }
+    }
+    throw new Error('The collector did not report a completed restart within 20 seconds. Monitoring status will continue to refresh.');
+  } catch (error) {
+    completionMessage = { tone: 'error', text: error instanceof Error ? error.message : 'Collector restart failed.' };
+  } finally {
+    state.runtimeRestartBusy = false;
+    renderStatus();
+    if (completionMessage) {
+      setMessage(elements.runtimeBanner, completionMessage.tone, completionMessage.text);
+    }
+  }
+}
+
 function deleteCurrentEndpoint() {
   const index = state.selectedEndpointIndex;
   if (index < 0 || index >= state.endpoints.length) {
@@ -2473,6 +2529,7 @@ elements.refreshButton.addEventListener('click', () => {
     reloadAllData(true);
   }
 });
+elements.restartCollectorButton.addEventListener('click', restartCollector);
 
 elements.advisorAnalyzeButton.addEventListener('click', () => loadAdvisor(true));
 elements.advisorBenchmarkButton.addEventListener('click', runAdvisorBenchmark);
@@ -2618,10 +2675,12 @@ initializeAdvancedSettings();
 elements.settingsForm.addEventListener('input', () => {
   state.configDirty = true;
   renderConfigButtons();
+  renderStatus();
 });
 elements.settingsForm.addEventListener('change', () => {
   state.configDirty = true;
   renderConfigButtons();
+  renderStatus();
 });
 elements.testHECButton.addEventListener('click', () => testOutput('hec'));
 elements.testMetricsButton.addEventListener('click', () => testOutput('metrics'));

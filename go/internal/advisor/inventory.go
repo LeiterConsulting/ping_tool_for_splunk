@@ -128,10 +128,10 @@ func inspectInventory(path string) (Inventory, []Finding) {
 			if safe {
 				duplicateTargetSafe = true
 				result.SafeDuplicateRows = append(result.SafeDuplicateRows, rowNumber)
-				finding.Severity = SeverityWarning
 				finding.Message += " The normalized metadata is identical."
 				finding.Recommendation = "The later byte-equivalent row can be removed safely after preview."
 				finding.FixID = "remove_identical_duplicates"
+				finding.Details = map[string]any{"safe_fix_available": true}
 			}
 			findings = append(findings, finding)
 		} else {

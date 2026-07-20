@@ -27,3 +27,26 @@ func TestTrackerRecordsRuntimeTruth(t *testing.T) {
 		t.Fatalf("reload snapshot = %#v", finished)
 	}
 }
+
+func TestTrackerRecordsControlledRestart(t *testing.T) {
+	tracker := New("monitor", "cfg-a", "end-a", 2)
+	tracker.RestartRequested()
+	requested := tracker.Snapshot()
+	if !requested.Restarting || requested.State != "restarting" {
+		t.Fatalf("requested snapshot = %#v", requested)
+	}
+
+	restartedAt := time.Now()
+	tracker.Restarted("cfg-b", "end-b", 3, restartedAt)
+	restarted := tracker.Snapshot()
+	if restarted.Restarting || restarted.RestartCount != 1 || restarted.EffectiveConfigRevision != "cfg-b" || restarted.ActiveEndpoints != 3 {
+		t.Fatalf("restarted snapshot = %#v", restarted)
+	}
+
+	tracker.RestartRequested()
+	tracker.RestartFailed(errors.New("config changed during restart"))
+	failed := tracker.Snapshot()
+	if failed.Restarting || failed.LastRestartError == "" || failed.EffectiveConfigRevision != "cfg-b" {
+		t.Fatalf("failed restart snapshot = %#v", failed)
+	}
+}

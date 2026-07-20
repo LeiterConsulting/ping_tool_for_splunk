@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.7.0 is the current Go runtime. It adds a Configuration Advisor, one deterministic capacity model across startup and operator tooling, operating profiles, controlled remediation, and richer service preflight diagnostics.
+Ping Monitor v5.7.1 is the current Go runtime. It adds a confirmation-gated in-app controlled restart to the v5.7 Configuration Advisor and deterministic capacity foundation.
 
 ## Current Go Release
 
-- Version: `v5.7.0`
+- Version: `v5.7.1`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.7.0.md](../RELEASE_NOTES_v5.7.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.7.1.md](../RELEASE_NOTES_v5.7.1.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -113,6 +113,7 @@ It provides:
 - HEC event and metrics endpoint validation
 - settings help modals for the runtime configuration surface
 - a dedicated Advisor view with readiness counts, current/proposed schedule evidence, findings, change previews, safe fixes, profiles, and a bounded benchmark
+- a confirmation-gated Restart Collector action when a saved config revision is not yet active
 
 The UI serves these key routes:
 
@@ -122,6 +123,7 @@ The UI serves these key routes:
 - `GET` and `PUT /api/config`
 - `GET /api/advisor` and `GET /api/advisor/profiles`
 - `POST /api/advisor/apply` and `POST /api/advisor/benchmark`
+- `POST /api/runtime/restart`
 - `POST /api/discovery/run`
 - `POST /api/output/test`
 
@@ -170,7 +172,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.1`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

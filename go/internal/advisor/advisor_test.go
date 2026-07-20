@@ -45,6 +45,10 @@ func TestApplySafeRemovesOnlyIdenticalDuplicate(t *testing.T) {
 	if err := os.WriteFile(endpointsPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	report := AnalyzeDeployment(context.Background(), AnalyzeOptions{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: root, Profile: "current"})
+	if report.Summary.ReadyToRun || report.Summary.SafeFixes == 0 {
+		t.Fatalf("identical duplicate should block startup while offering a safe fix: %#v", report.Summary)
+	}
 	result, err := Apply(context.Background(), ApplyOptions{AnalyzeOptions: AnalyzeOptions{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: root, Profile: "current"}, ApplySafe: true})
 	if err != nil {
 		t.Fatal(err)
