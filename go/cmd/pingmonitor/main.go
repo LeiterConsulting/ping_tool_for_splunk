@@ -8,15 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/buildinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
-	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/engine"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/identity"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
@@ -25,6 +24,12 @@ import (
 )
 
 func main() {
+	if handled, exitCode := runAdvisorCommand(os.Args[1:]); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
 	var (
 		configPath    = flag.String("config", "config.psd1", "Path to config.psd1 (preferred) or config.yaml/config.json")
 		endpointsPath = flag.String("endpoints", "endpoints.csv", "Path to endpoints.csv")
@@ -55,9 +60,21 @@ func main() {
 
 	resolvedConfigPath := resolveRuntimePath(*configPath, root, "config.psd1")
 	resolvedEndpointsPath := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
+	if *validateOnly {
+		report := advisor.AnalyzeDeployment(context.Background(), advisor.AnalyzeOptions{
+			ConfigPath: resolvedConfigPath, EndpointsPath: resolvedEndpointsPath,
+			RootDir: root, Profile: "current", ProductVersion: buildinfo.Version,
+		})
+		advisor.WriteText(os.Stdout, report)
+		if !report.Summary.ReadyToRun {
+			os.Exit(2)
+		}
+		fmt.Printf("\nvalidation successful: config=%s endpoints=%d\n", report.ConfigSource, report.Inventory.SchedulableEndpoints)
+		return
+	}
 
 	var deploymentLock *singleinstance.Lock
-	if !*uiOnly && !*validateOnly {
+	if !*uiOnly {
 		lockPath := resolvedConfigPath + ".lock"
 		var lockErr error
 		deploymentLock, lockErr = singleinstance.Acquire(lockPath)
@@ -68,13 +85,11 @@ func main() {
 		defer deploymentLock.Close()
 	}
 	collectorID := ""
-	if !*validateOnly {
-		var err error
-		collectorID, err = identity.LoadOrCreateCollectorID(resolvedConfigPath + ".collector_id")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
-			os.Exit(2)
-		}
+	var err error
+	collectorID, err = identity.LoadOrCreateCollectorID(resolvedConfigPath + ".collector_id")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
+		os.Exit(2)
 	}
 
 	sigCh := make(chan os.Signal, 2)
@@ -84,20 +99,16 @@ func main() {
 		cancel()
 	}()
 
-	cfg, cfgSource, err := config.Load(ctx, resolvedConfigPath, root)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "config load failed: %v\n", err)
-		os.Exit(2)
-	}
-	if *pingMode != "" {
-		if *pingMode != "auto" && *pingMode != "raw" && *pingMode != "exec" {
-			fmt.Fprintf(os.Stderr, "invalid ping-mode %q; expected auto, raw, or exec\n", *pingMode)
+	if *uiOnly {
+		cfg, _, loadErr := config.Load(ctx, resolvedConfigPath, root)
+		if loadErr != nil {
+			fmt.Fprintf(os.Stderr, "config load failed: %v\n", loadErr)
 			os.Exit(2)
 		}
-		cfg.Ping.Mode = *pingMode
-	}
-
-	if *uiOnly {
+		if overrideErr := applyPingModeOverride(&cfg, *pingMode); overrideErr != nil {
+			fmt.Fprintln(os.Stderr, overrideErr)
+			os.Exit(2)
+		}
 		configRevision, _ := revision.File(resolvedConfigPath)
 		endpointsRevision, _ := revision.File(resolvedEndpointsPath)
 		editableEndpoints, _ := config.LoadEditableEndpoints(resolvedEndpointsPath)
@@ -116,39 +127,36 @@ func main() {
 		return
 	}
 
-	endpointReloader, endpoints, err := config.NewEndpointReloader(resolvedEndpointsPath)
+	deployment, err := loadRuntimeDeployment(ctx, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "endpoints load failed: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if *validateOnly {
-		if err := engine.ValidateSchedule(cfg, len(endpoints)); err != nil {
-			fmt.Fprintf(os.Stderr, "scheduler validation failed: %v\n", err)
-			os.Exit(2)
+	runtimeTracker := runtimeinfo.New("monitor", deployment.ConfigRevision, deployment.EndpointsRevision, len(deployment.Endpoints))
+	effectiveConfig := newEffectiveConfigStore(deployment.Config)
+	restartRequests := make(chan webui.RestartRequest, 1)
+	requestRestart := func(request webui.RestartRequest) error {
+		select {
+		case restartRequests <- request:
+			return nil
+		default:
+			return fmt.Errorf("collector restart is already queued")
 		}
-		fmt.Printf("validation successful: config=%s endpoints=%d\n", cfgSource, len(endpoints))
-		return
-	}
-	configRevision, _ := revision.File(resolvedConfigPath)
-	endpointsRevision, _ := revision.File(resolvedEndpointsPath)
-	runtimeTracker := runtimeinfo.New("monitor", configRevision, endpointsRevision, len(endpoints))
-
-	diagnostics.LogStartup(cfgSource, cfg, len(endpoints))
-	if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
-		diagnostics.LogRuntimeSnapshot("startup", runtime.NumGoroutine())
 	}
 
 	if *uiListen != "" {
 		warnIfRemoteUI(*uiListen)
 		err := webui.Start(ctx, webui.Options{
-			ListenAddr:      *uiListen,
-			ConfigPath:      resolvedConfigPath,
-			EndpointsPath:   resolvedEndpointsPath,
-			RootDir:         root,
-			Version:         buildinfo.Version,
-			CollectorID:     collectorID,
-			Runtime:         runtimeTracker,
-			EffectiveConfig: &cfg,
+			ListenAddr:              *uiListen,
+			ConfigPath:              resolvedConfigPath,
+			EndpointsPath:           resolvedEndpointsPath,
+			RootDir:                 root,
+			Version:                 buildinfo.Version,
+			CollectorID:             collectorID,
+			Runtime:                 runtimeTracker,
+			EffectiveConfig:         &deployment.Config,
+			EffectiveConfigProvider: effectiveConfig.Get,
+			RequestRestart:          requestRestart,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
@@ -156,17 +164,8 @@ func main() {
 		}
 	}
 
-	opts := engine.Options{
-		RunOnce:         *runOnce,
-		MaxCycles:       *maxCycles,
-		EndpointsPath:   resolvedEndpointsPath,
-		CollectorID:     collectorID,
-		StatePath:       resolvedConfigPath + ".state.json",
-		ReloadEndpoints: endpointReloader.ReloadIfChanged,
-		Runtime:         runtimeTracker,
-	}
-
-	if err := engine.Run(ctx, cfg, endpoints, opts); err != nil {
+	err = runMonitorLoop(ctx, deployment, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode, collectorID, *runOnce, *maxCycles, runtimeTracker, effectiveConfig, restartRequests)
+	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "shutdown requested")
 			return
@@ -174,10 +173,6 @@ func main() {
 		runtimeTracker.Failed(err)
 		fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
 		os.Exit(1)
-	}
-
-	if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
-		diagnostics.LogRuntimeSnapshot("exit", runtime.NumGoroutine())
 	}
 
 	time.Sleep(25 * time.Millisecond) // allow log flush in some environments

@@ -47,7 +47,7 @@ try {
         -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `
         -WorkingDirectory $testRoot -Json
     $defaultDefinition = $defaultJson | ConvertFrom-Json
-    Assert-True ($defaultDefinition.UIListen -eq '0.0.0.0:8080') 'v5.6 service UI should default to 0.0.0.0:8080'
+    Assert-True ($defaultDefinition.UIListen -eq '0.0.0.0:8080') 'v5.7 service UI should default to 0.0.0.0:8080'
 
     $remoteJson = & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
         -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `

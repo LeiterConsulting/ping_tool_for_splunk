@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -34,6 +35,40 @@ func requestBodyWithRevision(t *testing.T, path string, raw string) *bytes.Reade
 		t.Fatal(err)
 	}
 	return bytes.NewReader(encoded)
+}
+
+func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
+	staticRoot, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := staticHandler(staticRoot, "v5.7.2")
+
+	indexResponse := httptest.NewRecorder()
+	handler.ServeHTTP(indexResponse, httptest.NewRequest(http.MethodGet, "/", nil))
+	if indexResponse.Code != http.StatusOK {
+		t.Fatalf("index status = %d", indexResponse.Code)
+	}
+	for _, expected := range []string{"/app.css?v=v5.7.2", "/app.js?v=v5.7.2"} {
+		if !strings.Contains(indexResponse.Body.String(), expected) {
+			t.Fatalf("index does not contain versioned asset %q", expected)
+		}
+	}
+	if cacheControl := indexResponse.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
+	}
+
+	assetResponse := httptest.NewRecorder()
+	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, "/app.js?v=v5.7.2", nil))
+	if assetResponse.Code != http.StatusOK {
+		t.Fatalf("asset status = %d", assetResponse.Code)
+	}
+	if cacheControl := assetResponse.Header().Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("asset Cache-Control = %q, want no-store", cacheControl)
+	}
+	if assetResponse.Header().Get("Pragma") != "no-cache" {
+		t.Fatalf("asset Pragma = %q, want no-cache", assetResponse.Header().Get("Pragma"))
+	}
 }
 
 func TestEndpointsAPI(t *testing.T) {
@@ -88,6 +123,196 @@ func TestEndpointsAPI(t *testing.T) {
 	}
 	if !payload.Items[1].Dev {
 		t.Fatal("items[1].dev = false, want true")
+	}
+}
+
+func TestAdvisorAPIAnalyzeAndApplySafeFixes(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	cfg.HEC.Token = "advisor-test-hec-secret"
+	cfg.Metrics.Token = "advisor-test-metrics-secret"
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,dev\n" +
+		" 10.0.0.1 ,host-a,default,,,,,,false\n" +
+		"10.0.0.1,host-a,default,,,,,,false\n"
+	if err := os.WriteFile(endpointsPath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "v5.7.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	analyzeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(analyzeResponse, httptest.NewRequest(http.MethodGet, "/api/advisor?profile=standard", nil))
+	if analyzeResponse.Code != http.StatusOK {
+		t.Fatalf("analyze status = %d: %s", analyzeResponse.Code, analyzeResponse.Body.String())
+	}
+	if strings.Contains(analyzeResponse.Body.String(), "advisor-test-hec-secret") || strings.Contains(analyzeResponse.Body.String(), "advisor-test-metrics-secret") {
+		t.Fatal("advisor response exposed a write-only output token")
+	}
+	var report struct {
+		Summary struct {
+			SafeFixes int `json:"safe_fixes"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(analyzeResponse.Body.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Summary.SafeFixes == 0 {
+		t.Fatal("advisor did not offer safe inventory cleanup")
+	}
+
+	configRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	requestBody, _ := json.Marshal(advisorApplyRequest{
+		Profile: "standard", ApplySafe: true,
+		ConfigRevision: configRevision, EndpointsRevision: endpointsRevision,
+	})
+	applyResponse := httptest.NewRecorder()
+	handler.ServeHTTP(applyResponse, httptest.NewRequest(http.MethodPost, "/api/advisor/apply", bytes.NewReader(requestBody)))
+	if applyResponse.Code != http.StatusOK {
+		t.Fatalf("apply status = %d: %s", applyResponse.Code, applyResponse.Body.String())
+	}
+	loaded, err := config.LoadEndpoints(endpointsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].IP != "10.0.0.1" {
+		t.Fatalf("safe apply produced endpoints = %#v", loaded)
+	}
+}
+
+func TestAdvisorAPIRejectsStaleRevision(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestBody, _ := json.Marshal(advisorApplyRequest{
+		Profile: "standard", ApplyProfile: true,
+		ConfigRevision: "stale", EndpointsRevision: "stale",
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/advisor/apply", bytes.NewReader(requestBody)))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestRuntimeRestartAPIRequiresConfirmationAndQueuesValidatedRestart(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n127.0.0.1,loopback\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldConfigRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	tracker := runtimeinfo.New("monitor", oldConfigRevision, endpointsRevision, 1)
+	cfg.ParallelThreads = 2
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	newConfigRevision, _ := filerevision.File(configPath)
+	queued := make(chan RestartRequest, 1)
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Runtime: tracker, RequestRestart: func(request RestartRequest) error { queued <- request; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unconfirmedBody, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: newConfigRevision, EndpointsRevision: endpointsRevision,
+	})
+	unconfirmed := httptest.NewRecorder()
+	handler.ServeHTTP(unconfirmed, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(unconfirmedBody)))
+	if unconfirmed.Code != http.StatusBadRequest {
+		t.Fatalf("unconfirmed status = %d, want 400", unconfirmed.Code)
+	}
+
+	confirmedBody, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: newConfigRevision, EndpointsRevision: endpointsRevision, Confirmed: true,
+	})
+	confirmed := httptest.NewRecorder()
+	handler.ServeHTTP(confirmed, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(confirmedBody)))
+	if confirmed.Code != http.StatusAccepted {
+		t.Fatalf("confirmed status = %d, want 202: %s", confirmed.Code, confirmed.Body.String())
+	}
+	select {
+	case request := <-queued:
+		if request.ConfigRevision != newConfigRevision || request.EndpointsRevision != endpointsRevision {
+			t.Fatalf("queued request = %#v", request)
+		}
+	default:
+		t.Fatal("restart request was not queued")
+	}
+	if !tracker.Snapshot().Restarting {
+		t.Fatal("runtime tracker did not enter restarting state")
+	}
+}
+
+func TestRuntimeRestartAPIBlocksInvalidDeployment(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.json")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	oldRevision, _ := filerevision.File(configPath)
+	cfg.ParallelThreads = 2
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.1,broken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configRevision, _ := filerevision.File(configPath)
+	endpointsRevision, _ := filerevision.File(endpointsPath)
+	called := false
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Runtime:        runtimeinfo.New("monitor", oldRevision, endpointsRevision, 1),
+		RequestRestart: func(RestartRequest) error { called = true; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(runtimeRestartRequest{
+		ConfigRevision: configRevision, EndpointsRevision: endpointsRevision, Confirmed: true,
+	})
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/runtime/restart", bytes.NewReader(body)))
+	if response.Code != http.StatusBadRequest || called {
+		t.Fatalf("status = %d, callback called = %t: %s", response.Code, called, response.Body.String())
 	}
 }
 

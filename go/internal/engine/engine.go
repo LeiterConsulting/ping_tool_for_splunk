@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"os"
 	"runtime"
@@ -16,6 +15,7 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/ping"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/schedule"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/state"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/util"
 	"github.com/google/uuid"
@@ -51,8 +51,7 @@ type scheduleCapacity struct {
 }
 
 func ValidateSchedule(cfg config.Config, endpointCount int) error {
-	_, err := calculateScheduleCapacity(cfg, endpointCount, false)
-	return err
+	return schedule.Analyze(cfg, endpointCount).Error()
 }
 
 func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, opts Options) error {
@@ -297,30 +296,20 @@ func probeDispatchDelay(cfg config.Config, endpointCount int, runOnce bool) time
 }
 
 func calculateScheduleCapacity(cfg config.Config, endpointCount int, runOnce bool) (scheduleCapacity, error) {
-	interval := time.Duration(cfg.CycleIntervalSeconds) * time.Second
-	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
-	count := max(1, cfg.PingsPerCycle)
-	spacing := timeout / 2
-	if spacing < 10*time.Millisecond {
-		spacing = 10 * time.Millisecond
+	plan := schedule.Analyze(cfg, endpointCount)
+	capacity := scheduleCapacity{
+		ProbeBudget:      plan.ProbeBudgetDuration,
+		Interval:         plan.IntervalDuration,
+		DispatchDelay:    plan.DispatchDelayDuration,
+		WorstCaseLoadPct: plan.AverageWorkerLoadPct,
 	}
-	if spacing > 250*time.Millisecond {
-		spacing = 250 * time.Millisecond
-	}
-	probeBudget := time.Duration(count)*timeout + time.Duration(count-1)*spacing + 500*time.Millisecond
-	workers := max(1, cfg.ParallelThreads)
-	load := 0.0
-	if interval > 0 {
-		load = float64(endpointCount) * float64(probeBudget) / (float64(workers) * float64(interval)) * 100
-	}
-	capacity := scheduleCapacity{ProbeBudget: probeBudget, Interval: interval, WorstCaseLoadPct: load}
-	if runOnce || endpointCount <= 1 {
+	if runOnce {
+		capacity.DispatchDelay = 0
 		return capacity, nil
 	}
-	if interval <= 0 || probeBudget >= interval || load > 100 {
-		return capacity, fmt.Errorf("configured schedule cannot preserve a %s observation interval in the worst case: %d endpoints, %d workers, %s probe budget (%.1f%% worker capacity); increase parallel_threads or cycle_interval_seconds, or reduce timeout_ms/pings_per_cycle", interval, endpointCount, workers, probeBudget, load)
+	if err := plan.Error(); err != nil {
+		return capacity, err
 	}
-	capacity.DispatchDelay = (interval - probeBudget) / time.Duration(endpointCount-1)
 	return capacity, nil
 }
 

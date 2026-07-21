@@ -1,6 +1,6 @@
 param(
   [string]$OutDir = "dist",
-  [string]$Version = "v5.6.0"
+  [string]$Version = "v5.7.2"
 )
 
 $ErrorActionPreference = 'Stop'
@@ -32,6 +32,14 @@ try {
     Write-Host "Building $($t.GOOS)/$($t.GOARCH) -> $outPath"
     go build -trimpath -ldflags "-s -w" -o $outPath .\cmd\pingmonitor
   }
+
+  $manifestPath = Join-Path $dist "SHA256SUMS_${Version}.txt"
+  $manifestLines = foreach ($t in $targets) {
+    $hash = (Get-FileHash -LiteralPath (Join-Path $dist $t.OUT) -Algorithm SHA256).Hash.ToLowerInvariant()
+    "$hash  $($t.OUT)"
+  }
+  [IO.File]::WriteAllLines($manifestPath, $manifestLines, [Text.UTF8Encoding]::new($false))
+  Write-Host "Checksums -> $manifestPath"
 }
 finally {
   if ($null -ne $prevGOOS) { $env:GOOS = $prevGOOS } else { Remove-Item Env:GOOS -ErrorAction SilentlyContinue }

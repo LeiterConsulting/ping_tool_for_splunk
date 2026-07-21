@@ -4,9 +4,9 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.6.0`
+- Go runtime: `v5.7.2`
 - Splunk app: `2.9.2` build `41`
-- Current runtime release notes: [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.7.2.md](RELEASE_NOTES_v5.7.2.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.2.md](RELEASE_NOTES_splunk_app_2.9.2.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
@@ -14,13 +14,15 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.6.0 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.7.2 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
 
 ## What The Current Release Includes
 
+- Configuration Advisor with multi-error inventory validation, deterministic worst-case schedule modeling, operating profiles, revision-safe fixes, and a bounded non-SLA host benchmark.
+- Versioned, non-cacheable admin UI assets so browser sessions cannot mix an upgraded API with stale controls.
 - Operator-focused embedded admin UI with live collector/cycle/delivery truth, revision-safe endpoint and config editing, discovery, dev/prod marking, and HEC connectivity tests.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
 - Automatic `endpoints.csv` hot reload between monitoring cycles with last-known-good protection on invalid edits.
@@ -61,6 +63,32 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
 | `--version` | Print the runtime version |
+
+### Configuration Advisor
+
+Version 5.7 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, whitespace normalization, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
+
+```powershell
+# Read-only analysis; exits nonzero when blockers exist
+.\pingmonitor.exe analyze --profile current
+
+# Preview a recommended profile without changing files
+.\pingmonitor.exe optimize --profile standard
+
+# Apply only unambiguous inventory cleanup, with timestamped backup
+.\pingmonitor.exe optimize --profile standard --apply-safe
+
+# Apply the previewed profile; restart the collector afterward
+.\pingmonitor.exe optimize --profile sla --apply-profile
+
+# Measure planner/filesystem overhead and the configured backend against loopback only
+.\pingmonitor.exe benchmark --profile current
+
+# List standard, SLA, high-latency, large-inventory, low-resource, and current profiles
+.\pingmonitor.exe profiles
+```
+
+The advisor never guesses a malformed IP address. Exact duplicate rows with identical normalized metadata are safe-fixable; conflicting duplicates and incomplete addresses remain blockers for operator review. Profile application is blocked until ambiguous inventory problems are resolved, because an incomplete inventory cannot produce a truthful worker recommendation. The benchmark probes only `127.0.0.1` to verify the configured ping backend and any fallback; it never pings monitored devices.
 
 ## Configuration Model
 
@@ -117,11 +145,13 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 - Endpoint edits made in the UI are written back to the live endpoint file that the runtime hot reloads.
 - Config and endpoint saves carry a file revision. A stale browser draft receives `409 Conflict` instead of silently overwriting a newer disk edit.
 - Config edits made in the UI are saved directly to the active config file, but engine-level settings are loaded at process start. Restart the runtime or service after config changes that should affect monitoring behavior.
+- When a saved config revision is not active, monitor mode exposes a confirmation-gated **Restart Collector** action. It performs a controlled in-process engine restart, revalidates revisions, and resumes the last known-good configuration if activation fails.
 - HEC tokens are write-only in the API. A blank token field preserves the stored token; the UI receives only a configured/not-configured flag.
 - When the UI saves config or endpoints over an existing file, it creates a timestamped `.bak` backup first.
 
 The UI supports:
 
+- advisor analysis, current-versus-proposed schedule evidence, safe fixes, confirmed profile application, and a bounded local benchmark
 - full endpoint CRUD
 - explicitly selected bulk dev/prod and delete actions, with destructive confirmations
 - cancellable discovery with host-count preflight plus merge or overwrite workflows
@@ -198,6 +228,8 @@ If you prefer file output, configure a Splunk monitor input for the runtime log 
 
 The repository ships [Install-Service.ps1](Install-Service.ps1), which installs the Go runtime through NSSM with delayed automatic start, graceful shutdown, application restart, Windows Service Control Manager recovery, and rotating stdout/stderr logs.
 
+Do not register `pingmonitor.exe` directly with `New-Service` or `sc.exe create`. The current Go binary is a long-running console application, not a native Windows Service Control Manager executable, and does not implement the SCM service dispatcher. Use the shipped NSSM installer for a Windows service, or use Task Scheduler when a service wrapper is not desired.
+
 Prerequisites are PowerShell 7.4+, administrator rights for lifecycle mutations, and a vetted NSSM 2.24+ `nssm.exe` either on `PATH` or beside `Install-Service.ps1`. The installer does not download or execute a remote binary automatically.
 
 Run validation first from any PowerShell 7.4+ session. Validation does not change service state and does not require elevation:
@@ -261,7 +293,9 @@ Use a different address/port or disable the UI when required:
 .\Install-Service.ps1 -Install -DisableUI
 ```
 
-Version 5.6 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
+Version 5.7 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
+
+`-Validate` now runs the full Configuration Advisor preflight and shows all blockers and recommendations before NSSM is changed. Start, restart, and install operations include a startup stabilization check; failures automatically include the recent NSSM stdout/stderr tail when available.
 
 Before an upgrade, validate the replacement binary, stop the service, replace the binary, and restart it. If the executable path changes, use `-ForceReinstall` so the persisted NSSM definition is verified again.
 
@@ -383,4 +417,4 @@ sudo ./install_unix.sh
 
 MIT License.
 
-*Last updated: 15 July 2026*
+*Last updated: 20 July 2026*

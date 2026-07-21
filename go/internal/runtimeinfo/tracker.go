@@ -26,6 +26,10 @@ type Snapshot struct {
 	EffectiveConfigRevision    string `json:"effective_config_revision,omitempty"`
 	EffectiveEndpointsRevision string `json:"effective_endpoints_revision,omitempty"`
 	FatalError                 string `json:"fatal_error,omitempty"`
+	Restarting                 bool   `json:"restarting"`
+	RestartCount               int    `json:"restart_count"`
+	LastRestartAt              string `json:"last_restart_at,omitempty"`
+	LastRestartError           string `json:"last_restart_error,omitempty"`
 }
 
 type Tracker struct {
@@ -131,4 +135,47 @@ func (t *Tracker) Failed(err error) {
 	t.snap.State = "failed"
 	t.snap.CycleRunning = false
 	t.snap.FatalError = err.Error()
+}
+
+func (t *Tracker) RestartRequested() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.snap.State = "restarting"
+	t.snap.Restarting = true
+	t.snap.LastRestartError = ""
+}
+
+func (t *Tracker) Restarted(configRevision string, endpointsRevision string, endpointCount int, at time.Time) {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.snap.State = "starting"
+	t.snap.Restarting = false
+	t.snap.RestartCount++
+	t.snap.LastRestartAt = at.UTC().Format(time.RFC3339Nano)
+	t.snap.LastRestartError = ""
+	t.snap.FatalError = ""
+	t.snap.CycleRunning = false
+	t.snap.CurrentCycleID = ""
+	t.snap.CurrentCycleStartedAt = ""
+	t.snap.NextCycleAt = ""
+	t.snap.ActiveEndpoints = endpointCount
+	t.snap.EffectiveConfigRevision = configRevision
+	t.snap.EffectiveEndpointsRevision = endpointsRevision
+}
+
+func (t *Tracker) RestartFailed(err error) {
+	if t == nil || err == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.snap.State = "starting"
+	t.snap.Restarting = false
+	t.snap.LastRestartError = err.Error()
 }

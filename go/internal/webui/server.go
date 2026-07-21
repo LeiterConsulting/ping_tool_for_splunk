@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -23,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
@@ -43,15 +45,22 @@ const embeddedDiscoveryScriptPath = "embedded:DiscoverEndpoints.ps1"
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
 type Options struct {
-	ListenAddr          string
-	ConfigPath          string
-	EndpointsPath       string
-	RootDir             string
-	DiscoveryScriptPath string
-	Version             string
-	CollectorID         string
-	Runtime             *runtimeinfo.Tracker
-	EffectiveConfig     *config.Config
+	ListenAddr              string
+	ConfigPath              string
+	EndpointsPath           string
+	RootDir                 string
+	DiscoveryScriptPath     string
+	Version                 string
+	CollectorID             string
+	Runtime                 *runtimeinfo.Tracker
+	EffectiveConfig         *config.Config
+	EffectiveConfigProvider func() (config.Config, bool)
+	RequestRestart          func(RestartRequest) error
+}
+
+type RestartRequest struct {
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
 }
 
 type statusResponse struct {
@@ -172,9 +181,24 @@ type outputTestResponse struct {
 	Warnings     []string `json:"warnings,omitempty"`
 }
 
+type advisorApplyRequest struct {
+	Profile           string `json:"profile"`
+	ApplySafe         bool   `json:"apply_safe"`
+	ApplyProfile      bool   `json:"apply_profile"`
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
+}
+
+type runtimeRestartRequest struct {
+	ConfigRevision    string `json:"config_revision"`
+	EndpointsRevision string `json:"endpoints_revision"`
+	Confirmed         bool   `json:"confirmed"`
+}
+
 type apiServer struct {
 	opts            Options
 	writeMu         sync.Mutex
+	benchmarkMu     sync.Mutex
 	statusConfigMu  sync.RWMutex
 	statusConfig    config.Config
 	hasStatusConfig bool
@@ -241,10 +265,15 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/status", server.handleStatus)
 	mux.HandleFunc("/api/endpoints", server.handleEndpoints)
 	mux.HandleFunc("/api/config", server.handleConfig)
+	mux.HandleFunc("/api/advisor", server.handleAdvisor)
+	mux.HandleFunc("/api/advisor/profiles", server.handleAdvisorProfiles)
+	mux.HandleFunc("/api/advisor/apply", server.handleAdvisorApply)
+	mux.HandleFunc("/api/advisor/benchmark", server.handleAdvisorBenchmark)
+	mux.HandleFunc("/api/runtime/restart", server.handleRuntimeRestart)
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
-	mux.Handle("/", staticHandler(staticRoot))
+	mux.Handle("/", staticHandler(staticRoot, opts.Version))
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
@@ -529,9 +558,83 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *apiServer) effectiveStatusConfig() (config.Config, bool) {
+	if s.opts.EffectiveConfigProvider != nil {
+		return s.opts.EffectiveConfigProvider()
+	}
 	s.statusConfigMu.RLock()
 	defer s.statusConfigMu.RUnlock()
 	return s.statusConfig, s.hasStatusConfig
+}
+
+func (s *apiServer) handleRuntimeRestart(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request runtimeRestartRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !request.Confirmed {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "restart requires explicit confirmation"})
+		return
+	}
+	if s.opts.Runtime.Snapshot().Mode != "monitor" {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "collector restart is unavailable in configuration-only mode"})
+		return
+	}
+	if s.opts.RequestRestart == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "controlled restart is unavailable in this runtime"})
+		return
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	if s.opts.Runtime.Snapshot().Restarting {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "collector restart is already in progress"})
+		return
+	}
+	configInfo, err := config.ResolveConfigSource(s.opts.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	configRevision, configErr := revision.File(configInfo.Path)
+	endpointsRevision, endpointsErr := revision.File(s.opts.EndpointsPath)
+	if configErr != nil || endpointsErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify deployment revisions"})
+		return
+	}
+	if request.ConfigRevision == "" || request.ConfigRevision != configRevision {
+		writeRevisionConflict(w, "config file changed after the restart prompt was opened", configRevision)
+		return
+	}
+	if request.EndpointsRevision == "" || request.EndpointsRevision != endpointsRevision {
+		writeRevisionConflict(w, "endpoint file changed after the restart prompt was opened", endpointsRevision)
+		return
+	}
+	runtimeSnapshot := s.opts.Runtime.Snapshot()
+	if runtimeSnapshot.EffectiveConfigRevision == configRevision {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "the saved configuration is already active"})
+		return
+	}
+	report := advisor.AnalyzeDeployment(r.Context(), s.advisorOptions("current"))
+	if !report.Summary.ReadyToRun {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "restart blocked by configuration advisor findings", "report": report})
+		return
+	}
+	queued := RestartRequest{ConfigRevision: configRevision, EndpointsRevision: endpointsRevision}
+	s.opts.Runtime.RestartRequested()
+	if err := s.opts.RequestRestart(queued); err != nil {
+		s.opts.Runtime.RestartFailed(err)
+		writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+		return
+	}
+	diagnostics.LogInfo("web ui requested controlled collector restart", map[string]interface{}{
+		"config_revision": configRevision, "endpoints_revision": endpointsRevision,
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "message": "controlled collector restart queued"})
 }
 
 func (s *apiServer) setEffectiveStatusConfig(cfg config.Config) {
@@ -539,6 +642,107 @@ func (s *apiServer) setEffectiveStatusConfig(cfg config.Config) {
 	defer s.statusConfigMu.Unlock()
 	s.statusConfig = cfg
 	s.hasStatusConfig = true
+}
+
+func (s *apiServer) advisorOptions(profile string) advisor.AnalyzeOptions {
+	return advisor.AnalyzeOptions{
+		ConfigPath: s.opts.ConfigPath, EndpointsPath: s.opts.EndpointsPath,
+		RootDir: s.opts.RootDir, Profile: profile, ProductVersion: s.opts.Version,
+	}
+}
+
+func (s *apiServer) handleAdvisor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	report := advisor.AnalyzeDeployment(r.Context(), s.advisorOptions(r.URL.Query().Get("profile")))
+	writeJSON(w, http.StatusOK, report)
+}
+
+func (s *apiServer) handleAdvisorProfiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, advisor.Profiles())
+}
+
+func (s *apiServer) handleAdvisorApply(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request advisorApplyRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !request.ApplySafe && !request.ApplyProfile {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "select at least one fix to apply"})
+		return
+	}
+	if _, err := advisor.GetProfile(request.Profile); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	configInfo, err := config.ResolveConfigSource(s.opts.ConfigPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	configRevision, configErr := revision.File(configInfo.Path)
+	endpointsRevision, endpointsErr := revision.File(s.opts.EndpointsPath)
+	if configErr != nil || endpointsErr != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "could not verify deployment revisions"})
+		return
+	}
+	if request.ConfigRevision == "" || request.ConfigRevision != configRevision {
+		writeRevisionConflict(w, "config file changed after advisor analysis", configRevision)
+		return
+	}
+	if request.EndpointsRevision == "" || request.EndpointsRevision != endpointsRevision {
+		writeRevisionConflict(w, "endpoint file changed after advisor analysis", endpointsRevision)
+		return
+	}
+
+	result, err := advisor.Apply(r.Context(), advisor.ApplyOptions{
+		AnalyzeOptions: s.advisorOptions(request.Profile),
+		ApplySafe:      request.ApplySafe, ApplyProfile: request.ApplyProfile,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if result.ConfigChanged && s.opts.Runtime.Snapshot().Mode != "monitor" && result.Report.LoadedConfig != nil {
+		s.setEffectiveStatusConfig(*result.Report.LoadedConfig)
+	}
+	diagnostics.LogInfo("configuration advisor applied fixes", map[string]interface{}{
+		"profile": request.Profile, "fixes": result.AppliedFixes,
+		"config_changed": result.ConfigChanged, "endpoints_changed": result.EndpointsChanged,
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *apiServer) handleAdvisorBenchmark(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !s.benchmarkMu.TryLock() {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "an advisor benchmark is already running"})
+		return
+	}
+	defer s.benchmarkMu.Unlock()
+	result, err := advisor.BenchmarkDeployment(r.Context(), s.advisorOptions(r.URL.Query().Get("profile")))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *apiServer) handleDiscoveryRun(w http.ResponseWriter, r *http.Request) {
@@ -1120,31 +1324,43 @@ func summarizeEndpoints(endpoints []models.Endpoint) endpointSummary {
 	return summary
 }
 
-func staticHandler(root fs.FS) http.Handler {
+func staticHandler(root fs.FS, version string) http.Handler {
 	fileServer := http.FileServer(http.FS(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cleanPath := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if cleanPath == "." || cleanPath == "" {
-			serveIndex(w, r, fileServer)
+			serveIndex(w, r, version)
 			return
 		}
 		if _, err := fs.Stat(root, cleanPath); err == nil {
+			setNoStoreHeaders(w)
 			fileServer.ServeHTTP(w, r)
 			return
 		}
-		serveIndex(w, r, fileServer)
+		serveIndex(w, r, version)
 	})
 }
 
-func serveIndex(w http.ResponseWriter, r *http.Request, fileServer http.Handler) {
+func serveIndex(w http.ResponseWriter, r *http.Request, version string) {
 	b, err := fs.ReadFile(staticFiles, "static/index.html")
 	if err != nil {
 		http.Error(w, "ui shell unavailable", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
+	assetVersion := url.QueryEscape(version)
+	if assetVersion == "" {
+		assetVersion = "development"
+	}
+	b = bytes.ReplaceAll(b, []byte("{{ASSET_VERSION}}"), []byte(assetVersion))
+	setNoStoreHeaders(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	http.ServeContent(w, r, "index.html", time.Time{}, bytes.NewReader(b))
+}
+
+func setNoStoreHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Expires", "0")
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

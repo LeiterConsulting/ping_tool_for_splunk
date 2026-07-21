@@ -133,8 +133,8 @@ func TestRunEndpointDoesNotInventLatencyForCensoredReply(t *testing.T) {
 func TestProbeDispatchDelaySpreadsNormalCycle(t *testing.T) {
 	cfg := config.Defaults(t.TempDir())
 	delay := probeDispatchDelay(cfg, 78, false)
-	if delay < 700*time.Millisecond || delay > 720*time.Millisecond {
-		t.Fatalf("probeDispatchDelay() = %s, want roughly 711ms", delay)
+	if delay < 720*time.Millisecond || delay > 722*time.Millisecond {
+		t.Fatalf("probeDispatchDelay() = %s, want roughly 720.8ms", delay)
 	}
 	if got := probeDispatchDelay(cfg, 78, true); got != 0 {
 		t.Fatalf("run-once probeDispatchDelay() = %s, want no delay", got)
@@ -152,17 +152,27 @@ func TestScheduleCapacityRejectsImpossibleCadence(t *testing.T) {
 	}
 }
 
+func TestScheduleCapacityRejectsSingleEndpointLongerThanInterval(t *testing.T) {
+	cfg := config.Defaults(t.TempDir())
+	cfg.CycleIntervalSeconds = 2
+	cfg.TimeoutMs = 1000
+	cfg.PingsPerCycle = 4
+	if _, err := calculateScheduleCapacity(cfg, 1, false); err == nil {
+		t.Fatal("calculateScheduleCapacity() accepted a single probe budget longer than its interval")
+	}
+}
+
 func TestScheduleCapacityAccountsForEveryTimeout(t *testing.T) {
 	cfg := config.Defaults(t.TempDir())
 	capacity, err := calculateScheduleCapacity(cfg, 78, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capacity.ProbeBudget != 5250*time.Millisecond {
-		t.Fatalf("ProbeBudget = %s, want 5.25s", capacity.ProbeBudget)
+	if capacity.ProbeBudget != 4500*time.Millisecond {
+		t.Fatalf("ProbeBudget = %s, want 4.5s", capacity.ProbeBudget)
 	}
-	if capacity.WorstCaseLoadPct < 68 || capacity.WorstCaseLoadPct > 69 {
-		t.Fatalf("WorstCaseLoadPct = %.2f, want about 68.25", capacity.WorstCaseLoadPct)
+	if capacity.WorstCaseLoadPct < 58 || capacity.WorstCaseLoadPct > 59 {
+		t.Fatalf("WorstCaseLoadPct = %.2f, want about 58.5", capacity.WorstCaseLoadPct)
 	}
 }
 

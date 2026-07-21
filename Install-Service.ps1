@@ -225,7 +225,7 @@ function Assert-UIListenSafe {
         throw "UIListen port is outside 1-65535: $portPart"
     }
 
-    # v5.6 intentionally permits non-loopback listeners. -AllowRemoteUI remains
+    # v5.7 intentionally permits non-loopback listeners. -AllowRemoteUI remains
     # accepted for command-line compatibility but is no longer required.
 }
 
@@ -390,6 +390,51 @@ function Stop-ServiceInternal {
     return Wait-ServiceState -DesiredState 'Stopped'
 }
 
+function Get-ServiceLogTail {
+    param([int]$TailLines = 30)
+    $paths = @()
+    try {
+        if (-not $script:NssmPath) { $script:NssmPath = Find-Nssm }
+        $paths += Get-NssmSetting @('AppStderr')
+        $paths += Get-NssmSetting @('AppStdout')
+    }
+    catch {
+        return $null
+    }
+    $sections = foreach ($path in ($paths | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        $cleanPath = $path.Trim('"')
+        if (-not (Test-Path -LiteralPath $cleanPath -PathType Leaf)) { continue }
+        $lines = @(Get-Content -LiteralPath $cleanPath -Tail $TailLines -ErrorAction SilentlyContinue)
+        if ($lines.Count -gt 0) {
+            "--- $cleanPath ---"
+            $lines
+        }
+    }
+    return ($sections -join [Environment]::NewLine).Trim()
+}
+
+function Start-ServiceVerified {
+    try {
+        Start-Service -Name $ServiceName
+        Wait-ServiceState -DesiredState 'Running' | Out-Null
+        Start-Sleep -Milliseconds 1500
+        $service = Get-ServiceObject
+        $service.Refresh()
+        if ($service.Status -ne 'Running') {
+            throw "Service exited during the startup stabilization window. Current state: $($service.Status)"
+        }
+        return $service
+    }
+    catch {
+        $failure = $_.Exception.Message
+        $tail = Get-ServiceLogTail
+        if ($tail) {
+            throw "Service '$ServiceName' failed to start: $failure`nRecent service output:`n$tail"
+        }
+        throw "Service '$ServiceName' failed to start: $failure. Run '.\Install-Service.ps1 -Validate' and review the NSSM AppStderr log."
+    }
+}
+
 function Remove-ServiceInternal {
     $service = Get-ServiceObject
     if (-not $service) { return }
@@ -453,14 +498,7 @@ function Install-PingMonitorService {
 
         Assert-InstalledDefinition -Definition $definition
         if (-not $NoStart) {
-            Start-Service -Name $ServiceName
-            Wait-ServiceState -DesiredState 'Running' | Out-Null
-            Start-Sleep -Milliseconds 750
-            $service = Get-ServiceObject
-            $service.Refresh()
-            if ($service.Status -ne 'Running') {
-                throw "Service '$ServiceName' exited during startup stabilization. Review $($definition.StderrPath)."
-            }
+            Start-ServiceVerified | Out-Null
         }
     }
     catch {
@@ -497,8 +535,7 @@ function Start-PingMonitorService {
     if (-not $service) { throw "Service '$ServiceName' is not installed." }
     if ($service.Status -eq 'Running') { Write-Host "Service '$ServiceName' is already running."; return }
     if ($PSCmdlet.ShouldProcess($ServiceName, 'Start Windows service')) {
-        Start-Service -Name $ServiceName
-        Wait-ServiceState -DesiredState 'Running' | Out-Null
+        Start-ServiceVerified | Out-Null
         Write-Host "Service '$ServiceName' is running." -ForegroundColor Green
     }
 }
@@ -517,8 +554,7 @@ function Restart-PingMonitorService {
     if (-not $service) { throw "Service '$ServiceName' is not installed." }
     if ($PSCmdlet.ShouldProcess($ServiceName, 'Restart Windows service')) {
         if ($service.Status -ne 'Stopped') { Stop-ServiceInternal | Out-Null }
-        Start-Service -Name $ServiceName
-        Wait-ServiceState -DesiredState 'Running' | Out-Null
+        Start-ServiceVerified | Out-Null
         Write-Host "Service '$ServiceName' restarted successfully." -ForegroundColor Green
     }
 }

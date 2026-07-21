@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.6.0 is the current Go runtime. It adds a truthful operator interface, live cycle/reload/delivery state, revision-safe editing, and safer discovery and endpoint workflows to the v5.5 signal and delivery foundation.
+Ping Monitor v5.7.2 is the current Go runtime. It ensures the confirmation-gated controlled restart cannot be hidden by stale browser assets after an upgrade.
 
 ## Current Go Release
 
-- Version: `v5.6.0`
+- Version: `v5.7.2`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.6.0.md](../RELEASE_NOTES_v5.6.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.7.2.md](../RELEASE_NOTES_v5.7.2.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -15,6 +15,7 @@ Ping Monitor v5.6.0 is the current Go runtime. It adds a truthful operator inter
 - Drop-in reuse of existing `config.psd1` and `endpoints.csv` deployment files.
 - Automatic `endpoints.csv` hot reload between cycles with last-known-good fallback on invalid edits.
 - Embedded admin UI with live runtime truth, revision-safe endpoint/config editing, cancellable discovery, dev/prod marking, and HEC connectivity tests.
+- Configuration Advisor with tolerant multi-error CSV inspection, worst-case capacity evidence, operating profiles, safe inventory cleanup, and confirmed config optimization.
 - Fsynced, bounded HEC/metrics outbox with asynchronous delivery, restart recovery, per-sink progress, and optional indexer acknowledgment.
 
 ## Runtime Compatibility
@@ -57,6 +58,19 @@ With the default file names, the binary prefers `config.psd1` and `endpoints.csv
 | `--validate` | Validate config, endpoints, and worst-case scheduler capacity without probing |
 | `--version` | Print the runtime version |
 
+Advisor subcommands are separate from legacy runtime flags:
+
+```powershell
+.\pingmonitor.exe analyze --profile current
+.\pingmonitor.exe optimize --profile standard
+.\pingmonitor.exe optimize --profile standard --apply-safe
+.\pingmonitor.exe optimize --profile sla --apply-profile
+.\pingmonitor.exe benchmark --profile current
+.\pingmonitor.exe profiles
+```
+
+Use `--format json` with `analyze`, `optimize`, or `benchmark` for automation. Analysis is read-only. The benchmark is explicitly non-SLA: it exercises config/inventory parsing, the schedule planner, temporary writes beside the deployment config, and three probes to `127.0.0.1` using the configured backend. It does not probe monitored endpoints, update health state, or contact Splunk.
+
 ## Configuration Model
 
 - `config.psd1` is the preferred config format for the Go runtime.
@@ -98,6 +112,8 @@ It provides:
 - cancellable discovery with host-count preflight and staged import workflows
 - HEC event and metrics endpoint validation
 - settings help modals for the runtime configuration surface
+- a dedicated Advisor view with readiness counts, current/proposed schedule evidence, findings, change previews, safe fixes, profiles, and a bounded benchmark
+- a confirmation-gated Restart Collector action when a saved config revision is not yet active
 
 The UI serves these key routes:
 
@@ -105,6 +121,9 @@ The UI serves these key routes:
 - `GET /api/status`
 - `GET` and `PUT /api/endpoints`
 - `GET` and `PUT /api/config`
+- `GET /api/advisor` and `GET /api/advisor/profiles`
+- `POST /api/advisor/apply` and `POST /api/advisor/benchmark`
+- `POST /api/runtime/restart`
 - `POST /api/discovery/run`
 - `POST /api/output/test`
 
@@ -153,7 +172,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.6.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.2`
 - Bash: `./go/build.sh dist`
 
 Current default targets:
@@ -191,6 +210,8 @@ Then use an elevated session to install and control it:
 .\Install-Service.ps1 -Uninstall
 ```
 
+Do not point a manually created `New-Service` or `sc.exe create` definition directly at `pingmonitor.exe`. The Go runtime is a console application and does not implement the native Windows Service Control Manager dispatcher. Use the shipped NSSM installer or Task Scheduler.
+
 The shipped installer:
 
 - installs the Go runtime as the default Windows service target
@@ -200,9 +221,10 @@ The shipped installer:
 - rotates service stdout/stderr logs
 - enables the admin UI on `0.0.0.0:8080` by default
 - supports `-UIListen` to select a different bind address or port
-- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.6
+- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.7
 - supports `-DisableUI` for a headless service
 - supports `-ForceReinstall` when a binary or deployment path changes
+- runs the complete advisor during validation and surfaces recent service stdout/stderr automatically when a start fails
 
 For an in-place upgrade, validate the replacement binary, stop the service, replace the existing binary, and restart the service. If the executable path changes, reinstall with `-ForceReinstall` so NSSM's persisted definition is checked again.
 
