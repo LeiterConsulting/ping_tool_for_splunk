@@ -228,6 +228,8 @@ If you prefer file output, configure a Splunk monitor input for the runtime log 
 
 The repository ships [Install-Service.ps1](Install-Service.ps1), which installs the Go runtime through NSSM with delayed automatic start, graceful shutdown, application restart, Windows Service Control Manager recovery, and rotating stdout/stderr logs.
 
+Do not register `pingmonitor.exe` directly with `New-Service` or `sc.exe create`. The current Go binary is a long-running console application, not a native Windows Service Control Manager executable, and does not implement the SCM service dispatcher. Use the shipped NSSM installer for a Windows service, or use Task Scheduler when a service wrapper is not desired.
+
 Prerequisites are PowerShell 7.4+, administrator rights for lifecycle mutations, and a vetted NSSM 2.24+ `nssm.exe` either on `PATH` or beside `Install-Service.ps1`. The installer does not download or execute a remote binary automatically.
 
 Run validation first from any PowerShell 7.4+ session. Validation does not change service state and does not require elevation:

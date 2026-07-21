@@ -210,6 +210,8 @@ Then use an elevated session to install and control it:
 .\Install-Service.ps1 -Uninstall
 ```
 
+Do not point a manually created `New-Service` or `sc.exe create` definition directly at `pingmonitor.exe`. The Go runtime is a console application and does not implement the native Windows Service Control Manager dispatcher. Use the shipped NSSM installer or Task Scheduler.
+
 The shipped installer:
 
 - installs the Go runtime as the default Windows service target
