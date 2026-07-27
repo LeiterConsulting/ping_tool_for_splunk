@@ -46,6 +46,11 @@ Version 5.9.0 adds durable discovery, explicit monitoring policy, bounded log re
 - Omitted `monitoring_enabled` means enabled, preserving every existing monitored endpoint.
 - The advisor validates new identity and policy fields and excludes deliberately suppressed endpoints from worker-capacity recommendations.
 
+## Interface Reliability
+
+- Legacy endpoint rows that omit optional v5.9 fields are normalized at the browser API boundary, preventing empty FQDN values from interrupting the Endpoint, Discovery, or Configuration render pass.
+- Discovery identity and scan-evidence fields remain attached when results are reviewed or merged in the interface.
+
 ## Upgrade Notes
 
 1. Back up the deployment folder.

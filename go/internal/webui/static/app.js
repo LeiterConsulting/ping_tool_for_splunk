@@ -656,6 +656,7 @@ function emptyEndpoint() {
 
 function normalizeEndpoint(endpoint) {
   return {
+    ...endpoint,
 	endpoint_id: String(endpoint.endpoint_id || '').trim(),
     ip: String(endpoint.ip || '').trim(),
     hostname: String(endpoint.hostname || '').trim(),
@@ -710,7 +711,8 @@ function validateEndpointDraft() {
     if (!hostname || hostname.length > 253 || /[\r\n\t]/.test(hostname)) {
       return { index, field: 'hostname', message: `Endpoint ${index + 1} needs a valid hostname.` };
     }
-    if (endpoint.fqdn.length > 253 || /[\r\n\t]/.test(endpoint.fqdn)) {
+    const fqdn = String(endpoint.fqdn || '').trim();
+    if (fqdn.length > 253 || /[\r\n\t]/.test(fqdn)) {
       return { index, field: 'fqdn', message: `Endpoint ${index + 1} has an invalid FQDN.` };
     }
     if (endpoint.maintenance_until && Number.isNaN(Date.parse(endpoint.maintenance_until))) {
@@ -2079,8 +2081,8 @@ async function reloadAllData(showSuccess = false) {
     ]);
 
     state.status = status;
-    state.endpoints = deepClone(endpointsPayload.items || []);
-    state.savedEndpoints = deepClone(endpointsPayload.items || []);
+    state.endpoints = normalizeEndpoints(endpointsPayload.items || []);
+    state.savedEndpoints = deepClone(state.endpoints);
     state.endpointsRevision = endpointsPayload.revision || '';
     state.endpointsDirty = false;
     state.selectedEndpointIndices.clear();
@@ -2140,8 +2142,8 @@ async function saveEndpoints() {
       items: normalizeEndpoints(state.endpoints),
       revision: state.endpointsRevision,
     });
-    state.endpoints = deepClone(payload.items || []);
-    state.savedEndpoints = deepClone(payload.items || []);
+    state.endpoints = normalizeEndpoints(payload.items || []);
+    state.savedEndpoints = deepClone(state.endpoints);
     state.endpointsRevision = payload.revision || state.endpointsRevision;
     state.endpointsDirty = false;
     ensureSelectedEndpoint();
@@ -2433,7 +2435,7 @@ function setDiscoveryModeForSelection(isDev) {
 
 function mergeEndpointRecords(existingEndpoint, incomingEndpoint, mode) {
   const merged = deepClone(existingEndpoint);
-  ['hostname', 'group', 'description', 'entitytype', 'device', 'vendor', 'additional_notes'].forEach((key) => {
+  ['hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor', 'additional_notes'].forEach((key) => {
     const incomingValue = String(incomingEndpoint[key] || '').trim();
     if (mode === 'overwrite') {
       if (!isBlankText(incomingValue)) {
@@ -2443,6 +2445,18 @@ function mergeEndpointRecords(existingEndpoint, incomingEndpoint, mode) {
     }
     if (mode === 'fill_blanks' && isBlankText(merged[key]) && !isBlankText(incomingValue)) {
       merged[key] = incomingValue;
+    }
+  });
+  [
+    'dns_status',
+    'dns_forward_confirmed',
+    'discovered_at',
+    'discovery_scan_id',
+    'discovery_source',
+    'discovery_latency_ms',
+  ].forEach((key) => {
+    if (incomingEndpoint[key] !== undefined && incomingEndpoint[key] !== null && incomingEndpoint[key] !== '') {
+      merged[key] = incomingEndpoint[key];
     }
   });
   if (mode === 'overwrite') {
