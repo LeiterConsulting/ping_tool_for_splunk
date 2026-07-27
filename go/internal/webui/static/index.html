@@ -373,6 +373,7 @@
               </form>
             </article>
           </div>
+
         </section>
 
         <section id="discovery" class="section-stack">
@@ -504,6 +505,54 @@
               </div>
             </article>
           </div>
+
+          <article class="panel section-stack" id="discovery-operations-panel">
+            <div class="panel-header">
+              <div>
+                <h3 class="panel-title">Discovery Operations</h3>
+                <p class="summary-note">Scheduled-run health and durable scan evidence. History review never changes monitored inventory until you explicitly add and save endpoints.</p>
+              </div>
+              <button class="secondary-button" id="refresh-discovery-history-button" type="button">Refresh History</button>
+            </div>
+
+            <div id="discovery-schedule-statuses" class="info-grid">
+              <article class="panel info-card">
+                <p class="summary-label">Schedules</p>
+                <p class="info-value">Loading schedule state...</p>
+              </article>
+            </div>
+
+            <div class="message-banner warning">
+              A missing discovery result means an address was not observed in that scan. It is not proof that an asset is down, removed, or decommissioned.
+            </div>
+
+            <div class="table-meta-row">
+              <span class="table-status" id="discovery-history-status">Loading discovery history...</span>
+              <span class="meta-chip" id="discovery-retention-status">Retention loading...</span>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Observed</th>
+                    <th>Target</th>
+                    <th>Source</th>
+                    <th>Found</th>
+                    <th>New</th>
+                    <th>Missing</th>
+                    <th>Duration</th>
+                    <th>Review</th>
+                  </tr>
+                </thead>
+                <tbody id="discovery-history-rows">
+                  <tr>
+                    <td colspan="8" class="empty-cell">Discovery history is loading.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </article>
         </section>
 
         <section id="settings" class="section-stack">
@@ -625,6 +674,14 @@
                     <label class="field-group">
                       <span>History Path</span>
                       <input id="cfg-discovery-history-path" class="text-input" type="text" placeholder="./data/discovery">
+                    </label>
+                    <label class="field-group">
+                      <span>Retain Most Recent Scans</span>
+                      <input id="cfg-discovery-retention-scans" class="text-input" type="number" min="0" value="0">
+                    </label>
+                    <label class="field-group">
+                      <span>Retain Scan History (days)</span>
+                      <input id="cfg-discovery-retention-days" class="text-input" type="number" min="0" value="0">
                     </label>
                     <label class="field-group field-span-2">
                       <span>Target Networks (one CIDR per line)</span>
@@ -911,6 +968,7 @@
     </main>
   </div>
 
+  <script src="/discovery_csv.js?v={{ASSET_VERSION}}"></script>
   <script src="/app.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>

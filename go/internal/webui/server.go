@@ -55,10 +55,12 @@ type Options struct {
 	DiscoveryScriptPath     string
 	Version                 string
 	CollectorID             string
+	CollectorHost           string
 	Runtime                 *runtimeinfo.Tracker
 	EffectiveConfig         *config.Config
 	EffectiveConfigProvider func() (config.Config, bool)
 	RequestRestart          func(RestartRequest) error
+	EmitDiscoveryEvents     func(context.Context, string, []json.RawMessage) error
 }
 
 type RestartRequest struct {
@@ -145,6 +147,7 @@ type discoveryRunRequest struct {
 	SubnetMask    int    `json:"subnet_mask"`
 	TimeoutMs     int    `json:"timeout_ms"`
 	ThrottleLimit int    `json:"throttle_limit"`
+	ScheduleID    string `json:"schedule_id,omitempty"`
 }
 
 type discoveryResponse struct {
@@ -156,6 +159,7 @@ type discoveryResponse struct {
 	Items       []models.Endpoint `json:"items"`
 	Logs        string            `json:"logs,omitempty"`
 	DurationMs  int64             `json:"duration_ms"`
+	changes     discoveryItemChanges
 }
 
 type discoveryStreamEvent struct {
@@ -194,6 +198,11 @@ type discoveryDelta struct {
 	Unchanged      int    `json:"unchanged"`
 }
 
+type discoveryItemChanges struct {
+	NewItems     []models.Endpoint
+	MissingItems []models.Endpoint
+}
+
 type discoverySnapshot struct {
 	SchemaVersion int                 `json:"schema_version"`
 	ScanID        string              `json:"scan_id"`
@@ -203,6 +212,55 @@ type discoverySnapshot struct {
 	Summary       endpointSummary     `json:"summary"`
 	Delta         discoveryDelta      `json:"delta"`
 	Items         []models.Endpoint   `json:"items"`
+	DurationMs    int64               `json:"duration_ms,omitempty"`
+}
+
+type discoveryScanSummary struct {
+	ScanID      string          `json:"scan_id"`
+	GeneratedAt string          `json:"generated_at"`
+	Target      string          `json:"target"`
+	ScheduleID  string          `json:"schedule_id,omitempty"`
+	Summary     endpointSummary `json:"summary"`
+	Delta       discoveryDelta  `json:"delta"`
+	DurationMs  int64           `json:"duration_ms,omitempty"`
+	FileName    string          `json:"file_name,omitempty"`
+}
+
+type discoveryHistoryIndex struct {
+	SchemaVersion int                    `json:"schema_version"`
+	Scans         []discoveryScanSummary `json:"scans"`
+}
+
+type discoveryScheduleStatus struct {
+	ID            string   `json:"id"`
+	Enabled       bool     `json:"enabled"`
+	Targets       []string `json:"targets"`
+	Frequency     string   `json:"frequency"`
+	Day           string   `json:"day"`
+	Time          string   `json:"time"`
+	Timezone      string   `json:"timezone"`
+	LastRunAt     string   `json:"last_run_at,omitempty"`
+	LastAttemptAt string   `json:"last_attempt_at,omitempty"`
+	LastError     string   `json:"last_error,omitempty"`
+	NextRunAt     string   `json:"next_run_at,omitempty"`
+	Due           bool     `json:"due"`
+}
+
+type discoveryHistoryResponse struct {
+	GeneratedAt    string                    `json:"generated_at"`
+	HistoryPath    string                    `json:"history_path"`
+	RetentionScans int                       `json:"retention_scans"`
+	RetentionDays  int                       `json:"retention_days"`
+	TotalScans     int                       `json:"total_scans"`
+	Scans          []discoveryScanSummary    `json:"scans"`
+	Schedules      []discoveryScheduleStatus `json:"schedules"`
+}
+
+type discoveryHistoryDetail struct {
+	discoverySnapshot
+	NewItems          []models.Endpoint `json:"new_items"`
+	MissingItems      []models.Endpoint `json:"missing_items"`
+	BaselineAvailable bool              `json:"baseline_available"`
 }
 
 type outputTestRequest struct {
@@ -328,6 +386,7 @@ func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 	mux.HandleFunc("/api/runtime/restart", server.handleRuntimeRestart)
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
+	mux.HandleFunc("/api/discovery/history", server.handleDiscoveryHistory)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
 	mux.Handle("/", staticHandler(staticRoot, opts.Version))
 
@@ -350,6 +409,12 @@ func newAPIServer(opts Options) *apiServer {
 	}
 	if opts.RootDir == "" {
 		opts.RootDir = "."
+	}
+	if strings.TrimSpace(opts.CollectorHost) == "" {
+		opts.CollectorHost, _ = os.Hostname()
+		if strings.TrimSpace(opts.CollectorHost) == "" {
+			opts.CollectorHost = "unknown"
+		}
 	}
 	opts.DiscoveryScriptPath = resolveDiscoveryScriptPath(opts)
 	server := &apiServer{opts: opts}
@@ -838,6 +903,7 @@ func (s *apiServer) handleDiscoveryRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	request.ScheduleID = ""
 	if err := normalizeDiscoveryRunRequest(&request); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -860,6 +926,7 @@ func (s *apiServer) handleDiscoveryStream(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	request.ScheduleID = ""
 	if err := normalizeDiscoveryRunRequest(&request); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -887,6 +954,73 @@ func (s *apiServer) handleDiscoveryStream(w http.ResponseWriter, r *http.Request
 	if err := s.streamDiscoveryRun(r.Context(), request, writeEvent); err != nil {
 		return
 	}
+}
+
+func (s *apiServer) handleDiscoveryHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	cfg, ok := s.effectiveStatusConfig()
+	if !ok {
+		var err error
+		cfg, _, err = config.LoadEditable(r.Context(), s.opts.ConfigPath, s.opts.RootDir)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+	historyPath := discoveryHistoryPath(cfg, s.opts.ConfigPath)
+	index, err := loadDiscoveryHistoryIndex(historyPath)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if scanID := strings.TrimSpace(r.URL.Query().Get("scan_id")); scanID != "" {
+		snapshot, err := loadDiscoverySnapshot(historyPath, index, scanID)
+		if errors.Is(err, os.ErrNotExist) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "discovery scan was not found"})
+			return
+		}
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		detail := discoveryHistoryDetail{discoverySnapshot: snapshot}
+		if snapshot.Delta.PreviousScanID == "" {
+			detail.BaselineAvailable = true
+			detail.NewItems = append([]models.Endpoint(nil), snapshot.Items...)
+		} else if previous, previousErr := loadDiscoverySnapshot(historyPath, index, snapshot.Delta.PreviousScanID); previousErr == nil {
+			detail.BaselineAvailable = true
+			detail.NewItems, detail.MissingItems = calculateDiscoveryItemChanges(previous.Items, snapshot.Items)
+		}
+		writeJSON(w, http.StatusOK, detail)
+		return
+	}
+
+	limit := 50
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		if parsed, parseErr := strconv.Atoi(rawLimit); parseErr == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	scans := append([]discoveryScanSummary(nil), index.Scans...)
+	total := len(scans)
+	if len(scans) > limit {
+		scans = scans[:limit]
+	}
+	for index := range scans {
+		scans[index].FileName = ""
+	}
+	writeJSON(w, http.StatusOK, discoveryHistoryResponse{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		HistoryPath: historyPath, RetentionScans: cfg.Discovery.RetentionScans,
+		RetentionDays: cfg.Discovery.RetentionDays, TotalScans: total, Scans: scans,
+		Schedules: discoveryScheduleStatuses(cfg, historyPath, time.Now()),
+	})
 }
 
 func (s *apiServer) handleOutputTest(w http.ResponseWriter, r *http.Request) {
@@ -997,6 +1131,9 @@ func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunReques
 	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
 		return discoveryResponse{}, fmt.Errorf("persist discovery history: %w", err)
 	}
+	if err := s.emitDiscoveryEvents(ctx, request, response); err != nil {
+		return discoveryResponse{}, fmt.Errorf("discovery completed and history was retained locally, but configured event output could not accept the evidence: %w", err)
+	}
 	return response, nil
 }
 
@@ -1094,6 +1231,11 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 		_ = emit(discoveryStreamEvent{Type: "error", SummaryText: result.Progress.SummaryText, Logs: result.Logs, Error: streamErr.Error()})
 		return streamErr
 	}
+	if err := s.emitDiscoveryEvents(ctx, request, response); err != nil {
+		streamErr := fmt.Errorf("discovery completed and history was retained locally, but configured event output could not accept the evidence: %w", err)
+		_ = emit(discoveryStreamEvent{Type: "error", SummaryText: result.Progress.SummaryText, Logs: result.Logs, Error: streamErr.Error()})
+		return streamErr
+	}
 	return emit(discoveryStreamEvent{
 		Type:        "complete",
 		GeneratedAt: response.GeneratedAt,
@@ -1187,6 +1329,7 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 		_ = json.Unmarshal(data, &previous)
 	}
 	response.Delta = calculateDiscoveryDelta(previous, response.Items)
+	response.changes.NewItems, response.changes.MissingItems = calculateDiscoveryItemChanges(previous.Items, response.Items)
 
 	snapshot := discoverySnapshot{
 		SchemaVersion: 1,
@@ -1197,6 +1340,7 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 		Summary:       response.Summary,
 		Delta:         response.Delta,
 		Items:         response.Items,
+		DurationMs:    response.DurationMs,
 	}
 	stamp := strings.NewReplacer("-", "", ":", "").Replace(response.GeneratedAt)
 	stamp = strings.TrimSuffix(stamp, "Z")
@@ -1207,7 +1351,162 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 	if err := writeJSONAtomic(targetLatestPath, snapshot); err != nil {
 		return err
 	}
-	return writeJSONAtomic(filepath.Join(historyPath, "latest.json"), snapshot)
+	if err := writeJSONAtomic(filepath.Join(historyPath, "latest.json"), snapshot); err != nil {
+		return err
+	}
+	index, err := loadDiscoveryHistoryIndex(historyPath)
+	if err != nil {
+		return err
+	}
+	current := discoveryScanSummaryFromSnapshot(snapshot, filepath.Base(scanPath))
+	replaced := false
+	for position := range index.Scans {
+		if index.Scans[position].ScanID == current.ScanID {
+			index.Scans[position] = current
+			replaced = true
+			break
+		}
+	}
+	if !replaced {
+		index.Scans = append(index.Scans, current)
+	}
+	sortDiscoveryScanSummaries(index.Scans)
+	if err := pruneDiscoveryHistory(historyPath, &index, cfg.Discovery.RetentionScans, cfg.Discovery.RetentionDays, time.Now()); err != nil {
+		return err
+	}
+	return writeJSONAtomic(filepath.Join(historyPath, "history_index.json"), index)
+}
+
+func (s *apiServer) emitDiscoveryEvents(ctx context.Context, request discoveryRunRequest, response discoveryResponse) error {
+	if s.opts.EmitDiscoveryEvents == nil {
+		return nil
+	}
+	cycleID := "discovery-" + response.ScanID
+	baselineAvailable := response.Delta.PreviousScanID != ""
+	events := make([]json.RawMessage, 0, len(response.Items)+len(response.changes.MissingItems)+1)
+	summary := models.DiscoveryScanEvent{
+		SchemaVersion: models.SchemaVersion,
+		EventID: stableDiscoveryEventID(
+			s.opts.CollectorID, response.ScanID, response.Target, "scan_summary",
+		),
+		CollectorID:       s.opts.CollectorID,
+		CollectorHost:     s.opts.CollectorHost,
+		CycleID:           cycleID,
+		Timestamp:         response.GeneratedAt,
+		RecordType:        "discovery_scan_summary",
+		EvidenceKind:      "icmp_subnet_discovery",
+		ScanID:            response.ScanID,
+		PreviousScanID:    response.Delta.PreviousScanID,
+		ScheduleID:        request.ScheduleID,
+		TargetNetwork:     response.Target,
+		BaselineAvailable: baselineAvailable,
+		EndpointsObserved: len(response.Items),
+		NewEndpoints:      response.Delta.New,
+		MissingEndpoints:  response.Delta.Missing,
+		Unchanged:         response.Delta.Unchanged,
+		ScanDurationMs:    response.DurationMs,
+		TimeoutMs:         request.TimeoutMs,
+		ThrottleLimit:     request.ThrottleLimit,
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return err
+	}
+	events = append(events, encoded)
+
+	newByIP := make(map[string]struct{}, len(response.changes.NewItems))
+	for _, endpoint := range response.changes.NewItems {
+		newByIP[normalizedDiscoveryIP(endpoint.IP)] = struct{}{}
+	}
+	for _, endpoint := range response.Items {
+		deltaStatus := "unchanged"
+		if _, isNew := newByIP[normalizedDiscoveryIP(endpoint.IP)]; isNew {
+			deltaStatus = "new"
+		}
+		event, buildErr := s.discoveryEndpointEvent(request, response, endpoint, deltaStatus, true, baselineAvailable)
+		if buildErr != nil {
+			return buildErr
+		}
+		events = append(events, event)
+	}
+	for _, endpoint := range response.changes.MissingItems {
+		event, buildErr := s.discoveryEndpointEvent(request, response, endpoint, "missing", false, baselineAvailable)
+		if buildErr != nil {
+			return buildErr
+		}
+		events = append(events, event)
+	}
+	return s.opts.EmitDiscoveryEvents(ctx, cycleID, events)
+}
+
+func (s *apiServer) discoveryEndpointEvent(
+	request discoveryRunRequest,
+	response discoveryResponse,
+	endpoint models.Endpoint,
+	deltaStatus string,
+	observed bool,
+	baselineAvailable bool,
+) (json.RawMessage, error) {
+	discoveryStatus := "observed"
+	if !observed {
+		discoveryStatus = "not_observed"
+	}
+	source := strings.TrimSpace(endpoint.DiscoverySource)
+	if source == "" {
+		source = "icmp_subnet_scan"
+	}
+	event := models.DiscoveryEvent{
+		SchemaVersion:       models.SchemaVersion,
+		EventID:             stableDiscoveryEventID(s.opts.CollectorID, response.ScanID, endpoint.IP, deltaStatus),
+		CollectorID:         s.opts.CollectorID,
+		CollectorHost:       s.opts.CollectorHost,
+		CycleID:             "discovery-" + response.ScanID,
+		Timestamp:           response.GeneratedAt,
+		RecordType:          "discovery_observation",
+		EvidenceKind:        "icmp_subnet_discovery",
+		ScanID:              response.ScanID,
+		PreviousScanID:      response.Delta.PreviousScanID,
+		ScheduleID:          request.ScheduleID,
+		TargetNetwork:       response.Target,
+		TargetIP:            endpoint.IP,
+		EndpointID:          models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
+		Hostname:            endpoint.Hostname,
+		FQDN:                endpoint.FQDN,
+		Dev:                 endpoint.Dev,
+		MonitoringEnabled:   endpoint.IsMonitoringEnabled(),
+		MaintenanceUntil:    endpoint.MaintenanceUntil,
+		MaintenanceReason:   endpoint.MaintenanceReason,
+		Group:               endpoint.Group,
+		Description:         endpoint.Description,
+		EntityType:          endpoint.EntityType,
+		Device:              endpoint.Device,
+		Vendor:              endpoint.Vendor,
+		Notes:               endpoint.AdditionalNotes,
+		DNSStatus:           endpoint.DNSStatus,
+		DNSForwardConfirmed: endpoint.DNSForwardConfirmed,
+		DiscoveredAt:        endpoint.DiscoveredAt,
+		DiscoverySource:     source,
+		DiscoveryLatencyMs:  endpoint.DiscoveryLatencyMs,
+		DiscoveryStatus:     discoveryStatus,
+		DiscoveryDelta:      deltaStatus,
+		DiscoveryObserved:   observed,
+		BaselineAvailable:   baselineAvailable,
+		ScanDurationMs:      response.DurationMs,
+	}
+	return json.Marshal(event)
+}
+
+func stableDiscoveryEventID(parts ...string) string {
+	normalized := make([]string, len(parts))
+	for index, part := range parts {
+		normalized[index] = strings.ToLower(strings.TrimSpace(part))
+	}
+	sum := sha256.Sum256([]byte(strings.Join(normalized, "|")))
+	return "discovery_" + hex.EncodeToString(sum[:16])
+}
+
+func normalizedDiscoveryIP(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func calculateDiscoveryDelta(previous discoverySnapshot, current []models.Endpoint) discoveryDelta {
@@ -1232,6 +1531,158 @@ func calculateDiscoveryDelta(previous discoverySnapshot, current []models.Endpoi
 		}
 	}
 	return delta
+}
+
+func calculateDiscoveryItemChanges(previous []models.Endpoint, current []models.Endpoint) ([]models.Endpoint, []models.Endpoint) {
+	previousByIP := make(map[string]models.Endpoint, len(previous))
+	currentByIP := make(map[string]models.Endpoint, len(current))
+	for _, endpoint := range previous {
+		previousByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))] = endpoint
+	}
+	for _, endpoint := range current {
+		currentByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))] = endpoint
+	}
+	newItems := make([]models.Endpoint, 0)
+	missingItems := make([]models.Endpoint, 0)
+	for _, endpoint := range current {
+		if _, exists := previousByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))]; !exists {
+			newItems = append(newItems, endpoint)
+		}
+	}
+	for _, endpoint := range previous {
+		if _, exists := currentByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))]; !exists {
+			missingItems = append(missingItems, endpoint)
+		}
+	}
+	return newItems, missingItems
+}
+
+func discoveryScanSummaryFromSnapshot(snapshot discoverySnapshot, fileName string) discoveryScanSummary {
+	return discoveryScanSummary{
+		ScanID: snapshot.ScanID, GeneratedAt: snapshot.GeneratedAt, Target: snapshot.Target,
+		ScheduleID: snapshot.Request.ScheduleID, Summary: snapshot.Summary, Delta: snapshot.Delta,
+		DurationMs: snapshot.DurationMs, FileName: fileName,
+	}
+}
+
+func sortDiscoveryScanSummaries(scans []discoveryScanSummary) {
+	sort.SliceStable(scans, func(i, j int) bool {
+		left, leftErr := time.Parse(time.RFC3339, scans[i].GeneratedAt)
+		right, rightErr := time.Parse(time.RFC3339, scans[j].GeneratedAt)
+		if leftErr == nil && rightErr == nil {
+			return left.After(right)
+		}
+		return scans[i].GeneratedAt > scans[j].GeneratedAt
+	})
+}
+
+func loadDiscoveryHistoryIndex(historyPath string) (discoveryHistoryIndex, error) {
+	index := discoveryHistoryIndex{SchemaVersion: 1, Scans: []discoveryScanSummary{}}
+	indexPath := filepath.Join(historyPath, "history_index.json")
+	if data, err := os.ReadFile(indexPath); err == nil {
+		if json.Unmarshal(data, &index) == nil && index.SchemaVersion == 1 {
+			if index.Scans == nil {
+				index.Scans = []discoveryScanSummary{}
+			}
+			sortDiscoveryScanSummaries(index.Scans)
+			return index, nil
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return index, err
+	}
+
+	scansPath := filepath.Join(historyPath, "scans")
+	entries, err := os.ReadDir(scansPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return index, nil
+	}
+	if err != nil {
+		return index, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(scansPath, entry.Name()))
+		if readErr != nil {
+			return index, readErr
+		}
+		var snapshot discoverySnapshot
+		if unmarshalErr := json.Unmarshal(data, &snapshot); unmarshalErr != nil {
+			return index, fmt.Errorf("read discovery history %s: %w", entry.Name(), unmarshalErr)
+		}
+		index.Scans = append(index.Scans, discoveryScanSummaryFromSnapshot(snapshot, entry.Name()))
+	}
+	sortDiscoveryScanSummaries(index.Scans)
+	return index, nil
+}
+
+func loadDiscoverySnapshot(historyPath string, index discoveryHistoryIndex, scanID string) (discoverySnapshot, error) {
+	for _, summary := range index.Scans {
+		if summary.ScanID != scanID || summary.FileName == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(historyPath, "scans", filepath.Base(summary.FileName)))
+		if err != nil {
+			return discoverySnapshot{}, err
+		}
+		var snapshot discoverySnapshot
+		if err := json.Unmarshal(data, &snapshot); err != nil {
+			return discoverySnapshot{}, err
+		}
+		if snapshot.ScanID == scanID {
+			return snapshot, nil
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(historyPath, "scans"))
+	if err != nil {
+		return discoverySnapshot{}, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			continue
+		}
+		data, readErr := os.ReadFile(filepath.Join(historyPath, "scans", entry.Name()))
+		if readErr != nil {
+			return discoverySnapshot{}, readErr
+		}
+		var snapshot discoverySnapshot
+		if json.Unmarshal(data, &snapshot) == nil && snapshot.ScanID == scanID {
+			return snapshot, nil
+		}
+	}
+	return discoverySnapshot{}, os.ErrNotExist
+}
+
+func pruneDiscoveryHistory(historyPath string, index *discoveryHistoryIndex, retentionScans int, retentionDays int, now time.Time) error {
+	if retentionScans <= 0 && retentionDays <= 0 {
+		return nil
+	}
+	sortDiscoveryScanSummaries(index.Scans)
+	cutoff := time.Time{}
+	if retentionDays > 0 {
+		cutoff = now.AddDate(0, 0, -retentionDays)
+	}
+	kept := make([]discoveryScanSummary, 0, len(index.Scans))
+	for position, summary := range index.Scans {
+		remove := retentionScans > 0 && position >= retentionScans
+		if !remove && !cutoff.IsZero() {
+			if generatedAt, err := time.Parse(time.RFC3339, summary.GeneratedAt); err == nil && generatedAt.Before(cutoff) {
+				remove = true
+			}
+		}
+		if !remove {
+			kept = append(kept, summary)
+			continue
+		}
+		if summary.FileName != "" {
+			if err := os.Remove(filepath.Join(historyPath, "scans", filepath.Base(summary.FileName))); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		}
+	}
+	index.Scans = kept
+	return nil
 }
 
 func sanitizeFileComponent(value string) string {
@@ -1370,6 +1821,7 @@ func (s *apiServer) runScheduledDiscovery(ctx context.Context, schedule config.D
 			TargetNetwork: target,
 			TimeoutMs:     schedule.TimeoutMs,
 			ThrottleLimit: schedule.Concurrency,
+			ScheduleID:    schedule.ID,
 		}
 		if err := normalizeDiscoveryRunRequest(&request); err != nil {
 			return err
@@ -1379,6 +1831,42 @@ func (s *apiServer) runScheduledDiscovery(ctx context.Context, schedule config.D
 		}
 	}
 	return nil
+}
+
+func discoveryScheduleStatuses(cfg config.Config, historyPath string, now time.Time) []discoveryScheduleStatus {
+	states := make(map[string]discoveryScheduleRunState)
+	if data, err := os.ReadFile(filepath.Join(historyPath, "schedule_state.json")); err == nil {
+		_ = json.Unmarshal(data, &states)
+	}
+	statuses := make([]discoveryScheduleStatus, 0, len(cfg.Discovery.Schedules))
+	for _, schedule := range cfg.Discovery.Schedules {
+		state := states[schedule.ID]
+		status := discoveryScheduleStatus{
+			ID: schedule.ID, Enabled: schedule.Enabled, Targets: append([]string(nil), schedule.Targets...),
+			Frequency: schedule.Frequency, Day: schedule.Day, Time: schedule.Time, Timezone: schedule.Timezone,
+			LastError: state.LastError,
+		}
+		if !state.LastRunAt.IsZero() {
+			status.LastRunAt = state.LastRunAt.UTC().Format(time.RFC3339)
+		}
+		if !state.LastAttemptAt.IsZero() {
+			status.LastAttemptAt = state.LastAttemptAt.UTC().Format(time.RFC3339)
+		}
+		if schedule.Enabled {
+			if occurrence, err := previousScheduleOccurrence(schedule, now); err == nil {
+				status.Due = state.LastRunAt.IsZero() || state.LastRunAt.Before(occurrence)
+				next := occurrence.AddDate(0, 0, 7)
+				if status.Due {
+					next = occurrence
+				}
+				status.NextRunAt = next.UTC().Format(time.RFC3339)
+			} else if status.LastError == "" {
+				status.LastError = err.Error()
+			}
+		}
+		statuses = append(statuses, status)
+	}
+	return statuses
 }
 
 func previousScheduleOccurrence(schedule config.DiscoverySchedule, now time.Time) (time.Time, error) {

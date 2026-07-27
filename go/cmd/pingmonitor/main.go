@@ -17,6 +17,7 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/identity"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/singleinstance"
@@ -97,6 +98,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
 		os.Exit(2)
 	}
+	collectorHost, _ := os.Hostname()
+	if strings.TrimSpace(collectorHost) == "" {
+		collectorHost = "unknown"
+	}
 
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -119,11 +124,18 @@ func main() {
 		endpointsRevision, _ := revision.File(resolvedEndpointsPath)
 		editableEndpoints, _ := config.LoadEditableEndpoints(resolvedEndpointsPath)
 		runtimeTracker := runtimeinfo.New("ui_only", configRevision, endpointsRevision, len(editableEndpoints))
+		manager, managerErr := output.NewManager(cfg, collectorHost, collectorID)
+		if managerErr != nil {
+			fmt.Fprintf(os.Stderr, "output pipeline initialization failed: %v\n", managerErr)
+			os.Exit(2)
+		}
+		outputs := newOutputManagerStore(manager)
+		defer outputs.ClearAndClose()
 		warnIfRemoteUI(*uiListen)
 		if err := webui.Start(ctx, webui.Options{
 			ListenAddr: *uiListen, ConfigPath: resolvedConfigPath, EndpointsPath: resolvedEndpointsPath,
-			RootDir: root, Version: buildinfo.Version, CollectorID: collectorID, Runtime: runtimeTracker,
-			EffectiveConfig: &cfg,
+			RootDir: root, Version: buildinfo.Version, CollectorID: collectorID, CollectorHost: collectorHost,
+			Runtime: runtimeTracker, EffectiveConfig: &cfg, EmitDiscoveryEvents: outputs.Emit,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
 			os.Exit(2)
@@ -140,6 +152,13 @@ func main() {
 	}
 	runtimeTracker := runtimeinfo.New("monitor", deployment.ConfigRevision, deployment.EndpointsRevision, len(deployment.Endpoints))
 	effectiveConfig := newEffectiveConfigStore(deployment.Config)
+	manager, err := output.NewManager(deployment.Config, collectorHost, collectorID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "output pipeline initialization failed: %v\n", err)
+		os.Exit(2)
+	}
+	outputs := newOutputManagerStore(manager)
+	defer outputs.ClearAndClose()
 	restartRequests := make(chan webui.RestartRequest, 1)
 	requestRestart := func(request webui.RestartRequest) error {
 		select {
@@ -159,10 +178,12 @@ func main() {
 			RootDir:                 root,
 			Version:                 buildinfo.Version,
 			CollectorID:             collectorID,
+			CollectorHost:           collectorHost,
 			Runtime:                 runtimeTracker,
 			EffectiveConfig:         &deployment.Config,
 			EffectiveConfigProvider: effectiveConfig.Get,
 			RequestRestart:          requestRestart,
+			EmitDiscoveryEvents:     outputs.Emit,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
@@ -175,13 +196,15 @@ func main() {
 			RootDir:                 root,
 			Version:                 buildinfo.Version,
 			CollectorID:             collectorID,
+			CollectorHost:           collectorHost,
 			Runtime:                 runtimeTracker,
 			EffectiveConfig:         &deployment.Config,
 			EffectiveConfigProvider: effectiveConfig.Get,
+			EmitDiscoveryEvents:     outputs.Emit,
 		})
 	}
 
-	err = runMonitorLoop(ctx, deployment, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode, collectorID, *runOnce, *maxCycles, runtimeTracker, effectiveConfig, restartRequests)
+	err = runMonitorLoop(ctx, deployment, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode, collectorHost, collectorID, *runOnce, *maxCycles, runtimeTracker, effectiveConfig, outputs, restartRequests)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "shutdown requested")

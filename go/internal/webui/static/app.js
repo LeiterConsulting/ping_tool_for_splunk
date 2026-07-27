@@ -47,6 +47,15 @@ const state = {
     selectedIndices: new Set(),
     mergeMode: 'skip_existing',
     abortController: null,
+    history: {
+      loading: false,
+      scans: [],
+      schedules: [],
+      totalScans: 0,
+      retentionScans: 0,
+      retentionDays: 0,
+      historyPath: '',
+    },
   },
 };
 
@@ -163,6 +172,11 @@ const elements = {
   discoveryPrevPageButton: document.getElementById('discovery-prev-page'),
   discoveryPageStatus: document.getElementById('discovery-page-status'),
   discoveryNextPageButton: document.getElementById('discovery-next-page'),
+  refreshDiscoveryHistoryButton: document.getElementById('refresh-discovery-history-button'),
+  discoveryScheduleStatuses: document.getElementById('discovery-schedule-statuses'),
+  discoveryHistoryStatus: document.getElementById('discovery-history-status'),
+  discoveryRetentionStatus: document.getElementById('discovery-retention-status'),
+  discoveryHistoryRows: document.getElementById('discovery-history-rows'),
   discoveryInputs: {
     targetNetwork: document.getElementById('discovery-target-network'),
     subnetMask: document.getElementById('discovery-subnet-mask'),
@@ -194,6 +208,8 @@ const elements = {
     discoveryEnabled: document.getElementById('cfg-discovery-enabled'),
     discoveryID: document.getElementById('cfg-discovery-id'),
     discoveryHistoryPath: document.getElementById('cfg-discovery-history-path'),
+    discoveryRetentionScans: document.getElementById('cfg-discovery-retention-scans'),
+    discoveryRetentionDays: document.getElementById('cfg-discovery-retention-days'),
     discoveryTargets: document.getElementById('cfg-discovery-targets'),
     discoveryDay: document.getElementById('cfg-discovery-day'),
     discoveryTime: document.getElementById('cfg-discovery-time'),
@@ -276,6 +292,15 @@ const settingsPanelHelp = {
       'The ping mode matters most on locked-down hosts where raw ICMP may be unavailable.',
     ],
   ),
+  'Weekly Discovery Schedule': panelHelp(
+    'Weekly Discovery Schedule',
+    'Runs bounded subnet discovery on a weekly calendar and stores the results for review without automatically changing monitored inventory.',
+    [
+      'A scheduled result is discovery evidence, not a declaration that an asset should be monitored or removed.',
+      'Missed occurrences are eligible for catch-up after collector startup. Schedule status and errors appear in Discovery Operations.',
+      'Use retention controls to keep long-running discovery history bounded.',
+    ],
+  ),
   Diagnostics: panelHelp(
     'Diagnostics',
     'Turns on troubleshooting-oriented runtime output. These settings add operational visibility; they do not change ping math or endpoint state.',
@@ -299,6 +324,14 @@ const settingsPanelHelp = {
     [
       'Use this card when you want mstats-friendly data or a dual event-plus-metrics deployment.',
       'Compatibility and metrics-index mode affect how Splunk should query the resulting payloads.',
+    ],
+  ),
+  'Durable Delivery': panelHelp(
+    'Durable Delivery',
+    'Controls the disk-backed outbox that protects unsent event and metrics envelopes during Splunk outages.',
+    [
+      'The outbox decouples measurement from delivery so a temporary HEC failure does not silently erase observations.',
+      'Capacity limits protect the collector host from unbounded disk use. Exhaustion is reported as a delivery fault and should be alerted on.',
     ],
   ),
 };
@@ -343,6 +376,7 @@ const settingsFieldHelp = {
       'file writes only to the local NDJSON log file.',
       'hec sends only to the Splunk event HEC endpoint.',
       'both keeps local logging and HEC delivery active together.',
+      'Discovery scan summaries and per-IP evidence use this same event pipeline in v5.10 and later.',
     ],
   ),
   'cfg-ping-mode': helpTopic(
@@ -367,6 +401,92 @@ const settingsFieldHelp = {
     'Sets the maximum local file size before the runtime rotates the file-based output log.',
     positiveIntegerFormat,
     ['Use a lower value when local disk churn matters more than keeping a longer uninterrupted file history.'],
+  ),
+  'cfg-log-retention-files': helpTopic(
+    'Retain Rotated Files',
+    'Caps the number of rotated result-log archives kept beside the active log.',
+    nonNegativeIntegerFormat,
+    ['0 preserves all rotated archives. That is backward compatible but allows total directory use to grow without a count bound.'],
+  ),
+  'cfg-log-retention-days': helpTopic(
+    'Retain Rotated Logs (days)',
+    'Removes rotated result-log archives older than the configured age.',
+    nonNegativeIntegerFormat,
+    ['0 disables age-based removal. When count and age are both set, an archive is removed when either limit excludes it.'],
+  ),
+  'cfg-log-compress-rotated': helpTopic(
+    'Compress Rotated Logs',
+    'Gzip-compresses closed result-log archives after the active writer has safely reopened.',
+    checkboxFormat,
+    ['Compression reduces disk use and never changes the active NDJSON file.'],
+  ),
+  'cfg-discovery-enabled': helpTopic(
+    'Enable Weekly Discovery',
+    'Enables the primary weekly subnet-discovery schedule.',
+    checkboxFormat,
+    ['Saving this setting requires collector restart before the monitoring runtime uses the new schedule. Scheduled imports always remain review-only.'],
+  ),
+  'cfg-discovery-id': helpTopic(
+    'Discovery Schedule ID',
+    'Provides a stable name used to track schedule state, errors, and the source of retained scans.',
+    'Non-empty text, unique across schedules.',
+    ['Keep the ID stable so operational history remains attributable after configuration edits.'],
+  ),
+  'cfg-discovery-history-path': helpTopic(
+    'Discovery History Path',
+    'Stores durable scan snapshots, the compact history index, per-target baselines, and schedule state.',
+    filePathFormat,
+    ['The service account needs create, read, replace, and delete access when retention is enabled.'],
+  ),
+  'cfg-discovery-retention-scans': helpTopic(
+    'Retain Most Recent Scans',
+    'Caps discovery history by the number of completed target scans retained across schedules.',
+    nonNegativeIntegerFormat,
+    ['0 disables the count limit. On deployments with many targets, choose a value large enough to retain at least the desired number of weekly observations per target.'],
+  ),
+  'cfg-discovery-retention-days': helpTopic(
+    'Retain Scan History (days)',
+    'Removes discovery scan snapshots older than the configured number of days.',
+    nonNegativeIntegerFormat,
+    ['0 disables the age limit. New versioned configurations default to 365 days; legacy files remain unchanged until explicitly configured.'],
+  ),
+  'cfg-discovery-targets': helpTopic(
+    'Discovery Target Networks',
+    'Lists the IPv4 CIDR networks scanned by the weekly schedule.',
+    'One IPv4 CIDR per line, from /16 through /30.',
+    [
+      'A whole /8 is intentionally rejected because it contains more than 16 million addresses.',
+      'Each target produces independent history and new/missing deltas.',
+    ],
+  ),
+  'cfg-discovery-day': helpTopic(
+    'Discovery Day',
+    'Selects the weekday for the schedule in its configured timezone.',
+    'Sunday through Saturday.',
+  ),
+  'cfg-discovery-time': helpTopic(
+    'Discovery Local Time',
+    'Selects the 24-hour wall-clock time in the configured schedule timezone.',
+    'HH:MM.',
+    ['A missed occurrence is eligible for catch-up after collector startup.'],
+  ),
+  'cfg-discovery-timezone': helpTopic(
+    'Discovery Timezone',
+    'Defines which timezone interprets the configured weekday and time.',
+    'Local or an IANA timezone such as America/New_York.',
+    ['Use an explicit IANA timezone when daylight-saving behavior must follow a specific location.'],
+  ),
+  'cfg-discovery-schedule-timeout': helpTopic(
+    'Scheduled Discovery Timeout',
+    'Sets how long each discovery ICMP attempt waits before the address is considered unobserved for that scan.',
+    'Whole number milliseconds, 100 or higher.',
+    ['An unobserved address is not automatically down or decommissioned; firewalls and transient loss can also suppress a response.'],
+  ),
+  'cfg-discovery-concurrency': helpTopic(
+    'Scheduled Discovery Concurrency',
+    'Caps how many target addresses the discovery script probes concurrently within one network.',
+    positiveIntegerFormat,
+    ['Higher values shorten scans but increase burst load on the collector and network. Scheduled target networks are processed one at a time.'],
   ),
   'cfg-diagnostics-enabled': helpTopic(
     'Enable Runtime Diagnostics Output',
@@ -496,6 +616,29 @@ const settingsFieldHelp = {
       'exponential doubles the delay between attempts up to the runtime cap.',
     ],
   ),
+  'cfg-hec-use-ack': helpTopic(
+    'Require HEC Indexer Acknowledgement',
+    'Waits for Splunk to confirm that accepted event batches reached the indexing pipeline.',
+    checkboxFormat,
+    ['This improves delivery certainty but adds HEC channel state, polling, and latency. Splunk HEC acknowledgement must be enabled server-side.'],
+  ),
+  'cfg-hec-ack-timeout': helpTopic(
+    'HEC ACK Timeout',
+    'Limits how long the collector waits for indexer acknowledgement before treating delivery as failed.',
+    positiveIntegerFormat,
+    ['Timeout is measured in seconds. A timeout causes durable retry behavior; it does not change the underlying ping observation.'],
+  ),
+  'cfg-hec-ack-poll': helpTopic(
+    'HEC ACK Poll Interval',
+    'Controls how often the collector asks Splunk whether an acknowledged batch has been indexed.',
+    'Whole number milliseconds, 50 or higher.',
+  ),
+  'cfg-hec-channel': helpTopic(
+    'HEC ACK Channel',
+    'Provides the stable channel identifier required by Splunk indexer acknowledgement.',
+    'Text channel identifier.',
+    ['Use a channel unique to this collector instance to avoid acknowledgement-state collisions.'],
+  ),
   'cfg-metrics-enabled': helpTopic(
     'Enable Metrics Delivery',
     'Turns on the metrics output pipeline for summary data.',
@@ -510,6 +653,7 @@ const settingsFieldHelp = {
     [
       'dual keeps the normal event stream and also emits metrics.',
       'metrics_only suppresses event summaries and emits metrics only.',
+      'Discovery observations have no metrics equivalent. Use dual when the Splunk Discovery Inventory dashboard must receive scan evidence.',
     ],
   ),
   'cfg-metrics-index': helpTopic(
@@ -585,6 +729,218 @@ const settingsFieldHelp = {
     [
       'When enabled, the runtime forces event_name to metric and does not use the legacy compatibility payload shape.',
       'Use this only when the target index is a true Splunk metrics index.',
+    ],
+  ),
+  'cfg-metrics-use-ack': helpTopic(
+    'Require Metrics HEC Acknowledgement',
+    'Waits for Splunk to acknowledge metrics batches before they are considered durably delivered.',
+    checkboxFormat,
+    ['Enable only when the metrics HEC input supports indexer acknowledgement.'],
+  ),
+  'cfg-metrics-ack-timeout': helpTopic(
+    'Metrics ACK Timeout',
+    'Limits how long the collector waits for metrics indexer acknowledgement.',
+    positiveIntegerFormat,
+  ),
+  'cfg-metrics-ack-poll': helpTopic(
+    'Metrics ACK Poll Interval',
+    'Controls how frequently acknowledgement state is checked for metrics batches.',
+    'Whole number milliseconds, 50 or higher.',
+  ),
+  'cfg-metrics-channel': helpTopic(
+    'Metrics ACK Channel',
+    'Provides the stable channel identifier used for metrics indexer acknowledgement.',
+    'Text channel identifier unique to this collector.',
+  ),
+  'cfg-delivery-spool-path': helpTopic(
+    'Durable Outbox Path',
+    'Stores unsent delivery envelopes on disk so temporary Splunk outages do not erase observations.',
+    filePathFormat,
+    ['Place this on reliable local storage and grant the collector service account read, create, replace, and delete permissions.'],
+  ),
+  'cfg-delivery-max-bytes': helpTopic(
+    'Maximum Outbox Size',
+    'Caps total disk space used by queued delivery envelopes.',
+    byteSizeFormat,
+    ['When the cap is exhausted, delivery health becomes unhealthy. This protects the host but means new output cannot be durably queued indefinitely.'],
+  ),
+  'cfg-delivery-max-envelopes': helpTopic(
+    'Maximum Outbox Envelopes',
+    'Caps the number of queued event or metrics batches independently of their total byte size.',
+    positiveIntegerFormat,
+  ),
+  'cfg-delivery-drain-max': helpTopic(
+    'Drain Limit Per Pass',
+    'Limits how many queued envelopes are retried during one outbox drain pass.',
+    positiveIntegerFormat,
+    ['This prevents recovery traffic from monopolizing the collector after a long Splunk outage.'],
+  ),
+};
+
+const interfacePanelHelp = {
+  'Endpoint Editor': panelHelp(
+    'Endpoint Editor',
+    'Edits the monitored inventory and its explicit monitoring policy. Saving creates a backup and requests an in-process inventory reload.',
+    [
+      'Dev is classification only. It changes event routing and production rollups but does not stop probes.',
+      'Pause Monitoring and active maintenance windows suppress probes and emit monitoring_control evidence instead of synthetic packet loss.',
+      'Discovery provenance remains attached when reviewed results are added to the endpoint inventory.',
+    ],
+  ),
+  'Discovery Controls': panelHelp(
+    'Discovery Controls',
+    'Runs a bounded, operator-initiated IPv4 ICMP scan and stages responding addresses for review.',
+    [
+      'Discovery records an observation, latency, and DNS evidence. No response is not proof that an asset does not exist.',
+      'Running a scan never changes endpoints.csv by itself.',
+    ],
+  ),
+  'Discovery Results': panelHelp(
+    'Discovery Results',
+    'Shows the current manual scan or a retained historical result set before CSV export or reviewed import.',
+    [
+      'Selecting Add to Device List changes only the in-browser endpoint draft; Save Endpoints is still required.',
+      'FQDN is reverse-DNS evidence with forward-confirmation status, not an authoritative asset identity.',
+      'CSV exports contain the full discovery provenance schema, quote every field, and neutralize spreadsheet formula prefixes in discovery-controlled text.',
+    ],
+  ),
+  'Discovery Operations': panelHelp(
+    'Discovery Operations',
+    'Shows weekly schedule health and durable scan history, including new and missing deltas against the prior scan for the same target.',
+    [
+      'New means observed now but not in the prior retained baseline.',
+      'Missing means observed previously but not now. It must not be interpreted as confirmed downtime, deletion, or decommissioning.',
+      'All, New, and Missing load a retained evidence set into the normal review/export workflow.',
+      'Each completed scan is also accepted by the configured event output pipeline as a scan summary plus per-IP evidence for the Splunk Discovery Inventory dashboard.',
+    ],
+  ),
+  'Current schedule': panelHelp(
+    'Current Schedule Capacity',
+    'Models whether the configured workers can finish all worst-case endpoint probe budgets inside one monitoring interval.',
+    ['Admission is intentionally conservative so a nominal one-minute cadence does not silently become slower under maximum timeouts.'],
+  ),
+  'Findings and recommendations': panelHelp(
+    'Findings and Recommendations',
+    'Lists all detectable inventory, capacity, output, retention, and schedule issues instead of stopping at the first error.',
+    ['Blockers prevent a safe start or restart. Warnings identify risk that remains operator-selectable.'],
+  ),
+  'Preview changes before applying': panelHelp(
+    'Preview Changes',
+    'Shows the exact configuration or inventory mutations proposed by safe fixes or an operating profile.',
+    ['Nothing is written until the operator confirms the apply action. A backup and revision check protect concurrent edits.'],
+  ),
+  'Non-SLA capacity evidence': panelHelp(
+    'Non-SLA Capacity Evidence',
+    'Benchmarks local parsing, planning, temporary writes, and loopback probes without contacting monitored endpoints or Splunk.',
+    ['Use this as host-readiness evidence, not as proof of network latency or contractor SLA performance.'],
+  ),
+};
+
+const interfaceFieldHelp = {
+  'endpoint-ip': helpTopic(
+    'Endpoint IP',
+    'Defines the literal IPv4 or IPv6 address the collector probes.',
+    'A valid IP address; DNS names are not accepted in this field.',
+    ['The IP is measurement routing, not necessarily durable asset identity in DHCP environments. Duplicate target IPs are rejected.'],
+  ),
+  'endpoint-hostname': helpTopic(
+    'Endpoint Hostname',
+    'Provides the required operator-facing short name carried into events and inventory views.',
+    'Non-empty text without tabs or line breaks.',
+    ['This label does not change which address is probed.'],
+  ),
+  'endpoint-fqdn': helpTopic(
+    'Endpoint FQDN',
+    'Stores the best available fully qualified DNS name for inventory correlation.',
+    'Optional DNS name.',
+    ['Discovery records whether forward lookup confirmed the original IP. DNS evidence can be stale or absent and should not replace a stable CMDB identity.'],
+  ),
+  'endpoint-group': helpTopic(
+    'Endpoint Group',
+    'Provides an operator-defined grouping used in events, filters, and Splunk breakdowns.',
+    'Text; blank values normalize to default.',
+  ),
+  'endpoint-description': helpTopic(
+    'Endpoint Description',
+    'Stores human-readable context about the monitored target.',
+    'Optional text.',
+  ),
+  'endpoint-entitytype': helpTopic(
+    'Entity Type',
+    'Classifies the broad asset or service type used for inventory enrichment.',
+    'Optional text such as network, server, service, or appliance.',
+  ),
+  'endpoint-device': helpTopic(
+    'Device',
+    'Stores a more specific device or platform classification.',
+    'Optional text such as router, switch, firewall, VM, or physical host.',
+  ),
+  'endpoint-vendor': helpTopic(
+    'Vendor',
+    'Stores an operator- or discovery-supplied vendor label for CMDB correlation.',
+    'Optional text.',
+    ['ICMP discovery cannot authoritatively determine manufacturer. Treat inferred values as enrichment, not measurement truth.'],
+  ),
+  'endpoint-notes': helpTopic(
+    'Additional Notes',
+    'Stores free-form operational context that travels with endpoint metadata.',
+    'Optional text.',
+  ),
+  'endpoint-dev': helpTopic(
+    'Dev Classification',
+    'Marks the endpoint as development/test for event type and production-rollup separation.',
+    checkboxFormat,
+    ['Dev endpoints are still pinged. Use Monitoring Enabled or a maintenance window when probes must stop.'],
+  ),
+  'endpoint-monitoring-enabled': helpTopic(
+    'Monitoring Enabled',
+    'Controls whether the collector schedules ICMP probes for this endpoint.',
+    checkboxFormat,
+    ['When disabled, no ping is sent. The collector emits a truthful monitoring_control record with measurement_valid=false instead of reporting artificial loss.'],
+  ),
+  'endpoint-maintenance-until': helpTopic(
+    'Maintenance Until',
+    'Suppresses probes until the specified instant, then automatically resumes monitoring.',
+    'Optional RFC3339 timestamp such as 2026-07-28T04:00:00Z.',
+    ['While active, state is maintenance and observation status is suppressed—not down.'],
+  ),
+  'endpoint-maintenance-reason': helpTopic(
+    'Maintenance Reason',
+    'Records why an endpoint is intentionally suppressed so dashboards and responders have context.',
+    'Optional text.',
+  ),
+  'discovery-target-network': helpTopic(
+    'Discovery Target Network',
+    'Selects the IPv4 network for a manual scan.',
+    'IPv4 address, IPv4 CIDR, or blank to infer the local subnet.',
+    ['CIDRs are bounded to /16 through /30. Large ranges require explicit confirmation and can generate substantial traffic and history.'],
+  ),
+  'discovery-subnet-mask': helpTopic(
+    'Discovery Subnet Mask',
+    'Controls how many addresses are considered when the target does not already include a CIDR prefix.',
+    'Whole number from 16 through 30.',
+    ['A /16 contains up to 65,534 usable host addresses; a /24 contains up to 254.'],
+  ),
+  'discovery-timeout-ms': helpTopic(
+    'Manual Discovery Timeout',
+    'Sets the per-address ICMP wait used by a manual discovery scan.',
+    'Whole number milliseconds, 100 or higher.',
+    ['Timeout is a censoring boundary. No reply may mean filtering, congestion, sleep, or absence; discovery does not label it confirmed down.'],
+  ),
+  'discovery-throttle-limit': helpTopic(
+    'Manual Discovery Throttle',
+    'Caps concurrent address probes during a manual scan.',
+    positiveIntegerFormat,
+    ['Increase carefully: higher concurrency finishes sooner but creates a larger local and network burst.'],
+  ),
+  'discovery-merge-mode': helpTopic(
+    'Duplicate Handling',
+    'Controls how reviewed discovery evidence is combined with an endpoint that already has the same IP.',
+    'Skip duplicate IPs, fill blank fields, or overwrite existing fields.',
+    [
+      'Skip preserves the existing record unchanged.',
+      'Fill blanks adds missing identity fields while preserving operator-entered values.',
+      'Overwrite replaces nonblank identity fields with reviewed discovery values; monitoring policy is not silently disabled.',
     ],
   ),
 };
@@ -777,10 +1133,12 @@ function getSettingsHelpTopic(helpKey) {
     return null;
   }
   if (helpKey.startsWith('field:')) {
-    return settingsFieldHelp[helpKey.slice(6)] || null;
+    const key = helpKey.slice(6);
+    return settingsFieldHelp[key] || interfaceFieldHelp[key] || null;
   }
   if (helpKey.startsWith('panel:')) {
-    return settingsPanelHelp[helpKey.slice(6)] || null;
+    const key = helpKey.slice(6);
+    return settingsPanelHelp[key] || interfacePanelHelp[key] || null;
   }
   return null;
 }
@@ -880,6 +1238,52 @@ function injectSettingsFieldHelpButtons() {
   });
 }
 
+function injectInterfacePanelHelpButtons() {
+  document.querySelectorAll('.panel').forEach((card) => {
+    const titleElement = card.querySelector('.panel-title');
+    const title = titleElement?.textContent?.trim();
+    if (!titleElement || !title || !interfacePanelHelp[title]) {
+      return;
+    }
+    let titleRow = titleElement.parentElement;
+    if (!titleRow || !titleRow.classList.contains('panel-title-row')) {
+      titleRow = document.createElement('div');
+      titleRow.className = 'panel-title-row';
+      titleElement.replaceWith(titleRow);
+      titleRow.appendChild(titleElement);
+    }
+    if (!titleRow.querySelector(`[data-help-key="panel:${title}"]`)) {
+      titleRow.appendChild(createSettingsHelpButton(`panel:${title}`, title, 'panel'));
+    }
+  });
+}
+
+function injectInterfaceFieldHelpButtons() {
+  Object.entries(interfaceFieldHelp).forEach(([fieldID, help]) => {
+    const field = document.getElementById(fieldID);
+    if (!(field instanceof HTMLElement)) {
+      return;
+    }
+    const container = field.closest('.field-group, .checkbox-row, .inline-field');
+    const textElement = container?.querySelector('span');
+    if (!container || !textElement) {
+      return;
+    }
+    const wrapperClass = container.classList.contains('checkbox-row') ? 'checkbox-help-row' : 'field-label-row';
+    let textRow = textElement.parentElement;
+    if (!textRow || !textRow.classList.contains(wrapperClass)) {
+      textRow = document.createElement('div');
+      textRow.className = wrapperClass;
+      textElement.replaceWith(textRow);
+      textRow.appendChild(textElement);
+    }
+    textElement.classList.add('help-label-text');
+    if (!textRow.querySelector(`[data-help-key="field:${fieldID}"]`)) {
+      textRow.appendChild(createSettingsHelpButton(`field:${fieldID}`, help.title, 'inline'));
+    }
+  });
+}
+
 function openSettingsHelp(helpKey, trigger = null) {
   const topic = getSettingsHelpTopic(helpKey);
   if (!topic || !elements.settingsHelpDialog || !elements.settingsHelpTitle || !elements.settingsHelpBody) {
@@ -961,7 +1365,7 @@ function initializeSettingsHelp() {
     settingsHelpTrigger = null;
   });
 
-  elements.settingsForm.addEventListener('click', (event) => {
+  document.body.addEventListener('click', (event) => {
     const helpButton = event.target.closest('.help-button[data-help-key]');
     if (!helpButton) {
       return;
@@ -973,6 +1377,8 @@ function initializeSettingsHelp() {
 
   injectSettingsPanelHelpButtons();
   injectSettingsFieldHelpButtons();
+  injectInterfacePanelHelpButtons();
+  injectInterfaceFieldHelpButtons();
 }
 
 function initializeAdvancedSettings() {
@@ -1678,6 +2084,162 @@ function renderDiscovery() {
   }).join('');
 }
 
+function summarizeDiscoveryItems(items) {
+  const groups = new Set();
+  let dev = 0;
+  items.forEach((endpoint) => {
+    if (endpoint.dev) {
+      dev += 1;
+    }
+    groups.add(String(endpoint.group || 'default').trim() || 'default');
+  });
+  return {
+    total: items.length,
+    production: items.length - dev,
+    dev,
+    groups: groups.size,
+  };
+}
+
+function renderDiscoveryOperations() {
+  const history = state.discovery.history;
+  if (!elements.discoveryHistoryRows || !elements.discoveryScheduleStatuses) {
+    return;
+  }
+  elements.refreshDiscoveryHistoryButton.disabled = history.loading;
+  elements.refreshDiscoveryHistoryButton.textContent = history.loading ? 'Refreshing...' : 'Refresh History';
+
+  if (history.schedules.length === 0) {
+    elements.discoveryScheduleStatuses.innerHTML = `
+      <article class="panel info-card discovery-schedule-card" data-state="disabled">
+        <p class="summary-label">Weekly Discovery</p>
+        <p class="info-value">Not configured</p>
+        <p class="summary-note">Create and enable a schedule in Configuration when recurring discovery is required.</p>
+      </article>
+    `;
+  } else {
+    elements.discoveryScheduleStatuses.innerHTML = history.schedules.map((schedule) => {
+      const stateName = schedule.last_error ? 'error' : (schedule.due ? 'due' : (schedule.enabled ? 'scheduled' : 'disabled'));
+      const headline = schedule.last_error
+        ? 'Attention required'
+        : (schedule.enabled ? (schedule.due ? 'Due / catch-up pending' : 'Scheduled') : 'Disabled');
+      const nextRun = schedule.enabled ? formatTimestamp(schedule.next_run_at, 'Schedule unavailable') : 'Disabled';
+      const lastRun = formatTimestamp(schedule.last_run_at, 'Never completed');
+      const targetCount = (schedule.targets || []).length;
+      return `
+        <article class="panel info-card discovery-schedule-card" data-state="${escapeHtml(stateName)}">
+          <p class="summary-label">${escapeHtml(schedule.id || 'Unnamed schedule')}</p>
+          <p class="info-value">${escapeHtml(headline)}</p>
+          <p class="summary-note">${pluralize(targetCount, 'target')} · ${escapeHtml(schedule.day || '')} ${escapeHtml(schedule.time || '')} ${escapeHtml(schedule.timezone || '')}</p>
+          <p class="summary-note">Last success: ${escapeHtml(lastRun)} · Next/due: ${escapeHtml(nextRun)}</p>
+          ${schedule.last_error ? `<p class="summary-note">Last error: ${escapeHtml(schedule.last_error)}</p>` : ''}
+        </article>
+      `;
+    }).join('');
+  }
+
+  const shown = history.scans.length;
+  elements.discoveryHistoryStatus.textContent = history.loading
+    ? 'Loading discovery history...'
+    : `${history.totalScans} retained scan${history.totalScans === 1 ? '' : 's'}${shown < history.totalScans ? ` · showing latest ${shown}` : ''}`;
+  const retention = [];
+  if (history.retentionScans > 0) {
+    retention.push(`latest ${history.retentionScans} scans`);
+  }
+  if (history.retentionDays > 0) {
+    retention.push(`${history.retentionDays} days`);
+  }
+  elements.discoveryRetentionStatus.textContent = retention.length > 0
+    ? `Retention: ${retention.join(' or ')}`
+    : 'Retention: unbounded';
+
+  if (history.scans.length === 0) {
+    elements.discoveryHistoryRows.innerHTML = `
+      <tr><td colspan="8" class="empty-cell">${history.loading ? 'Discovery history is loading.' : 'No completed discovery scans are retained yet.'}</td></tr>
+    `;
+    return;
+  }
+  elements.discoveryHistoryRows.innerHTML = history.scans.map((scan) => {
+    const scanID = escapeHtml(scan.scan_id || '');
+    const newCount = Number(scan.delta?.new || 0);
+    const missingCount = Number(scan.delta?.missing || 0);
+    const source = scan.schedule_id ? `Schedule: ${scan.schedule_id}` : 'Manual';
+    const duration = Number(scan.duration_ms || 0);
+    return `
+      <tr>
+        <td>${escapeHtml(formatTimestamp(scan.generated_at))}</td>
+        <td>${escapeHtml(scan.target || '-')}</td>
+        <td>${escapeHtml(source)}</td>
+        <td>${escapeHtml(scan.summary?.total ?? 0)}</td>
+        <td>${escapeHtml(newCount)}</td>
+        <td>${escapeHtml(missingCount)}</td>
+        <td>${duration > 0 ? `${escapeHtml((duration / 1000).toFixed(1))}s` : '-'}</td>
+        <td>
+          <div class="discovery-history-actions">
+            <button class="secondary-button" type="button" data-history-scan-id="${scanID}" data-history-mode="all">All</button>
+            <button class="secondary-button" type="button" data-history-scan-id="${scanID}" data-history-mode="new" ${newCount === 0 ? 'disabled' : ''}>New</button>
+            <button class="secondary-button" type="button" data-history-scan-id="${scanID}" data-history-mode="missing" ${missingCount === 0 ? 'disabled' : ''}>Missing</button>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+async function loadDiscoveryHistory(showSuccess = false) {
+  state.discovery.history.loading = true;
+  renderDiscoveryOperations();
+  try {
+    const payload = await fetchJson('/api/discovery/history?limit=100');
+    state.discovery.history.scans = payload.scans || [];
+    state.discovery.history.schedules = payload.schedules || [];
+    state.discovery.history.totalScans = Number(payload.total_scans || 0);
+    state.discovery.history.retentionScans = Number(payload.retention_scans || 0);
+    state.discovery.history.retentionDays = Number(payload.retention_days || 0);
+    state.discovery.history.historyPath = payload.history_path || '';
+    if (showSuccess) {
+      setMessage(elements.discoveryBanner, 'success', 'Discovery schedule state and retained scan history refreshed.');
+    }
+  } catch (error) {
+    setMessage(elements.discoveryBanner, 'error', error instanceof Error ? error.message : 'Unable to load discovery history.');
+  } finally {
+    state.discovery.history.loading = false;
+    renderDiscoveryOperations();
+  }
+}
+
+async function loadDiscoveryHistoryScan(scanID, mode) {
+  try {
+    const detail = await fetchJson(`/api/discovery/history?scan_id=${encodeURIComponent(scanID)}`);
+    if ((mode === 'new' || mode === 'missing') && !detail.baseline_available) {
+      throw new Error('The prior scan needed to calculate this delta is no longer retained.');
+    }
+    const sourceItems = mode === 'new'
+      ? (detail.new_items || [])
+      : (mode === 'missing' ? (detail.missing_items || []) : (detail.items || []));
+    state.discovery.items = normalizeEndpoints(sourceItems);
+    state.discovery.summary = summarizeDiscoveryItems(state.discovery.items);
+    state.discovery.delta = mode === 'all' ? (detail.delta || null) : null;
+    state.discovery.logs = mode === 'missing'
+      ? 'These addresses were observed in the prior scan but not in the selected scan. Absence is not proof of downtime or decommissioning.'
+      : `Loaded ${mode === 'new' ? 'newly observed addresses from' : 'all results from'} retained scan ${detail.scan_id}.`;
+    state.discovery.durationMs = Number(detail.duration_ms || 0);
+    state.discovery.generatedAt = detail.generated_at || '';
+    state.discovery.runState = `History: ${titleCase(mode)}`;
+    state.discovery.progressSummary = `Loaded ${state.discovery.items.length} ${mode} result${state.discovery.items.length === 1 ? '' : 's'} from ${detail.target}.`;
+    state.discovery.selectedIndices.clear();
+    setTablePage('discovery', 1);
+    renderDiscovery();
+    setMessage(
+      elements.discoveryBanner,
+      mode === 'missing' ? 'warning' : 'success',
+      `${state.discovery.progressSummary} Review, export, or explicitly add selected results to the endpoint draft.`,
+    );
+  } catch (error) {
+    setMessage(elements.discoveryBanner, 'error', error instanceof Error ? error.message : 'Unable to load the retained discovery scan.');
+  }
+}
+
 function loadConfigForm(cfg, secrets = {}) {
 	state.config = deepClone(cfg || {});
 	state.configSecrets = deepClone(secrets || {});
@@ -1705,6 +2267,8 @@ function loadConfigForm(cfg, secrets = {}) {
   elements.settingsFields.discoveryEnabled.checked = Boolean(primarySchedule.enabled);
   elements.settingsFields.discoveryID.value = primarySchedule.id || 'weekly-network-discovery';
   elements.settingsFields.discoveryHistoryPath.value = discovery.history_path || './data/discovery';
+  elements.settingsFields.discoveryRetentionScans.value = discovery.retention_scans ?? 0;
+  elements.settingsFields.discoveryRetentionDays.value = discovery.retention_days ?? 0;
   elements.settingsFields.discoveryTargets.value = (primarySchedule.targets || []).join('\n');
   elements.settingsFields.discoveryDay.value = primarySchedule.day || 'sunday';
   elements.settingsFields.discoveryTime.value = primarySchedule.time || '02:00';
@@ -1850,6 +2414,8 @@ function readConfigForm() {
     discovery: {
       ...(preserved.discovery || {}),
       history_path: readTextValue(elements.settingsFields.discoveryHistoryPath) || './data/discovery',
+      retention_scans: readNumberValue(elements.settingsFields.discoveryRetentionScans, 0),
+      retention_days: readNumberValue(elements.settingsFields.discoveryRetentionDays, 0),
       schedules: [{
         ...((preserved.discovery?.schedules || [])[0] || {}),
         id: readTextValue(elements.settingsFields.discoveryID) || 'weekly-network-discovery',
@@ -2097,6 +2663,7 @@ async function reloadAllData(showSuccess = false) {
     }
     ensureSelectedEndpoint();
     renderAll();
+    await loadDiscoveryHistory(false);
 
     if (showSuccess) {
       setMessage(elements.endpointBanner, 'success', 'Reloaded endpoints and config from disk.');
@@ -2129,6 +2696,7 @@ function renderAll() {
   renderEndpointTable();
   renderEndpointEditor();
   renderDiscovery();
+  renderDiscoveryOperations();
   renderConfigButtons();
   renderAdvisor();
 }
@@ -2514,11 +3082,6 @@ function addSelectedDiscoveryToEndpoints() {
   scrollSectionIntoView('#inventory');
 }
 
-function csvCell(value) {
-  const text = String(value ?? '');
-  return `"${text.replaceAll('"', '""')}"`;
-}
-
 function exportDiscoveryCsv(selectedOnly) {
   const indexes = selectedOnly
     ? getDiscoveryActionIndices()
@@ -2527,18 +3090,13 @@ function exportDiscoveryCsv(selectedOnly) {
     setMessage(elements.discoveryBanner, 'warning', selectedOnly ? 'Select at least one discovery result to export.' : 'Run discovery before exporting results.');
     return;
   }
-  const columns = [
-    'ip', 'hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor',
-    'additional_notes', 'dev', 'monitoring_enabled', 'maintenance_until', 'maintenance_reason',
-    'dns_status', 'dns_forward_confirmed', 'discovered_at', 'discovery_scan_id',
-    'discovery_source', 'discovery_latency_ms',
-  ];
-  const lines = [columns.map(csvCell).join(',')];
-  indexes.forEach((index) => {
-    const endpoint = state.discovery.items[index] || {};
-    lines.push(columns.map((column) => csvCell(endpoint[column])).join(','));
-  });
-  const blob = new Blob([`\uFEFF${lines.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+  const exporter = globalThis.PingMonitorDiscoveryCsv;
+  if (!exporter || typeof exporter.build !== 'function') {
+    setMessage(elements.discoveryBanner, 'error', 'The CSV export component did not load. Refresh the page and try again.');
+    return;
+  }
+  const csv = exporter.build(state.discovery.items, indexes);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement('a');
   const stamp = (state.discovery.generatedAt || new Date().toISOString()).replaceAll(':', '').replaceAll('-', '').replace(/\.\d+Z$/, 'Z');
@@ -2577,6 +3135,7 @@ function handleDiscoveryStreamEvent(event) {
       state.discovery.generatedAt = event.generated_at || new Date().toISOString();
       state.discovery.selectedIndices.clear();
       setMessage(elements.discoveryBanner, 'success', `Discovery completed with ${state.discovery.items.length} endpoint${state.discovery.items.length === 1 ? '' : 's'}. Review and merge the results when ready.`);
+      void loadDiscoveryHistory(false);
       break;
     case 'error':
       state.discovery.runState = 'Error';
@@ -2795,6 +3354,14 @@ elements.saveEndpointsButton.addEventListener('click', saveEndpoints);
 
 elements.runDiscoveryButton.addEventListener('click', runDiscovery);
 elements.cancelDiscoveryButton.addEventListener('click', cancelDiscovery);
+elements.refreshDiscoveryHistoryButton.addEventListener('click', () => loadDiscoveryHistory(true));
+elements.discoveryHistoryRows.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-history-scan-id]');
+  if (!button || button.disabled) {
+    return;
+  }
+  void loadDiscoveryHistoryScan(button.dataset.historyScanId || '', button.dataset.historyMode || 'all');
+});
 Object.values(elements.discoveryInputs).forEach((input) => {
   input.addEventListener('input', renderDiscoveryPreflight);
   input.addEventListener('change', renderDiscoveryPreflight);

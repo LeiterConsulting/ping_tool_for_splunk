@@ -103,6 +103,59 @@ func TestWriterRotatesOversizedFileAtStartup(t *testing.T) {
 	}
 }
 
+func TestWriterRotatesAtConfiguredFiftyMegabytesUnderDiscoveryVolume(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ping_results.log")
+	writer, err := NewWithOptions(Options{Path: path, MaxSizeMB: 50, RetentionFiles: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("d", 1024*1024-256)
+	const records = 55
+	for sequence := 1; sequence <= records; sequence++ {
+		if err := writer.WriteOne(testRecord{Sequence: sequence, Payload: payload}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status := writer.Status()
+	if status.RotationCount != 1 {
+		t.Fatalf("rotation count = %d, want 1 at the configured 50 MB boundary", status.RotationCount)
+	}
+	if status.CurrentBytes > status.MaxBytes {
+		t.Fatalf("active log bytes = %d, configured max = %d", status.CurrentBytes, status.MaxBytes)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := filepath.Glob(filepath.Join(dir, "ping_results*.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("log files = %d, want active + one rotated archive", len(paths))
+	}
+	lineCount := 0
+	for _, currentPath := range paths {
+		file, openErr := os.Open(currentPath)
+		if openErr != nil {
+			t.Fatal(openErr)
+		}
+		scanner := bufio.NewScanner(file)
+		scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+		for scanner.Scan() {
+			lineCount++
+		}
+		if scanErr := scanner.Err(); scanErr != nil {
+			_ = file.Close()
+			t.Fatal(scanErr)
+		}
+		_ = file.Close()
+	}
+	if lineCount != records {
+		t.Fatalf("records across active and rotated logs = %d, want %d", lineCount, records)
+	}
+}
+
 func readSequences(t *testing.T, dir string) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(dir, "ping_results*"))

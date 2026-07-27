@@ -114,8 +114,10 @@ type DiscoverySchedule struct {
 }
 
 type Discovery struct {
-	HistoryPath string              `json:"history_path" yaml:"history_path"`
-	Schedules   []DiscoverySchedule `json:"schedules" yaml:"schedules"`
+	HistoryPath    string              `json:"history_path" yaml:"history_path"`
+	RetentionScans int                 `json:"retention_scans" yaml:"retention_scans"`
+	RetentionDays  int                 `json:"retention_days" yaml:"retention_days"`
+	Schedules      []DiscoverySchedule `json:"schedules" yaml:"schedules"`
 }
 
 type Config struct {
@@ -217,6 +219,7 @@ func CurrentDefaults(root string) Config {
 	cfg.LogRetentionFiles = 10
 	cfg.LogRetentionDays = 14
 	cfg.LogCompressRotated = true
+	cfg.Discovery.RetentionDays = 365
 	return cfg
 }
 
@@ -498,6 +501,8 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 	}
 	if m, ok := getMap(raw, "discovery"); ok {
 		cfg.Discovery.HistoryPath = getString(m, "history_path", cfg.Discovery.HistoryPath)
+		cfg.Discovery.RetentionScans = getInt(m, "retention_scans", cfg.Discovery.RetentionScans)
+		cfg.Discovery.RetentionDays = getInt(m, "retention_days", cfg.Discovery.RetentionDays)
 		cfg.Discovery.Schedules = getDiscoverySchedules(m, "schedules")
 	}
 }
@@ -571,6 +576,12 @@ func normalize(cfg Config) Config {
 	}
 	if cfg.Discovery.HistoryPath == "" {
 		cfg.Discovery.HistoryPath = filepath.Join("data", "discovery")
+	}
+	if cfg.Discovery.RetentionScans < 0 {
+		cfg.Discovery.RetentionScans = 0
+	}
+	if cfg.Discovery.RetentionDays < 0 {
+		cfg.Discovery.RetentionDays = 0
 	}
 	for i := range cfg.Discovery.Schedules {
 		normalizeDiscoverySchedule(&cfg.Discovery.Schedules[i])

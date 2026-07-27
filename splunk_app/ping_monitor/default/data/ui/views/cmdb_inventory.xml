@@ -60,6 +60,14 @@
     </input>
   </fieldset>
 
+  <row>
+    <panel>
+      <html>
+        <p>This view contains actively managed monitoring inventory and collector-confirmed health. Subnet scan evidence—including discovered-only IPs and DNS enrichment—is available in <a href="/app/ping_monitor/discovery_inventory">Discovery Inventory</a>.</p>
+      </html>
+    </panel>
+  </row>
+
   <row depends="$cmdb_config_loaded$">
     <panel>
       <single>

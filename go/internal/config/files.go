@@ -132,6 +132,7 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 	if err := writer.Write([]string{
 		"ip", "hostname", "fqdn", "group", "description", "entitytype", "device", "vendor",
 		"additional_notes", "endpoint_id", "dev", "monitoring_enabled", "maintenance_until", "maintenance_reason",
+		"dns_status", "dns_forward_confirmed", "discovered_at", "discovery_scan_id", "discovery_source", "discovery_latency_ms",
 	}); err != nil {
 		return err
 	}
@@ -155,6 +156,12 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 			strconv.FormatBool(endpoint.IsMonitoringEnabled()),
 			strings.TrimSpace(endpoint.MaintenanceUntil),
 			strings.TrimSpace(endpoint.MaintenanceReason),
+			strings.TrimSpace(endpoint.DNSStatus),
+			strconv.FormatBool(endpoint.DNSForwardConfirmed),
+			strings.TrimSpace(endpoint.DiscoveredAt),
+			strings.TrimSpace(endpoint.DiscoveryScanID),
+			strings.TrimSpace(endpoint.DiscoverySource),
+			formatOptionalFloat(endpoint.DiscoveryLatencyMs),
 		}
 		if err := writer.Write(record); err != nil {
 			return err
@@ -165,6 +172,13 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 		return err
 	}
 	return writeWithBackup(path, buf.Bytes())
+}
+
+func formatOptionalFloat(value *float64) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*value, 'f', -1, 64)
 }
 
 func ValidateEndpoints(endpoints []models.Endpoint) error {

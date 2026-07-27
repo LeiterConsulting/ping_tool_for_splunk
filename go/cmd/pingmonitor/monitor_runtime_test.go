@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/webui"
@@ -38,10 +39,15 @@ func TestRunMonitorLoopAppliesControlledRestartInProcess(t *testing.T) {
 	tracker := runtimeinfo.New("monitor", initial.ConfigRevision, initial.EndpointsRevision, 1)
 	store := newEffectiveConfigStore(initial.Config)
 	restarts := make(chan webui.RestartRequest, 1)
+	manager, err := output.NewManager(initial.Config, "test-host", "test-collector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outputs := newOutputManagerStore(manager)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- runMonitorLoop(ctx, initial, configPath, endpointsPath, root, "", "test-collector", false, 0, tracker, store, restarts)
+		done <- runMonitorLoop(ctx, initial, configPath, endpointsPath, root, "", "test-host", "test-collector", false, 0, tracker, store, outputs, restarts)
 	}()
 	waitForRuntime(t, tracker, 5*time.Second, func(snapshot runtimeinfo.Snapshot) bool { return snapshot.State == "running" })
 

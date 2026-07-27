@@ -43,6 +43,8 @@ func TestCurrentJSONRoundTripPreservesEffectiveConfiguration(t *testing.T) {
 	cfg := CurrentDefaults(root)
 	cfg.PingsPerCycle = 8
 	cfg.LogPath = "./logs/current.log"
+	cfg.Discovery.RetentionScans = 250
+	cfg.Discovery.RetentionDays = 180
 	cfg.Discovery.Schedules = []DiscoverySchedule{{
 		ID: "weekly-core", Enabled: true, Targets: []string{"10.10.0.0/16"},
 		Frequency: "weekly", Day: "sunday", Time: "02:00", Timezone: "UTC",
@@ -76,6 +78,8 @@ func TestPSD1RoundTripPreservesDiscoverySchedulesAndRotationPolicy(t *testing.T)
 	cfg.LogRetentionFiles = 5
 	cfg.LogRetentionDays = 30
 	cfg.LogCompressRotated = true
+	cfg.Discovery.RetentionScans = 100
+	cfg.Discovery.RetentionDays = 90
 	cfg.Discovery.Schedules = []DiscoverySchedule{{
 		ID: "weekly-lab", Enabled: true, Targets: []string{"10.0.0.0/24", "10.0.1.0/24"},
 		Frequency: "weekly", Day: "monday", Time: "03:15", Timezone: "UTC",

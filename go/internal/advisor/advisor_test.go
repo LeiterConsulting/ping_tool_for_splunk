@@ -78,6 +78,20 @@ func TestProfileProposalPreservesNonScheduleSettings(t *testing.T) {
 	}
 }
 
+func TestAnalyzeConfigWarnsWhenMetricsOnlySuppressesDiscoveryEvents(t *testing.T) {
+	cfg := config.Defaults(t.TempDir())
+	cfg.Metrics.Enabled = true
+	cfg.Metrics.Mode = "metrics_only"
+	cfg.Metrics.HECURL = "https://splunk.example.test:8088/services/collector"
+	cfg.Metrics.Token = "token"
+	cfg.Metrics.Index = "ping_metrics"
+	report := Report{}
+	analyzeConfig(&report, cfg)
+	if !hasFinding(report.Findings, "DISCOVERY_EVENTS_SUPPRESSED") {
+		t.Fatalf("metrics-only config did not report discovery event suppression: %#v", report.Findings)
+	}
+}
+
 func TestBenchmarkIsBoundedAndNonSLA(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")

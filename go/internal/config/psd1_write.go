@@ -106,6 +106,8 @@ func renderPSD1(cfg Config) string {
 
 	builder.WriteString("    discovery = @{\n")
 	fmt.Fprintf(&builder, "        history_path = %s\n", psd1String(cfg.Discovery.HistoryPath))
+	fmt.Fprintf(&builder, "        retention_scans = %d\n", cfg.Discovery.RetentionScans)
+	fmt.Fprintf(&builder, "        retention_days = %d\n", cfg.Discovery.RetentionDays)
 	builder.WriteString("        schedules = @(\n")
 	for _, schedule := range cfg.Discovery.Schedules {
 		builder.WriteString("            @{\n")

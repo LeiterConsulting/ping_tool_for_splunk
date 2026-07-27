@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -11,6 +13,7 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/engine"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/webui"
@@ -29,6 +32,40 @@ type effectiveConfigStore struct {
 	mu     sync.RWMutex
 	config config.Config
 	set    bool
+}
+
+type outputManagerStore struct {
+	mu      sync.RWMutex
+	manager *output.Manager
+}
+
+func newOutputManagerStore(manager *output.Manager) *outputManagerStore {
+	return &outputManagerStore{manager: manager}
+}
+
+func (s *outputManagerStore) Emit(ctx context.Context, batchID string, events []json.RawMessage) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.manager == nil {
+		return errors.New("collector output pipeline is restarting or unavailable")
+	}
+	return s.manager.HandleEvents(ctx, batchID, events)
+}
+
+func (s *outputManagerStore) Set(manager *output.Manager) {
+	s.mu.Lock()
+	s.manager = manager
+	s.mu.Unlock()
+}
+
+func (s *outputManagerStore) ClearAndClose() {
+	s.mu.Lock()
+	manager := s.manager
+	s.manager = nil
+	s.mu.Unlock()
+	if manager != nil {
+		manager.Close()
+	}
 }
 
 func newEffectiveConfigStore(cfg config.Config) *effectiveConfigStore {
@@ -99,14 +136,18 @@ func runMonitorLoop(
 	endpointsPath string,
 	root string,
 	pingMode string,
+	collectorHost string,
 	collectorID string,
 	runOnce bool,
 	maxCycles int,
 	tracker *runtimeinfo.Tracker,
 	effectiveConfig *effectiveConfigStore,
+	outputs *outputManagerStore,
 	restartRequests <-chan webui.RestartRequest,
 ) error {
 	current := initial
+	currentOutput := outputs.manager
+	defer outputs.ClearAndClose()
 	for {
 		diagnostics.LogStartup(current.ConfigSource, current.Config, len(current.Endpoints))
 		if current.Config.Diagnostics.Enabled || current.Config.Debug.EmitMemoryStats {
@@ -118,7 +159,7 @@ func runMonitorLoop(
 		opts := engine.Options{
 			RunOnce: runOnce, MaxCycles: maxCycles, EndpointsPath: endpointsPath,
 			CollectorID: collectorID, StatePath: configPath + ".state.json",
-			ReloadEndpoints: current.EndpointReloader.ReloadIfChanged, Runtime: tracker,
+			ReloadEndpoints: current.EndpointReloader.ReloadIfChanged, Runtime: tracker, Output: currentOutput,
 		}
 		go func(deployment runtimeDeployment) {
 			resultCh <- engine.Run(engineCtx, deployment.Config, deployment.Endpoints, opts)
@@ -145,7 +186,27 @@ func runMonitorLoop(
 				diagnostics.LogError("controlled collector restart failed; resuming last known good configuration", err, nil)
 				continue
 			}
+			outputs.ClearAndClose()
+			nextOutput, outputErr := output.NewManager(next.Config, collectorHost, collectorID)
+			if outputErr != nil {
+				fallbackOutput, fallbackErr := output.NewManager(current.Config, collectorHost, collectorID)
+				if fallbackErr != nil {
+					combined := errors.Join(
+						fmt.Errorf("activate saved output configuration: %w", outputErr),
+						fmt.Errorf("restore last known good output configuration: %w", fallbackErr),
+					)
+					tracker.RestartFailed(combined)
+					return combined
+				}
+				currentOutput = fallbackOutput
+				outputs.Set(currentOutput)
+				tracker.RestartFailed(outputErr)
+				diagnostics.LogError("controlled collector restart rejected saved output configuration; resumed last known good configuration", outputErr, nil)
+				continue
+			}
 			current = next
+			currentOutput = nextOutput
+			outputs.Set(currentOutput)
 			effectiveConfig.Set(current.Config)
 			tracker.Restarted(current.ConfigRevision, current.EndpointsRevision, len(current.Endpoints), time.Now())
 			diagnostics.LogInfo("controlled collector restart activated saved configuration", map[string]interface{}{

@@ -1,5 +1,5 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.9.0)
+# Splunk Ping Monitor Configuration (Go v5.10.0)
 # ============================================
 # Legacy-compatible configuration example. New deployments use config.json.
 # Relative paths are resolved from the directory containing this file.
@@ -148,6 +148,9 @@
     # ----------------------------------------
     discovery = @{
         history_path = "./data/discovery"
+        # 0 disables the scan-count limit. The age limit keeps history bounded.
+        retention_scans = 0
+        retention_days = 365
         # Weekly schedules remain review-only: scan results are never
         # silently added to the monitored inventory.
         schedules = @(

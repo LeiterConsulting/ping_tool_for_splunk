@@ -1,0 +1,204 @@
+<dashboard version="1.1">
+  <label>Discovery Inventory</label>
+  <description>CMDB-oriented subnet-discovery evidence from Ping Monitor v5.10+. “Not observed” means only that an IP did not answer that discovery scan; it is not a health, outage, or decommissioning conclusion.</description>
+
+  <init>
+    <set token="discovery_config_loaded">true</set>
+  </init>
+
+  <search id="discovery_config_loader">
+    <query>| inputlookup ping_monitor_settings_lookup
+| search _key="global"
+| head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
+| head 1
+| eval pm_index=if(isnull(index) OR index=="", "ping", index)
+| eval pm_sourcetype=if(isnull(sourcetype) OR sourcetype=="", "ping_monitor", sourcetype)</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <set token="pm_index">$result.pm_index$</set>
+      <set token="pm_sourcetype">$result.pm_sourcetype$</set>
+    </done>
+  </search>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="discovery_time" searchWhenChanged="true">
+      <label>Discovery Evidence Window</label>
+      <default>
+        <earliest>-90d@d</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
+    <input type="dropdown" token="target_filter" searchWhenChanged="true">
+      <label>Scan Target</label>
+      <choice value="*">All Targets</choice>
+      <default>*</default>
+      <fieldForLabel>target_network</fieldForLabel>
+      <fieldForValue>target_network</fieldForValue>
+      <search>
+        <query>`ping_discovery_events($pm_index$, $pm_sourcetype$)`
+| where isnotnull(target_network) AND target_network!=""
+| stats count by target_network
+| fields target_network
+| sort target_network</query>
+        <earliest>$discovery_time.earliest$</earliest>
+        <latest>$discovery_time.latest$</latest>
+      </search>
+    </input>
+    <input type="dropdown" token="evidence_filter" searchWhenChanged="true">
+      <label>Latest Evidence</label>
+      <choice value="*">All Evidence</choice>
+      <choice value="Newly observed">Newly Observed</choice>
+      <choice value="Observed">Observed</choice>
+      <choice value="Not observed in latest applicable scan">Not Observed</choice>
+      <default>*</default>
+    </input>
+    <input type="text" token="discovery_search" searchWhenChanged="true">
+      <label>Asset Search</label>
+      <default></default>
+    </input>
+  </fieldset>
+
+  <row>
+    <panel>
+      <html>
+        <p><strong>Signal interpretation:</strong> Discovery proves that an address answered an ICMP subnet scan at a point in time. “Not observed” is retained as evidence, but it never becomes “down.” Use the monitoring dashboards for collector-confirmed health and SLA evaluation.</p>
+      </html>
+    </panel>
+  </row>
+
+  <row depends="$discovery_config_loaded$">
+    <panel>
+      <single>
+        <title>Completed Scans</title>
+        <search>
+          <query>`ping_discovery_events($pm_index$, $pm_sourcetype$)`
+| search record_type=discovery_scan_summary
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| stats dc(scan_id) AS scans</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Known IPs in Window</title>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| stats count AS assets</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Observed in Latest Evidence</title>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| where discovery_observed=1
+| stats count AS observed</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Not Observed (Not “Down”)</title>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| where discovery_observed=0
+| stats count AS not_observed</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+  </row>
+
+  <row depends="$discovery_config_loaded$">
+    <panel>
+      <title>Discovery Evidence Inventory</title>
+      <table>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| search (evidence_status="$evidence_filter$" OR "$evidence_filter$"="*")
+| search endpoint_key="*$discovery_search$*" OR hostname="*$discovery_search$*" OR fqdn="*$discovery_search$*" OR target_ip="*$discovery_search$*" OR vendor="*$discovery_search$*" OR device="*$discovery_search$*"
+| eval fqdn=coalesce(fqdn, "Not resolved"), hostname=coalesce(hostname, "Unknown"), group=coalesce(group, "Unassigned"), dns_status=coalesce(dns_status, "unknown")
+| table endpoint_key, target_ip, hostname, fqdn, evidence_status, discovery_delta_status, dns_evidence, dns_status, discovery_latency_ms, target_network, group, entitytype, device, vendor, dev, monitoring_enabled, first_observed_human, last_observed_human, last_evidence_human, last_scan_id
+| rename endpoint_key AS "Endpoint ID", target_ip AS "IP Address", hostname AS "Hostname", fqdn AS "FQDN", evidence_status AS "Discovery Evidence", discovery_delta_status AS "Change", dns_evidence AS "DNS Evidence", dns_status AS "DNS Status", discovery_latency_ms AS "Discovery Latency (ms)", target_network AS "Scan Target", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", dev AS "Dev", monitoring_enabled AS "Monitoring Enabled", first_observed_human AS "First Observed", last_observed_human AS "Last Observed", last_evidence_human AS "Last Evidence", last_scan_id AS "Last Scan ID"
+| sort "Discovery Evidence", "IP Address"</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="count">25</option>
+        <option name="drilldown">none</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+
+  <row depends="$discovery_config_loaded$">
+    <panel>
+      <title>Scan History and Change Counts</title>
+      <table>
+        <search>
+          <query>`ping_discovery_events($pm_index$, $pm_sourcetype$)`
+| search record_type=discovery_scan_summary
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| eval completed=strftime(_time, "%Y-%m-%d %H:%M:%S"), baseline=if(lower(tostring(baseline_available)) IN ("true","1","t"), "Compared with prior scan", "Initial baseline")
+| table completed, target_network, schedule_id, endpoints_observed, new_endpoints, missing_endpoints, unchanged_endpoints, scan_duration_ms, baseline, scan_id
+| rename completed AS "Completed", target_network AS "Scan Target", schedule_id AS "Schedule", endpoints_observed AS "Observed", new_endpoints AS "New", missing_endpoints AS "Not Observed", unchanged_endpoints AS "Unchanged", scan_duration_ms AS "Duration (ms)", baseline AS "Comparison", scan_id AS "Scan ID"
+| sort - "Completed"</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="count">20</option>
+        <option name="drilldown">none</option>
+      </table>
+    </panel>
+  </row>
+
+  <row depends="$discovery_config_loaded$">
+    <panel>
+      <title>DNS Evidence Coverage</title>
+      <chart>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| stats count by dns_evidence</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>Discovery Evidence by Target</title>
+      <chart>
+        <search>
+          <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
+| search (target_network="$target_filter$" OR "$target_filter$"="*")
+| chart count over target_network by evidence_status</query>
+          <earliest>$discovery_time.earliest$</earliest>
+          <latest>$discovery_time.latest$</latest>
+        </search>
+        <option name="charting.chart">column</option>
+        <option name="charting.drilldown">none</option>
+        <option name="charting.legend.placement">right</option>
+      </chart>
+    </panel>
+  </row>
+</dashboard>

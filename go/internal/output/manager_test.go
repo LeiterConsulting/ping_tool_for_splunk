@@ -3,8 +3,12 @@ package output
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -229,6 +233,69 @@ func TestManagerPersistsPerSinkProgress(t *testing.T) {
 	}
 	if restarted.DeliveryStatus().PendingEnvelopes != 0 {
 		t.Fatalf("outbox did not drain: %#v", restarted.DeliveryStatus())
+	}
+}
+
+func TestManagerPersistsDiscoveryEventsThroughFileAndHEC(t *testing.T) {
+	var requests atomic.Int32
+	var received atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		body, _ := io.ReadAll(r.Body)
+		received.Store(string(body))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.OutputMode = "both"
+	cfg.LogPath = filepath.Join(root, "ping_results.log")
+	cfg.HEC.Enabled = true
+	cfg.HEC.URL = server.URL + "/services/collector/event"
+	cfg.HEC.Token = "token"
+	cfg.Metrics.Enabled = false
+	cfg.Delivery.SpoolPath = filepath.Join(root, "outbox")
+
+	manager, err := NewManager(cfg, "collector", "collector-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	event := json.RawMessage(`{"schema_version":4,"event_id":"discovery-event-1","cycle_id":"discovery-scan-1","timestamp":"2026-07-27T12:00:00Z","record_type":"discovery_observation","target_ip":"192.0.2.1","discovery_observed":true}`)
+	if err := manager.HandleEvents(context.Background(), "discovery-scan-1", []json.RawMessage{event}); err != nil {
+		t.Fatalf("HandleEvents() error = %v", err)
+	}
+	waitForDeliveryState(t, manager, "healthy")
+
+	logBody, err := os.ReadFile(cfg.LogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(logBody), `"record_type":"discovery_observation"`) {
+		t.Fatalf("file output does not contain discovery event: %s", logBody)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("HEC requests = %d, want 1", requests.Load())
+	}
+	hecBody, _ := received.Load().(string)
+	if !strings.Contains(hecBody, `"record_type":"discovery_observation"`) {
+		t.Fatalf("HEC payload does not contain discovery event: %s", hecBody)
+	}
+}
+
+func TestManagerRejectsInvalidExternalEvent(t *testing.T) {
+	cfg := config.Defaults(t.TempDir())
+	cfg.OutputMode = "file"
+	cfg.Metrics.Enabled = false
+	manager, err := NewManager(cfg, "collector", "collector-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.HandleEvents(context.Background(), "batch", []json.RawMessage{json.RawMessage(`not-json`)}); err == nil {
+		t.Fatal("HandleEvents() accepted invalid JSON")
 	}
 }
 

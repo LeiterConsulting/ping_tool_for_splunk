@@ -779,6 +779,29 @@ button:disabled {
   padding: 0.68rem 0.95rem;
 }
 
+.discovery-schedule-card {
+  min-width: 0;
+}
+
+.discovery-schedule-card[data-state="error"] {
+  border-color: rgba(220, 82, 82, 0.7);
+}
+
+.discovery-schedule-card[data-state="due"] {
+  border-color: rgba(230, 166, 54, 0.7);
+}
+
+.discovery-history-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.discovery-history-actions .secondary-button {
+  padding: 0.35rem 0.55rem;
+  white-space: nowrap;
+}
+
 .filter-input,
 .text-input {
   width: 100%;

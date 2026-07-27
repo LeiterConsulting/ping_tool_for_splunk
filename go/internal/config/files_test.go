@@ -14,8 +14,16 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "endpoints.csv")
+	discoveryLatency := 12.75
 	input := []models.Endpoint{
-		{IP: "10.0.0.1", Hostname: "edge-router", Group: "network", Description: "Edge Router", EntityType: "network", Device: "router", Vendor: "Cisco", AdditionalNotes: "Primary", Dev: false},
+		{
+			IP: "10.0.0.1", Hostname: "edge-router", FQDN: "edge-router.example.com",
+			Group: "network", Description: "Edge Router", EntityType: "network", Device: "router",
+			Vendor: "Cisco", AdditionalNotes: "Primary", Dev: false,
+			DNSStatus: "forward_confirmed", DNSForwardConfirmed: true,
+			DiscoveredAt: "2026-07-27T12:00:00Z", DiscoveryScanID: "scan-123",
+			DiscoverySource: "icmp_subnet_scan", DiscoveryLatencyMs: &discoveryLatency,
+		},
 		{IP: "10.0.0.25", Hostname: "qa-api", Group: "development", Description: "QA API", EntityType: "service", Device: "vm", Vendor: "VMware", AdditionalNotes: "Excluded", Dev: true},
 	}
 
@@ -35,6 +43,12 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 	}
 	if loaded[0].EndpointID == "" || loaded[1].EndpointID == "" || loaded[0].EndpointID == loaded[1].EndpointID {
 		t.Fatalf("stable endpoint IDs were not generated: %#v", loaded)
+	}
+	if loaded[0].FQDN != "edge-router.example.com" || loaded[0].DNSStatus != "forward_confirmed" ||
+		!loaded[0].DNSForwardConfirmed || loaded[0].DiscoveredAt != "2026-07-27T12:00:00Z" ||
+		loaded[0].DiscoveryScanID != "scan-123" || loaded[0].DiscoverySource != "icmp_subnet_scan" ||
+		loaded[0].DiscoveryLatencyMs == nil || *loaded[0].DiscoveryLatencyMs != discoveryLatency {
+		t.Fatalf("discovery evidence did not survive endpoint round trip: %#v", loaded[0])
 	}
 	backups, err := filepath.Glob(path + ".*.bak")
 	if err != nil {

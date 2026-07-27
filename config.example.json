@@ -83,6 +83,8 @@
   },
   "discovery": {
     "history_path": "./data/discovery",
+    "retention_scans": 0,
+    "retention_days": 365,
     "schedules": []
   },
   "diagnostics": {

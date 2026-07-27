@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	if indexResponse.Code != http.StatusOK {
 		t.Fatalf("index status = %d", indexResponse.Code)
 	}
-	for _, expected := range []string{"/app.css?v=v5.9.0", "/app.js?v=v5.9.0"} {
+	for _, expected := range []string{"/app.css?v=v5.9.0", "/discovery_csv.js?v=v5.9.0", "/app.js?v=v5.9.0"} {
 		if !strings.Contains(indexResponse.Body.String(), expected) {
 			t.Fatalf("index does not contain versioned asset %q", expected)
 		}
@@ -69,6 +70,53 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	}
 	if assetResponse.Header().Get("Pragma") != "no-cache" {
 		t.Fatalf("asset Pragma = %q, want no-cache", assetResponse.Header().Get("Pragma"))
+	}
+}
+
+func TestStaticUIProvidesContextHelpForEveryConfigurationField(t *testing.T) {
+	indexBytes, err := fs.ReadFile(staticFiles, "static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appBytes, err := fs.ReadFile(staticFiles, "static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexHTML := string(indexBytes)
+	appJS := string(appBytes)
+	fieldPattern := regexp.MustCompile(`id="(cfg-[^"]+)"`)
+	matches := fieldPattern.FindAllStringSubmatch(indexHTML, -1)
+	if len(matches) == 0 {
+		t.Fatal("no configuration fields found")
+	}
+	for _, match := range matches {
+		if !strings.Contains(appJS, fmt.Sprintf("'%s': helpTopic(", match[1])) {
+			t.Errorf("configuration field %s has no contextual help topic", match[1])
+		}
+	}
+	for _, requiredID := range []string{
+		"endpoint-ip", "endpoint-hostname", "endpoint-fqdn", "endpoint-dev", "endpoint-monitoring-enabled",
+		"endpoint-maintenance-until", "discovery-target-network", "discovery-subnet-mask",
+		"discovery-timeout-ms", "discovery-throttle-limit", "discovery-merge-mode",
+	} {
+		if !strings.Contains(appJS, fmt.Sprintf("'%s': helpTopic(", requiredID)) {
+			t.Errorf("operator field %s has no contextual help topic", requiredID)
+		}
+	}
+	panelPattern := regexp.MustCompile(`<h3 class="panel-title">([^<]+)</h3>`)
+	for _, match := range panelPattern.FindAllStringSubmatch(indexHTML, -1) {
+		title := strings.TrimSpace(match[1])
+		quoted := fmt.Sprintf("'%s': panelHelp(", title)
+		identifier := fmt.Sprintf("%s: panelHelp(", title)
+		if !strings.Contains(appJS, quoted) && !strings.Contains(appJS, identifier) {
+			t.Errorf("interface panel %q has no contextual help topic", title)
+		}
+	}
+	discoveryStart := strings.Index(indexHTML, `<section id="discovery"`)
+	operationsStart := strings.Index(indexHTML, `id="discovery-operations-panel"`)
+	settingsStart := strings.Index(indexHTML, `<section id="settings"`)
+	if discoveryStart < 0 || operationsStart < discoveryStart || settingsStart < operationsStart {
+		t.Fatalf("Discovery Operations must remain inside the Discovery section: discovery=%d operations=%d settings=%d", discoveryStart, operationsStart, settingsStart)
 	}
 }
 
@@ -947,6 +995,258 @@ func TestPersistDiscoverySnapshotRetainsHistoryAndCalculatesDelta(t *testing.T) 
 	}
 	if len(scans) != 2 {
 		t.Fatalf("history files = %d, want 2", len(scans))
+	}
+	index, err := loadDiscoveryHistoryIndex(cfg.Discovery.HistoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Scans) != 2 || index.Scans[0].ScanID != "scan-2" || index.Scans[1].ScanID != "scan-1" {
+		t.Fatalf("history index = %#v", index.Scans)
+	}
+	detail, err := loadDiscoverySnapshot(cfg.Discovery.HistoryPath, index, "scan-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newItems, missingItems := calculateDiscoveryItemChanges(first.Items, detail.Items)
+	if len(newItems) != 1 || newItems[0].IP != "10.0.0.3" || len(missingItems) != 1 || missingItems[0].IP != "10.0.0.1" {
+		t.Fatalf("item changes new=%#v missing=%#v", newItems, missingItems)
+	}
+}
+
+func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	var emittedBatchID string
+	var emitted []json.RawMessage
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg, CollectorID: "collector-1", CollectorHost: "host-1",
+		EmitDiscoveryEvents: func(_ context.Context, batchID string, events []json.RawMessage) error {
+			emittedBatchID = batchID
+			emitted = append([]json.RawMessage(nil), events...)
+			return nil
+		},
+	})
+	request := discoveryRunRequest{
+		TargetNetwork: "10.0.0.0", SubnetMask: 24, TimeoutMs: 700,
+		ThrottleLimit: 40, ScheduleID: "weekly",
+	}
+	first := discoveryResponse{
+		GeneratedAt: "2026-07-27T12:00:00Z", ScanID: "scan-1", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 2},
+		Items: []models.Endpoint{
+			{IP: "10.0.0.1", Hostname: "one", FQDN: "one.example.test", DNSStatus: "verified", DNSForwardConfirmed: true},
+			{IP: "10.0.0.2", Hostname: "two"},
+		},
+	}
+	if err := server.persistDiscoverySnapshot(request, &first); err != nil {
+		t.Fatal(err)
+	}
+	second := discoveryResponse{
+		GeneratedAt: "2026-07-28T12:00:00Z", ScanID: "scan-2", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 2},
+		Items: []models.Endpoint{
+			{IP: "10.0.0.2", Hostname: "two"},
+			{IP: "10.0.0.3", Hostname: "three"},
+		},
+		DurationMs: 1234,
+	}
+	if err := server.persistDiscoverySnapshot(request, &second); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.emitDiscoveryEvents(context.Background(), request, second); err != nil {
+		t.Fatal(err)
+	}
+	if emittedBatchID != "discovery-scan-2" {
+		t.Fatalf("batch id = %q", emittedBatchID)
+	}
+	if len(emitted) != 4 {
+		t.Fatalf("events = %d, want scan summary + 2 observations + 1 missing", len(emitted))
+	}
+	var scan models.DiscoveryScanEvent
+	if err := json.Unmarshal(emitted[0], &scan); err != nil {
+		t.Fatal(err)
+	}
+	if scan.RecordType != "discovery_scan_summary" || scan.NewEndpoints != 1 || scan.MissingEndpoints != 1 || scan.Unchanged != 1 || !scan.BaselineAvailable {
+		t.Fatalf("scan event = %#v", scan)
+	}
+	byIP := make(map[string]models.DiscoveryEvent)
+	for _, raw := range emitted[1:] {
+		var event models.DiscoveryEvent
+		if err := json.Unmarshal(raw, &event); err != nil {
+			t.Fatal(err)
+		}
+		byIP[event.TargetIP] = event
+		var fields map[string]interface{}
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, exists := fields["state"]; exists {
+			t.Fatalf("discovery evidence incorrectly claimed monitoring state: %s", raw)
+		}
+	}
+	if event := byIP["10.0.0.1"]; event.DiscoveryStatus != "not_observed" || event.DiscoveryDelta != "missing" || event.DiscoveryObserved {
+		t.Fatalf("missing evidence = %#v", event)
+	}
+	if event := byIP["10.0.0.2"]; event.DiscoveryStatus != "observed" || event.DiscoveryDelta != "unchanged" || !event.DiscoveryObserved {
+		t.Fatalf("unchanged evidence = %#v", event)
+	}
+	if event := byIP["10.0.0.3"]; event.DiscoveryDelta != "new" || !event.DiscoveryObserved {
+		t.Fatalf("new evidence = %#v", event)
+	}
+}
+
+func TestPersistDiscoverySnapshotPrunesByConfiguredScanCount(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	cfg.Discovery.RetentionScans = 1
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	request := discoveryRunRequest{TargetNetwork: "10.0.0.0", SubnetMask: 24}
+	first := discoveryResponse{
+		GeneratedAt: "2026-07-27T12:00:00Z", ScanID: "scan-1", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 1}, Items: []models.Endpoint{{IP: "10.0.0.1", Hostname: "one"}},
+	}
+	second := discoveryResponse{
+		GeneratedAt: "2026-07-28T12:00:00Z", ScanID: "scan-2", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 1}, Items: []models.Endpoint{{IP: "10.0.0.2", Hostname: "two"}},
+	}
+	if err := server.persistDiscoverySnapshot(request, &first); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.persistDiscoverySnapshot(request, &second); err != nil {
+		t.Fatal(err)
+	}
+	scans, err := filepath.Glob(filepath.Join(root, "history", "scans", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 {
+		t.Fatalf("history files = %d, want 1", len(scans))
+	}
+	index, err := loadDiscoveryHistoryIndex(cfg.Discovery.HistoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Scans) != 1 || index.Scans[0].ScanID != "scan-2" {
+		t.Fatalf("pruned history index = %#v", index.Scans)
+	}
+}
+
+func TestDiscoveryHistoryRetainsBoundedCustomerScaleSnapshots(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	cfg.Discovery.RetentionScans = 12
+	cfg.Discovery.RetentionDays = 0
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	items := make([]models.Endpoint, 2048)
+	for index := range items {
+		items[index] = models.Endpoint{
+			IP:        fmt.Sprintf("10.%d.%d.%d", index/65536, (index/256)%256, index%256),
+			Hostname:  fmt.Sprintf("asset-%04d", index),
+			FQDN:      fmt.Sprintf("asset-%04d.example.test", index),
+			DNSStatus: "verified", DNSForwardConfirmed: true,
+		}
+	}
+	request := discoveryRunRequest{TargetNetwork: "10.0.0.0", SubnetMask: 8}
+	start := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+	for scan := 0; scan < 36; scan++ {
+		response := discoveryResponse{
+			GeneratedAt: start.Add(time.Duration(scan) * time.Hour).Format(time.RFC3339),
+			ScanID:      fmt.Sprintf("scale-scan-%02d", scan), Target: "10.0.0.0/8",
+			Summary: endpointSummary{Total: len(items)}, Items: items,
+		}
+		if err := server.persistDiscoverySnapshot(request, &response); err != nil {
+			t.Fatalf("persist scan %d: %v", scan, err)
+		}
+	}
+	index, err := loadDiscoveryHistoryIndex(cfg.Discovery.HistoryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(index.Scans) != cfg.Discovery.RetentionScans {
+		t.Fatalf("history index scans = %d, want %d", len(index.Scans), cfg.Discovery.RetentionScans)
+	}
+	if index.Scans[0].ScanID != "scale-scan-35" || index.Scans[len(index.Scans)-1].ScanID != "scale-scan-24" {
+		t.Fatalf("retained range = %s..%s", index.Scans[0].ScanID, index.Scans[len(index.Scans)-1].ScanID)
+	}
+	files, err := filepath.Glob(filepath.Join(cfg.Discovery.HistoryPath, "scans", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != cfg.Discovery.RetentionScans {
+		t.Fatalf("snapshot files = %d, want %d", len(files), cfg.Discovery.RetentionScans)
+	}
+}
+
+func TestDiscoveryScheduleStatusesReportDueAndLastError(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.Schedules = []config.DiscoverySchedule{{
+		ID: "weekly", Enabled: true, Targets: []string{"10.0.0.0/24"},
+		Frequency: "weekly", Day: "sunday", Time: "02:00", Timezone: "UTC",
+	}}
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	statuses := discoveryScheduleStatuses(cfg, root, now)
+	if len(statuses) != 1 || !statuses[0].Due || statuses[0].NextRunAt == "" {
+		t.Fatalf("schedule statuses = %#v", statuses)
+	}
+}
+
+func TestDiscoveryHistoryHandlerListsAndLoadsRetainedScan(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	cfg.Discovery.RetentionDays = 90
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	request := discoveryRunRequest{TargetNetwork: "10.0.0.0", SubnetMask: 24, ScheduleID: "weekly"}
+	response := discoveryResponse{
+		GeneratedAt: "2026-07-27T12:00:00Z", ScanID: "scan-history", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 1, Production: 1, Groups: 1},
+		Items:   []models.Endpoint{{IP: "10.0.0.1", Hostname: "one"}},
+	}
+	if err := server.persistDiscoverySnapshot(request, &response); err != nil {
+		t.Fatal(err)
+	}
+
+	listRecorder := httptest.NewRecorder()
+	server.handleDiscoveryHistory(listRecorder, httptest.NewRequest(http.MethodGet, "/api/discovery/history?limit=10", nil))
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d body=%s", listRecorder.Code, listRecorder.Body.String())
+	}
+	var list discoveryHistoryResponse
+	if err := json.Unmarshal(listRecorder.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if list.TotalScans != 1 || len(list.Scans) != 1 || list.Scans[0].ScheduleID != "weekly" || list.RetentionDays != 90 {
+		t.Fatalf("history list = %#v", list)
+	}
+	if list.Scans[0].FileName != "" {
+		t.Fatalf("history API leaked internal file name %q", list.Scans[0].FileName)
+	}
+
+	detailRecorder := httptest.NewRecorder()
+	server.handleDiscoveryHistory(detailRecorder, httptest.NewRequest(http.MethodGet, "/api/discovery/history?scan_id=scan-history", nil))
+	if detailRecorder.Code != http.StatusOK {
+		t.Fatalf("detail status = %d body=%s", detailRecorder.Code, detailRecorder.Body.String())
+	}
+	var detail discoveryHistoryDetail
+	if err := json.Unmarshal(detailRecorder.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if !detail.BaselineAvailable || len(detail.NewItems) != 1 || detail.NewItems[0].IP != "10.0.0.1" {
+		t.Fatalf("history detail = %#v", detail)
 	}
 }
 

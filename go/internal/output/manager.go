@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,9 @@ type Manager struct {
 type outputRequest struct {
 	individual []models.PingEvent
 	summary    models.SummaryEvent
+	events     []json.RawMessage
+	batchID    string
+	external   bool
 	flush      bool
 	ctx        context.Context
 	result     chan error
@@ -156,6 +160,45 @@ func (m *Manager) HandleResult(ctx context.Context, individual []models.PingEven
 	}
 }
 
+// HandleEvents durably accepts an event-only batch, such as discovery evidence,
+// into the same serialized file and HEC pipeline used by monitoring cycles. It
+// returns after local file flush/outbox persistence, not after network delivery.
+func (m *Manager) HandleEvents(ctx context.Context, batchID string, events []json.RawMessage) error {
+	if strings.TrimSpace(batchID) == "" {
+		return errors.New("output event batch_id is required")
+	}
+	if len(events) == 0 {
+		return nil
+	}
+	copied := make([]json.RawMessage, len(events))
+	for index := range events {
+		if !json.Valid(events[index]) {
+			return fmt.Errorf("output event %d is not valid JSON", index)
+		}
+		copied[index] = append(json.RawMessage(nil), events[index]...)
+	}
+	result := make(chan error, 1)
+	request := outputRequest{
+		events: copied, batchID: strings.TrimSpace(batchID), external: true,
+		ctx: ctx, result: result,
+	}
+	select {
+	case m.queue <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.done:
+		return errors.New("output manager is closed")
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.done:
+		return errors.New("output manager closed before event batch was persisted")
+	}
+}
+
 func (m *Manager) handleResult(individual []models.PingEvent, summary models.SummaryEvent) error {
 	emitEvents := !(m.cfg.Metrics.Enabled && m.cfg.Metrics.Mode == "metrics_only")
 	if emitEvents && m.fileWriter != nil {
@@ -185,6 +228,46 @@ func (m *Manager) handleResult(individual []models.PingEvent, summary models.Sum
 	if m.metricsSender != nil {
 		m.cycleSummaries = append(m.cycleSummaries, summary)
 	}
+	return nil
+}
+
+func (m *Manager) handleEvents(batchID string, events []json.RawMessage) error {
+	emitEvents := !(m.cfg.Metrics.Enabled && m.cfg.Metrics.Mode == "metrics_only")
+	if !emitEvents {
+		return nil
+	}
+	if m.fileWriter != nil {
+		for _, event := range events {
+			if err := m.fileWriter.WriteOne(event); err != nil {
+				return err
+			}
+		}
+		if err := m.fileWriter.Flush(); err != nil {
+			return err
+		}
+	}
+	if m.hecWriter == nil {
+		return nil
+	}
+	if m.outbox == nil {
+		return errors.New("HEC event output is enabled without a durable outbox")
+	}
+	_, err := m.outbox.Enqueue(outbox.Envelope{
+		ID:              m.collectorID + "-" + batchID,
+		CycleID:         batchID,
+		CollectorID:     m.collectorID,
+		CreatedAt:       time.Now().UTC(),
+		Events:          append([]json.RawMessage(nil), events...),
+		EventsRequired:  true,
+		MetricsRequired: false,
+	})
+	if err != nil {
+		return err
+	}
+	if err := m.setDeliveryQueued(); err != nil {
+		return err
+	}
+	m.signalDelivery()
 	return nil
 }
 
@@ -501,6 +584,10 @@ func (m *Manager) run() {
 	defer close(m.done)
 	var pendingErr error
 	for request := range m.queue {
+		if request.external {
+			request.result <- m.handleEvents(request.batchID, request.events)
+			continue
+		}
 		if request.flush {
 			flushCtx := request.ctx
 			if flushCtx == nil {

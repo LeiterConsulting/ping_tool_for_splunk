@@ -127,11 +127,19 @@ func analyzeConfig(report *Report, cfg config.Config) {
 				Code: "LOG_ACTIVE_OVERSIZED", Severity: SeverityWarning, Category: "filesystem",
 				Title:          "Active result log exceeds its configured rotation threshold",
 				Message:        fmt.Sprintf("%s is %.2f MiB with a %d MiB threshold.", cfg.LogPath, float64(info.Size())/(1024*1024), cfg.LogRotationSizeMB),
-				Recommendation: "Restart once to contain the legacy oversized file, then run v5.9.0 with live rotation enabled.",
+				Recommendation: "Restart once to contain the legacy oversized file, then run the current runtime with live rotation enabled.",
 			})
 		}
 	}
 	analyzeDiscoverySchedules(report, cfg)
+	if cfg.Metrics.Enabled && cfg.Metrics.Mode == "metrics_only" {
+		report.Findings = append(report.Findings, Finding{
+			Code: "DISCOVERY_EVENTS_SUPPRESSED", Severity: SeverityWarning, Category: "discovery",
+			Title:          "Discovery evidence is local-only in metrics-only mode",
+			Message:        "Discovery observations do not have a metrics equivalent. Scan history remains on the collector, but discovery events are intentionally suppressed with the rest of the event stream.",
+			Recommendation: "Use metrics mode dual when Discovery Inventory evidence must be delivered to Splunk.",
+		})
+	}
 	for code, label := range map[string]string{"PATH_LOG": "Log directory", "PATH_OUTBOX": "Durable outbox directory"} {
 		target := ""
 		if code == "PATH_LOG" {
@@ -155,6 +163,14 @@ func analyzeConfig(report *Report, cfg config.Config) {
 }
 
 func analyzeDiscoverySchedules(report *Report, cfg config.Config) {
+	if cfg.Discovery.RetentionScans == 0 && cfg.Discovery.RetentionDays == 0 {
+		report.Findings = append(report.Findings, Finding{
+			Code: "DISCOVERY_RETENTION", Severity: SeverityWarning, Category: "discovery",
+			Title:          "Discovery history retention is unbounded",
+			Message:        "Every completed scan snapshot will remain on disk until it is removed manually.",
+			Recommendation: "Set discovery.retention_days, discovery.retention_scans, or both to bound long-running subnet discovery storage.",
+		})
+	}
 	seen := make(map[string]struct{})
 	for index, scheduleConfig := range cfg.Discovery.Schedules {
 		if !scheduleConfig.Enabled {
@@ -169,7 +185,7 @@ func analyzeDiscoverySchedules(report *Report, cfg config.Config) {
 			seen[strings.ToLower(scheduleConfig.ID)] = struct{}{}
 		}
 		if scheduleConfig.Frequency != "weekly" {
-			report.Findings = append(report.Findings, blocker("DISCOVERY_FREQUENCY", "Discovery frequency is unsupported", scheduleConfig.Frequency, "Use weekly for v5.9.0 schedules."))
+			report.Findings = append(report.Findings, blocker("DISCOVERY_FREQUENCY", "Discovery frequency is unsupported", scheduleConfig.Frequency, "Use weekly for the current scheduler."))
 		}
 		switch strings.ToLower(scheduleConfig.Day) {
 		case "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday":

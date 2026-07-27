@@ -2,19 +2,19 @@
 
 Enterprise-grade network availability monitoring for Splunk with a primary Go runtime, an embedded local admin UI, and direct support for file, HEC, and metrics-based output.
 
-## Latest Published Release
+## Current Release
 
-- Go runtime: `v5.9.0`
-- Splunk app: `3.0.0` build `42`
-- Current runtime release notes: [RELEASE_NOTES_v5.9.0.md](RELEASE_NOTES_v5.9.0.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.0.0.md](RELEASE_NOTES_splunk_app_3.0.0.md)
+- Go runtime: `v5.10.0`
+- Splunk app: `3.1.0` build `43`
+- Current runtime release notes: [RELEASE_NOTES_v5.10.0.md](RELEASE_NOTES_v5.10.0.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.1.0.md](RELEASE_NOTES_splunk_app_3.1.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
 ## Current Runtime Options
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.9.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
+| Go v5.10.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -23,7 +23,8 @@ The top-level README now describes the current published release only. Older Pow
 
 - Configuration Advisor with multi-error inventory validation, deterministic worst-case schedule modeling, operating profiles, revision-safe fixes, and a bounded non-SLA host benchmark.
 - Live size-based result-log rotation with count/age retention, optional compression, and runtime/advisor evidence.
-- FQDN-enriched discovery with CSV export, durable scan history, target deltas, and timezone-aware weekly schedules.
+- FQDN-enriched discovery with CSV export, bounded indexed scan history, actionable target deltas, schedule health, and timezone-aware weekly schedules.
+- Durable discovery scan summaries and per-IP evidence through the configured event pipeline, with a dedicated Splunk Discovery Inventory view.
 - Independent monitoring policy and maintenance windows that suppress probes explicitly rather than fabricating downtime.
 - A versioned config upgrade workflow that leaves legacy files untouched until an operator activates the generated config.
 - Versioned, non-cacheable admin UI assets so browser sessions cannot mix an upgraded API with stale controls.
@@ -70,7 +71,7 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 
 ### Configuration Advisor
 
-Version 5.9 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, monitoring-policy errors, invalid maintenance timestamps, discovery-schedule errors, unbounded log retention, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
+Version 5.10 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, monitoring-policy errors, invalid maintenance timestamps, discovery-schedule errors, unbounded log retention, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
 
 ```powershell
 # Read-only analysis; exits nonzero when blockers exist
@@ -129,9 +130,9 @@ ip,hostname,dev
 Extended inventory format:
 
 ```csv
-ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason
-192.168.1.1,router,router.example.com,network,Core Router,infrastructure,router,Cisco,Primary site,,false,true,,
-10.0.0.50,app-server,app-server.example.com,servers,Production App,server,vm,VMware,Critical,,false,true,,
+ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason,dns_status,dns_forward_confirmed,discovered_at,discovery_scan_id,discovery_source,discovery_latency_ms
+192.168.1.1,router,router.example.com,network,Core Router,infrastructure,router,Cisco,Primary site,,false,true,,,forward_confirmed,true,2026-07-27T12:00:00Z,scan-example,icmp_subnet_scan,1.25
+10.0.0.50,app-server,app-server.example.com,servers,Production App,server,vm,VMware,Critical,,false,true,,,,false,,,,
 ```
 
 Endpoint file rules:
@@ -140,7 +141,8 @@ Endpoint file rules:
 - `ip` and `hostname` headers are required; column order is otherwise flexible.
 - The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, and duplicate endpoint IDs are rejected.
 - `endpoint_id` is optional; the runtime derives a stable target-based ID when it is blank.
-- `fqdn`, `monitoring_enabled`, `maintenance_until`, and `maintenance_reason` are optional.
+- `fqdn`, monitoring-policy fields, and discovery-evidence fields are optional.
+- Reviewed discovery evidence (`dns_status`, forward confirmation, discovery time, scan ID, source, and latency) survives UI import and endpoint save/load.
 - Missing `monitoring_enabled` means `true`, so old endpoint files keep being monitored.
 - `monitoring_enabled=false` pauses probing. A future RFC 3339 `maintenance_until` pauses probing until expiry; `dev` alone never pauses probing.
 - `dev=true` endpoints emit `record_type=summary_dev` and, when enabled, `record_type=ping_dev`.
@@ -168,10 +170,11 @@ The UI supports:
 - full endpoint CRUD
 - explicitly selected bulk dev/prod and delete actions, with destructive confirmations
 - cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, CSV export, durable scan deltas, and merge or overwrite workflows
-- weekly, timezone-aware discovery schedules with review-only import policy
+- a Discovery Operations view for schedule health, retained history, and explicit All/New/Missing review
+- weekly, timezone-aware discovery schedules with review-only import policy and bounded count/age history retention
 - explicit pause/resume monitoring controls and timed maintenance
 - HEC event and metrics endpoint test actions
-- settings help modals for the runtime configuration surface
+- contextual information modals for every configuration field plus endpoint, discovery, advisor, and signal-semantics controls
 
 If you only want to edit files without running the monitor:
 
@@ -192,7 +195,7 @@ If you only want to edit files without running the monitor:
 | HEC events | `hec.enabled`, `hec.url`, `hec.token`, `hec.index`, `hec.sourcetype`, `hec.retry.*`, `hec.use_ack` | Controls direct event delivery, retry behavior, and optional indexer acknowledgment |
 | Metrics | `metrics.enabled`, `metrics.mode`, `metrics.index`, `metrics.hec_url`, `metrics.token`, `metrics.use_metrics_index`, `metrics.use_ack` | Controls metrics delivery and confirmation behavior |
 | Durable delivery | `delivery.spool_path`, `delivery.max_spool_bytes`, `delivery.max_envelopes`, `delivery.drain_max_envelopes` | Bounds the fsynced outbox and catch-up work without allowing silent drops |
-| Discovery | `discovery.history_path`, `discovery.schedules` | Stores scan evidence and defines review-only weekly discovery schedules |
+| Discovery | `discovery.history_path`, `discovery.retention_scans`, `discovery.retention_days`, `discovery.schedules` | Stores bounded scan evidence and defines review-only weekly discovery schedules |
 
 Default/current sample values live in [config.psd1](config.psd1).
 
@@ -203,6 +206,17 @@ Default/current sample values live in [config.psd1](config.psd1).
 - `state_confidence` is `pending` during a down/recovery transition, `confirmed` after the threshold is met, and `unknown` for an invalid measurement.
 - Packet loss is an observation, not a substitute for state. The Splunk app uses collector state for current v3 health and labels any state inferred from older history.
 - Exact latency is emitted only when the selected backend measured RTT. A platform result such as `time<1ms` is represented as censored with `latency_upper_bound_ms=1`; it is counted as a successful reply but excluded from exact min/average/max calculations.
+
+### Discovery And CMDB Evidence Contract
+
+- Discovery records addresses that replied during a bounded scan. It does not prove ownership, device lifecycle, or a durable asset identity.
+- `new` means an address was observed in the selected scan but not in the prior retained scan for the same target.
+- `missing` means an address was observed previously but not in the selected scan. It is not proof of downtime, removal, or decommissioning.
+- Scheduled results remain review-only. Loading All, New, or Missing places evidence in the discovery review table; only an explicit merge followed by **Save Endpoints** changes monitored inventory.
+- Completed scans emit `discovery_scan_summary` and `discovery_observation` records through the configured event pipeline. The Splunk **Discovery Inventory** dashboard presents that evidence separately from monitored health.
+- Metrics-only mode has no discovery-event equivalent. Local scan history remains available, and the advisor warns operators to select `metrics.mode=dual` when Splunk discovery evidence is required.
+- FQDN and DNS-forward confirmation are correlation evidence. DNS can be absent, stale, or reassigned and must not be treated as an authoritative CMDB key.
+- ICMP alone cannot establish MAC address, serial number, owner, operating system, or business lifecycle. Enrich those attributes from authoritative discovery and CMDB sources.
 - `probe_elapsed_ms` is diagnostic wall time and is never presented as network RTT.
 - `monitoring_control` events state why an endpoint was not probed. Their observation is `suppressed`, and Splunk presents the endpoint as Maintenance or Paused rather than Down.
 
@@ -227,11 +241,11 @@ Enable `use_ack` only after [indexer acknowledgment is enabled on the correspond
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_3.0.0_build42_20260727.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_3.1.0_build43_20260727.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.
-3. Use **Ping Monitor Overview** for whole-platform statistics, **Prod Devices** for production-only breakdowns, **Dev Devices** for dev/test devices, **CMDB Inventory** for current identity/policy/state, and **Asset Health Correlation** for enrichment workflows.
+3. Use **Ping Monitor Overview** for whole-platform statistics, **Prod Devices** for production-only breakdowns, **Dev Devices** for dev/test devices, **CMDB Inventory** for monitored identity/policy/state, **Discovery Inventory** for CMDB-oriented scan evidence, and **Asset Health Correlation** for enrichment workflows.
 
 The CMDB view reads old summaries and schema-v4 control events together. Historical v1-v3 events remain searchable through the normalization macros.
 

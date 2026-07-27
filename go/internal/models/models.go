@@ -131,6 +131,73 @@ type SummaryEvent struct {
 	LatencyUpperBoundMs    *float64 `json:"latency_upper_bound_ms,omitempty"`
 }
 
+// DiscoveryEvent is point-in-time subnet discovery evidence. It intentionally
+// does not use monitoring state or packet-loss fields: absence from one scan is
+// "not_observed", not proof that an asset is down or decommissioned.
+type DiscoveryEvent struct {
+	SchemaVersion       int      `json:"schema_version"`
+	EventID             string   `json:"event_id"`
+	CollectorID         string   `json:"collector_id"`
+	CollectorHost       string   `json:"collector_host"`
+	CycleID             string   `json:"cycle_id"`
+	Timestamp           string   `json:"timestamp"`
+	RecordType          string   `json:"record_type"`
+	EvidenceKind        string   `json:"evidence_kind"`
+	ScanID              string   `json:"scan_id"`
+	PreviousScanID      string   `json:"previous_scan_id,omitempty"`
+	ScheduleID          string   `json:"schedule_id,omitempty"`
+	TargetNetwork       string   `json:"target_network"`
+	TargetIP            string   `json:"target_ip"`
+	EndpointID          string   `json:"endpoint_id"`
+	Hostname            string   `json:"hostname,omitempty"`
+	FQDN                string   `json:"fqdn,omitempty"`
+	Dev                 bool     `json:"dev"`
+	MonitoringEnabled   bool     `json:"monitoring_enabled"`
+	MaintenanceUntil    string   `json:"maintenance_until,omitempty"`
+	MaintenanceReason   string   `json:"maintenance_reason,omitempty"`
+	Group               string   `json:"group,omitempty"`
+	Description         string   `json:"description,omitempty"`
+	EntityType          string   `json:"entitytype,omitempty"`
+	Device              string   `json:"device,omitempty"`
+	Vendor              string   `json:"vendor,omitempty"`
+	Notes               string   `json:"additional_notes,omitempty"`
+	DNSStatus           string   `json:"dns_status,omitempty"`
+	DNSForwardConfirmed bool     `json:"dns_forward_confirmed"`
+	DiscoveredAt        string   `json:"discovered_at,omitempty"`
+	DiscoverySource     string   `json:"discovery_source,omitempty"`
+	DiscoveryLatencyMs  *float64 `json:"discovery_latency_ms,omitempty"`
+	DiscoveryStatus     string   `json:"discovery_status"`
+	DiscoveryDelta      string   `json:"discovery_delta_status"`
+	DiscoveryObserved   bool     `json:"discovery_observed"`
+	BaselineAvailable   bool     `json:"baseline_available"`
+	ScanDurationMs      int64    `json:"scan_duration_ms,omitempty"`
+}
+
+// DiscoveryScanEvent records that a scan completed even when it observed no
+// endpoints. It is the audit/control-plane companion to DiscoveryEvent.
+type DiscoveryScanEvent struct {
+	SchemaVersion     int    `json:"schema_version"`
+	EventID           string `json:"event_id"`
+	CollectorID       string `json:"collector_id"`
+	CollectorHost     string `json:"collector_host"`
+	CycleID           string `json:"cycle_id"`
+	Timestamp         string `json:"timestamp"`
+	RecordType        string `json:"record_type"`
+	EvidenceKind      string `json:"evidence_kind"`
+	ScanID            string `json:"scan_id"`
+	PreviousScanID    string `json:"previous_scan_id,omitempty"`
+	ScheduleID        string `json:"schedule_id,omitempty"`
+	TargetNetwork     string `json:"target_network"`
+	BaselineAvailable bool   `json:"baseline_available"`
+	EndpointsObserved int    `json:"endpoints_observed"`
+	NewEndpoints      int    `json:"new_endpoints"`
+	MissingEndpoints  int    `json:"missing_endpoints"`
+	Unchanged         int    `json:"unchanged_endpoints"`
+	ScanDurationMs    int64  `json:"scan_duration_ms,omitempty"`
+	TimeoutMs         int    `json:"timeout_ms"`
+	ThrottleLimit     int    `json:"throttle_limit"`
+}
+
 type MetricsEvent struct {
 	Time       float64                `json:"time"`
 	Host       string                 `json:"host"`

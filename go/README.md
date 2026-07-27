@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.9.0 is the current Go runtime. It adds bounded local logging, discovery history and scheduling, FQDN inventory evidence, explicit monitoring policy, and an opt-in versioned configuration upgrade path.
+Ping Monitor v5.10.0 is the current Go runtime. It adds bounded local logging, discovery history and scheduling, durable Splunk discovery evidence, FQDN inventory evidence, explicit monitoring policy, and an opt-in versioned configuration upgrade path.
 
 ## Current Go Release
 
-- Version: `v5.9.0`
+- Version: `v5.10.0`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.9.0.md](../RELEASE_NOTES_v5.9.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.10.0.md](../RELEASE_NOTES_v5.10.0.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -18,7 +18,8 @@ Ping Monitor v5.9.0 is the current Go runtime. It adds bounded local logging, di
 - Configuration Advisor with tolerant multi-error CSV inspection, worst-case capacity evidence, operating profiles, safe inventory cleanup, and confirmed config optimization.
 - Fsynced, bounded HEC/metrics outbox with asynchronous delivery, restart recovery, per-sink progress, and optional indexer acknowledgment.
 - Continuous result-log rotation with archive retention and optional gzip compression.
-- Durable discovery snapshots, CSV export, FQDN evidence, target deltas, and weekly schedules.
+- Durable indexed discovery snapshots, bounded retention, CSV export, FQDN evidence, actionable target deltas, schedule health, and weekly schedules.
+- Scan summaries and truthful observed/not-observed discovery evidence delivered through the same serialized file/HEC event pipeline as monitoring output.
 - Probe suppression through explicit monitoring and maintenance policy, independent of dev/prod classification.
 
 ## Runtime Compatibility
@@ -123,11 +124,12 @@ It provides:
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
 - live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status
 - config editing against the active config file
-- cancellable discovery with host-count preflight, FQDN evidence, CSV export, scan history/deltas, and staged import workflows
+- cancellable discovery with host-count preflight, FQDN evidence, CSV export, indexed scan history/deltas, and staged import workflows
+- Discovery Operations with schedule due/error state and explicit All/New/Missing historical review
 - timezone-aware weekly discovery schedules that remain review-only
 - monitoring pause/resume and timed maintenance controls
 - HEC event and metrics endpoint validation
-- settings help modals for the runtime configuration surface
+- contextual help modals for every configuration field and the endpoint, discovery, advisor, and signal-semantics surfaces
 - a dedicated Advisor view with readiness counts, current/proposed schedule evidence, findings, change previews, safe fixes, profiles, and a bounded benchmark
 - a confirmation-gated Restart Collector action when a saved config revision is not yet active
 
@@ -141,6 +143,7 @@ The UI serves these key routes:
 - `POST /api/advisor/apply` and `POST /api/advisor/benchmark`
 - `POST /api/runtime/restart`
 - `POST /api/discovery/run`
+- `GET /api/discovery/history` and `GET /api/discovery/history?scan_id=<id>`
 - `POST /api/output/test`
 
 Operational notes:
@@ -179,6 +182,7 @@ ping = @{
 
 - `output_mode` controls file, HEC, or dual event output.
 - `metrics.enabled` and `metrics.mode` control metrics delivery.
+- Discovery observations do not have a metrics representation. Use `metrics.mode=dual` when the Splunk Discovery Inventory dashboard must receive discovery evidence.
 - `hec.retry.*` settings define retry behavior.
 - Completed HEC/metrics cycles are persisted atomically in `delivery.spool_path` before network delivery. Legacy `drop_on_failure` and dead-letter settings are retained only for config compatibility and do not permit v5.5 to discard a failed cycle.
 - `hec.use_ack` and `metrics.use_ack` upgrade delivery confirmation from HEC acceptance to Splunk indexer acknowledgment. `/api/status` states which confirmation mode is active.
@@ -188,7 +192,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.9.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.10.0`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

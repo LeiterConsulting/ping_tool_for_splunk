@@ -30,6 +30,7 @@ type Options struct {
 	StatePath       string
 	ReloadEndpoints func() ([]models.Endpoint, bool, error)
 	Runtime         *runtimeinfo.Tracker
+	Output          *output.Manager
 }
 
 type endpointJob struct {
@@ -74,12 +75,20 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 	lastReloadWarn := time.Time{}
 	lastReloadErr := ""
 
-	// Output manager is single-threaded: avoids locking and prevents buffer races.
-	out, err := output.NewManager(cfg, collectorHost, collectorID)
-	if err != nil {
-		return err
+	// The output manager is single-threaded. A caller-owned manager allows the
+	// monitor and discovery scheduler to share one durable file/HEC pipeline.
+	out := opts.Output
+	ownsOutput := false
+	if out == nil {
+		out, err = output.NewManager(cfg, collectorHost, collectorID)
+		if err != nil {
+			return err
+		}
+		ownsOutput = true
 	}
-	defer out.Close()
+	if ownsOutput {
+		defer out.Close()
+	}
 
 	onFallback := func(ip string, from string, to string, reason string) {
 		if cfg.Diagnostics.Enabled || cfg.Debug.EmitMemoryStats {
