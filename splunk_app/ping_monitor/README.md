@@ -7,6 +7,7 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 ### What's New in v3.0.0
 
 - **CMDB Inventory**: Adds a current inventory view with stable endpoint identity, FQDN, first/last seen, monitoring policy, maintenance context, enrichment fields, and collector-confirmed state.
+- **Bounded by default**: CMDB searches use a 24-hour operational window by default and expose a time control for deliberate historical expansion.
 - **Suppression truth**: Schema-v4 `monitoring_control` events appear as Paused or Maintenance instead of being interpreted as packet loss or downtime.
 - **Historical continuity**: Existing v1-v3 summary events remain normalized and searchable. No historical reindex is required.
 - **Setup-driven searches**: The new view uses the events index and sourcetype already configured in Setup.

@@ -20,6 +20,7 @@ Version 5.9.0 adds durable discovery, explicit monitoring policy, bounded log re
 - Multiple timezone-aware weekly discovery schedules are supported. Scheduled results remain review-only and are never silently imported into monitoring.
 - Scheduled discovery runs even when the optional admin UI listener is disabled.
 - The paired Splunk app 3.0.0 build 42 adds a current CMDB Inventory dashboard and continues to normalize older event history.
+- The CMDB dashboard defaults to a responsive 24-hour search window; operators can expand the time control when older inventory history is required.
 
 ## Log Rotation and Retention
 

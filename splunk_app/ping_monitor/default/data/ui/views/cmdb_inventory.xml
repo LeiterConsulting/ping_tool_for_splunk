@@ -1,6 +1,6 @@
 <dashboard version="1.1">
   <label>CMDB Inventory</label>
-  <description>Current endpoint inventory, monitoring policy, identity, and collector-confirmed state. Paused and maintenance endpoints are shown as suppressed—not falsely reported as down.</description>
+  <description>Current endpoint inventory, monitoring policy, identity, and collector-confirmed state. The default 24-hour window keeps the view responsive; expand it deliberately when older inventory history is needed.</description>
 
   <init>
     <set token="cmdb_config_loaded">true</set>
@@ -23,6 +23,13 @@
   </search>
 
   <fieldset submitButton="false" autoRun="true">
+    <input type="time" token="inventory_time" searchWhenChanged="true">
+      <label>Inventory History Window</label>
+      <default>
+        <earliest>-24h@h</earliest>
+        <latest>now</latest>
+      </default>
+    </input>
     <input type="dropdown" token="monitoring_filter" searchWhenChanged="true">
       <label>Monitoring Policy</label>
       <choice value="*">All Policies</choice>
@@ -43,8 +50,8 @@
 | stats count by group
 | fields group
 | sort group</query>
-        <earliest>0</earliest>
-        <latest>now</latest>
+        <earliest>$inventory_time.earliest$</earliest>
+        <latest>$inventory_time.latest$</latest>
       </search>
     </input>
     <input type="text" token="inventory_search" searchWhenChanged="true">
@@ -60,8 +67,8 @@
         <search>
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | stats count AS total</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="drilldown">none</option>
       </single>
@@ -73,8 +80,8 @@
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | where monitoring_status="Active"
 | stats count AS active</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="drilldown">none</option>
       </single>
@@ -86,8 +93,8 @@
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | where monitoring_status="Maintenance"
 | stats count AS maintenance</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="drilldown">none</option>
       </single>
@@ -99,8 +106,8 @@
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | where monitoring_status="Paused"
 | stats count AS paused</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="drilldown">none</option>
       </single>
@@ -118,10 +125,10 @@
 | search endpoint_key="*$inventory_search$*" OR hostname="*$inventory_search$*" OR fqdn="*$inventory_search$*" OR target_ip="*$inventory_search$*" OR vendor="*$inventory_search$*" OR device="*$inventory_search$*"
 | eval fqdn=coalesce(fqdn, "Not resolved"), group=coalesce(group, "Unassigned"), maintenance_reason=coalesce(maintenance_reason, "")
 | table endpoint_key, hostname, fqdn, target_ip, monitoring_status, inventory_state, observation_status, signal_quality, group, entitytype, device, vendor, dev, last_latency_ms, last_packet_loss_pct, maintenance_until, maintenance_reason, first_seen_human, last_seen_human
-| rename endpoint_key AS "Endpoint ID", hostname AS "Hostname", fqdn AS "FQDN", target_ip AS "IP Address", monitoring_status AS "Monitoring", inventory_state AS "Current State", observation_status AS "Observation", signal_quality AS "Signal Quality", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", dev AS "Dev", last_latency_ms AS "Last Latency (ms)", last_packet_loss_pct AS "Last Packet Loss %", maintenance_until AS "Maintenance Until", maintenance_reason AS "Maintenance Reason", first_seen_human AS "First Seen", last_seen_human AS "Last Seen"
+| rename endpoint_key AS "Endpoint ID", hostname AS "Hostname", fqdn AS "FQDN", target_ip AS "IP Address", monitoring_status AS "Monitoring", inventory_state AS "Current State", observation_status AS "Observation", signal_quality AS "Signal Quality", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", dev AS "Dev", last_latency_ms AS "Last Latency (ms)", last_packet_loss_pct AS "Last Packet Loss %", maintenance_until AS "Maintenance Until", maintenance_reason AS "Maintenance Reason", first_seen_human AS "First Seen in Window", last_seen_human AS "Last Seen"
 | sort "Monitoring", "Current State", "Hostname"</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="count">25</option>
         <option name="drilldown">none</option>
@@ -137,8 +144,8 @@
         <search>
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | stats count by monitoring_status</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
         <option name="charting.drilldown">none</option>
@@ -151,8 +158,8 @@
           <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
 | eval fqdn_coverage=if(isnotnull(fqdn) AND fqdn!="", "FQDN present", "FQDN missing")
 | stats count by fqdn_coverage</query>
-          <earliest>0</earliest>
-          <latest>now</latest>
+          <earliest>$inventory_time.earliest$</earliest>
+          <latest>$inventory_time.latest$</latest>
         </search>
         <option name="charting.chart">pie</option>
         <option name="charting.drilldown">none</option>
