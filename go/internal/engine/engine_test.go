@@ -185,6 +185,30 @@ func TestProbeDispatchDelayDisablesWhenProbeBudgetConsumesCycle(t *testing.T) {
 	}
 }
 
+func TestEndpointSuppressionIsIndependentFromDevClassification(t *testing.T) {
+	now := time.Now().UTC()
+	legacy := models.Endpoint{IP: "192.0.2.1", Hostname: "legacy", Dev: true}
+	if reason, suppressed := endpointSuppression(legacy, now); suppressed {
+		t.Fatalf("legacy dev endpoint suppressed with reason %q", reason)
+	}
+	disabled := legacy
+	disabled.MonitoringEnabled = models.Bool(false)
+	if reason, suppressed := endpointSuppression(disabled, now); !suppressed || reason != "monitoring_disabled" {
+		t.Fatalf("disabled endpoint reason/suppressed = %q/%t", reason, suppressed)
+	}
+	maintenance := legacy
+	maintenance.MaintenanceUntil = now.Add(time.Hour).Format(time.RFC3339)
+	maintenance.MaintenanceReason = "change window"
+	if reason, suppressed := endpointSuppression(maintenance, now); !suppressed || reason != "scheduled_maintenance" {
+		t.Fatalf("maintenance endpoint reason/suppressed = %q/%t", reason, suppressed)
+	}
+	result := runSuppressedEndpoint(config.Defaults(t.TempDir()), "collector", "collector-id", "cycle", maintenance, now)
+	if result.Summary.RecordType != "monitoring_control" || result.Summary.State != "maintenance" ||
+		result.Summary.ObservationStatus != "suppressed" || result.Summary.MeasurementValid {
+		t.Fatalf("suppression summary = %#v", result.Summary)
+	}
+}
+
 func failedResults(count int, reason string) []pingpkg.PingResult {
 	results := make([]pingpkg.PingResult, 0, count)
 	now := time.Now()

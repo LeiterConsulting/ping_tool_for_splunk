@@ -7,9 +7,11 @@ import (
 	"io"
 	"net"
 	"os"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 )
@@ -82,9 +84,14 @@ func inspectInventory(path string) (Inventory, []Finding) {
 		ipText := strings.TrimSpace(rawIP)
 		hostname := strings.TrimSpace(rawHostname)
 		dev, devErr := parseBool(get(row, "dev"))
+		monitoringEnabled, monitoringErr := parseBoolDefault(get(row, "monitoring_enabled"), true)
 		endpoint := models.Endpoint{
-			IP: ipText, Hostname: hostname, Dev: dev, Group: first(get(row, "group"), "default"),
-			Description: strings.TrimSpace(get(row, "description")), EntityType: strings.TrimSpace(get(row, "entitytype")),
+			IP: ipText, Hostname: hostname, FQDN: strings.TrimSpace(get(row, "fqdn")),
+			Dev: dev, MonitoringEnabled: models.Bool(monitoringEnabled),
+			MaintenanceUntil:  strings.TrimSpace(get(row, "maintenance_until")),
+			MaintenanceReason: strings.TrimSpace(get(row, "maintenance_reason")),
+			Group:             first(get(row, "group"), "default"),
+			Description:       strings.TrimSpace(get(row, "description")), EntityType: strings.TrimSpace(get(row, "entitytype")),
 			Device: strings.TrimSpace(get(row, "device")), Vendor: strings.TrimSpace(get(row, "vendor")),
 			AdditionalNotes: strings.TrimSpace(get(row, "additional_notes")), EndpointID: strings.TrimSpace(get(row, "endpoint_id")),
 		}
@@ -93,6 +100,18 @@ func inspectInventory(path string) (Inventory, []Finding) {
 		}
 		if devErr != nil {
 			findings = append(findings, blocker("INV_DEV", "Invalid dev flag", fmt.Sprintf("CSV line %d: %v", rowNumber, devErr), "Use true/false, 1/0, yes/no, or leave the field blank."))
+		}
+		if monitoringErr != nil {
+			findings = append(findings, blocker("INV_MONITORING_ENABLED", "Invalid monitoring_enabled flag", fmt.Sprintf("CSV line %d: %v", rowNumber, monitoringErr), "Use true/false, 1/0, yes/no, or leave the field blank for enabled."))
+		}
+		maintenanceActive := false
+		if endpoint.MaintenanceUntil != "" {
+			until, parseErr := time.Parse(time.RFC3339, endpoint.MaintenanceUntil)
+			if parseErr != nil {
+				findings = append(findings, blocker("INV_MAINTENANCE_UNTIL", "Invalid maintenance expiration", fmt.Sprintf("CSV line %d has %q.", rowNumber, endpoint.MaintenanceUntil), "Use an RFC3339 timestamp such as 2026-07-28T04:00:00Z."))
+			} else {
+				maintenanceActive = time.Now().Before(until)
+			}
 		}
 		if ipText == "" {
 			findings = append(findings, blocker("INV_MISSING_IP", "Endpoint IP is missing", fmt.Sprintf("CSV line %d has no target address.", rowNumber), "Enter the intended literal IPv4 or IPv6 address."))
@@ -118,7 +137,7 @@ func inspectInventory(path string) (Inventory, []Finding) {
 			result.MissingHostnames++
 			findings = append(findings, blocker("INV_MISSING_HOSTNAME", "Endpoint hostname is missing", fmt.Sprintf("CSV line %d (%s) has no hostname.", rowNumber, canonical), "Enter an operator-approved hostname; reverse DNS may be used as a suggestion but is not applied automatically."))
 		}
-		if devErr == nil && hostname != "" {
+		if devErr == nil && monitoringErr == nil && hostname != "" {
 			result.NormalizedRows = append(result.NormalizedRows, endpoint)
 		}
 		if previous, exists := seenTargets[canonical]; exists {
@@ -139,7 +158,9 @@ func inspectInventory(path string) (Inventory, []Finding) {
 				endpoint models.Endpoint
 				row      int
 			}{endpoint, rowNumber}
-			result.SchedulableEndpoints++
+			if monitoringEnabled && !maintenanceActive {
+				result.SchedulableEndpoints++
+			}
 		}
 		if !endpointIDPattern.MatchString(endpoint.EndpointID) {
 			findings = append(findings, blocker("INV_ENDPOINT_ID", "Endpoint ID is invalid", fmt.Sprintf("CSV line %d has endpoint_id %q.", rowNumber, endpoint.EndpointID), "Use letters, digits, dots, underscores, colons, or hyphens."))
@@ -168,9 +189,16 @@ func parseBool(raw string) (bool, error) {
 	}
 }
 
+func parseBoolDefault(raw string, defaultValue bool) (bool, error) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue, nil
+	}
+	return parseBool(raw)
+}
+
 func endpointsEquivalent(a models.Endpoint, b models.Endpoint) bool {
 	a.EndpointID, b.EndpointID = "", ""
-	return a == b
+	return reflect.DeepEqual(a, b)
 }
 
 func looksLikeMissingOctet(value string) bool {

@@ -2,7 +2,7 @@
 
 Document ID: Troubleshooting 0001
 
-Applies to: Ping Monitor v5.7.x on Windows when launched by NSSM, another service wrapper, a manually created Windows service, or Task Scheduler
+Applies to: Ping Monitor v5.7 or newer on Windows when launched by NSSM, another service wrapper, a manually created Windows service, or Task Scheduler
 
 Default service name: `SplunkPingMonitor`
 
@@ -229,7 +229,7 @@ First record the existing definition and confirm the service name. Then run the 
 
 The force-reinstall operation removes the existing Windows service registration and replaces it with the verified NSSM-hosted definition. It does not delete the deployment files.
 
-If NSSM is intentionally not permitted, use Task Scheduler or an approved service wrapper and configure it with the same absolute binary, config, endpoint, and working-directory paths. Direct SCM registration is not supported by Ping Monitor v5.7.x.
+If NSSM is intentionally not permitted, use Task Scheduler or an approved service wrapper and configure it with the same absolute binary, config, endpoint, and working-directory paths. Direct SCM registration is not supported by the Go runtime.
 
 ### When Ping Monitor is a Scheduled Task
 

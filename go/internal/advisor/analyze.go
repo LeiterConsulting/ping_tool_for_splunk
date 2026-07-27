@@ -3,6 +3,7 @@ package advisor
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,6 +71,14 @@ func AnalyzeDeployment(ctx context.Context, opts AnalyzeOptions) Report {
 }
 
 func analyzeConfig(report *Report, cfg config.Config) {
+	if cfg.ConfigSchemaVersion < config.CurrentSchemaVersion {
+		report.Findings = append(report.Findings, Finding{
+			Code: "CFG_SCHEMA_LEGACY", Severity: SeverityOpportunity, Category: "configuration",
+			Title:          "Configuration uses the compatibility schema",
+			Message:        fmt.Sprintf("Schema %d remains supported and will not be rewritten automatically.", cfg.ConfigSchemaVersion),
+			Recommendation: "Use `pingmonitor config upgrade --check` to preview a non-destructive schema-v2 JSON migration.",
+		})
+	}
 	if cfg.TimeoutMs > 2000 {
 		report.Findings = append(report.Findings, Finding{Code: "CFG_TIMEOUT_HIGH", Severity: SeverityWarning, Category: "signal", Title: "No-reply timeout is high", Message: fmt.Sprintf("Each missing reply may consume %d ms. This does not improve latency precision; it only delays no-reply classification.", cfg.TimeoutMs), Recommendation: "Use 1000 ms for ordinary LAN/WAN monitoring or 1500 ms for known high-latency paths."})
 	}
@@ -87,6 +96,42 @@ func analyzeConfig(report *Report, cfg config.Config) {
 	if cfg.Metrics.Enabled && (strings.TrimSpace(cfg.Metrics.HECURL) == "" || strings.TrimSpace(cfg.Metrics.Token) == "" || strings.TrimSpace(cfg.Metrics.Index) == "") {
 		report.Findings = append(report.Findings, blocker("METRICS_INCOMPLETE", "Metrics output is incomplete", "Metrics are enabled but URL, token, or index is missing.", "Complete the metrics destination before service startup."))
 	}
+	if cfg.OutputMode == "file" || cfg.OutputMode == "both" {
+		eventsPerCycle := report.Inventory.SchedulableEndpoints
+		if cfg.EmitIndividualPings {
+			eventsPerCycle *= cfg.PingsPerCycle + 1
+		}
+		cyclesPerDay := 0
+		if cfg.CycleIntervalSeconds > 0 {
+			cyclesPerDay = 86400 / cfg.CycleIntervalSeconds
+		}
+		estimatedDailyBytes := int64(eventsPerCycle) * int64(cyclesPerDay) * 850
+		report.Findings = append(report.Findings, Finding{
+			Code: "LOG_VOLUME_ESTIMATE", Severity: SeverityInfo, Category: "filesystem",
+			Title:          "Estimated local result-log volume",
+			Message:        fmt.Sprintf("The current inventory and event settings may write approximately %.2f GiB per day before compression.", float64(estimatedDailyBytes)/(1024*1024*1024)),
+			Evidence:       []string{fmt.Sprintf("%d events per cycle", eventsPerCycle), fmt.Sprintf("%d cycles per day", cyclesPerDay)},
+			Recommendation: "Use summary-only events when per-attempt records are not required, and set bounded rotation retention.",
+			Details:        map[string]any{"estimated_daily_bytes": estimatedDailyBytes},
+		})
+		if cfg.LogRetentionFiles == 0 && cfg.LogRetentionDays == 0 {
+			report.Findings = append(report.Findings, Finding{
+				Code: "LOG_RETENTION_UNBOUNDED", Severity: SeverityWarning, Category: "filesystem",
+				Title:          "Rotated result logs have no retention boundary",
+				Message:        "Live rotation limits the active file, but archives will remain indefinitely.",
+				Recommendation: "Set log_retention_files, log_retention_days, or both after confirming any file-based Splunk forwarder has time to ingest archives.",
+			})
+		}
+		if info, err := os.Stat(cfg.LogPath); err == nil && info.Size() > int64(cfg.LogRotationSizeMB)*1024*1024 {
+			report.Findings = append(report.Findings, Finding{
+				Code: "LOG_ACTIVE_OVERSIZED", Severity: SeverityWarning, Category: "filesystem",
+				Title:          "Active result log exceeds its configured rotation threshold",
+				Message:        fmt.Sprintf("%s is %.2f MiB with a %d MiB threshold.", cfg.LogPath, float64(info.Size())/(1024*1024), cfg.LogRotationSizeMB),
+				Recommendation: "Restart once to contain the legacy oversized file, then run v5.9.0 with live rotation enabled.",
+			})
+		}
+	}
+	analyzeDiscoverySchedules(report, cfg)
 	for code, label := range map[string]string{"PATH_LOG": "Log directory", "PATH_OUTBOX": "Durable outbox directory"} {
 		target := ""
 		if code == "PATH_LOG" {
@@ -109,6 +154,56 @@ func analyzeConfig(report *Report, cfg config.Config) {
 	}
 }
 
+func analyzeDiscoverySchedules(report *Report, cfg config.Config) {
+	seen := make(map[string]struct{})
+	for index, scheduleConfig := range cfg.Discovery.Schedules {
+		if !scheduleConfig.Enabled {
+			continue
+		}
+		label := fmt.Sprintf("discovery schedule %d", index+1)
+		if scheduleConfig.ID == "" {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_ID", "Discovery schedule ID is missing", label, "Assign a stable schedule ID."))
+		} else if _, exists := seen[strings.ToLower(scheduleConfig.ID)]; exists {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_DUPLICATE_ID", "Discovery schedule ID is duplicated", scheduleConfig.ID, "Use a unique ID for each schedule."))
+		} else {
+			seen[strings.ToLower(scheduleConfig.ID)] = struct{}{}
+		}
+		if scheduleConfig.Frequency != "weekly" {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_FREQUENCY", "Discovery frequency is unsupported", scheduleConfig.Frequency, "Use weekly for v5.9.0 schedules."))
+		}
+		switch strings.ToLower(scheduleConfig.Day) {
+		case "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday":
+		default:
+			report.Findings = append(report.Findings, blocker("DISCOVERY_DAY", "Discovery schedule day is invalid", scheduleConfig.Day, "Use a weekday name such as sunday."))
+		}
+		if _, err := time.Parse("15:04", scheduleConfig.Time); err != nil {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_TIME", "Discovery schedule time is invalid", scheduleConfig.Time, "Use 24-hour HH:MM."))
+		}
+		if !strings.EqualFold(scheduleConfig.Timezone, "local") {
+			if _, err := time.LoadLocation(scheduleConfig.Timezone); err != nil {
+				report.Findings = append(report.Findings, blocker("DISCOVERY_TIMEZONE", "Discovery timezone is invalid", scheduleConfig.Timezone, "Use Local or an IANA timezone such as America/New_York."))
+			}
+		}
+		if len(scheduleConfig.Targets) == 0 {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_TARGETS", "Discovery schedule has no targets", label, "Add at least one bounded IPv4 CIDR."))
+		}
+		for _, target := range scheduleConfig.Targets {
+			ip, network, err := net.ParseCIDR(target)
+			if err != nil || ip.To4() == nil {
+				report.Findings = append(report.Findings, blocker("DISCOVERY_TARGET", "Discovery target is invalid", target, "Use an IPv4 CIDR such as 10.10.0.0/16."))
+				continue
+			}
+			mask, _ := network.Mask.Size()
+			if mask < 16 || mask > 30 {
+				report.Findings = append(report.Findings, blocker("DISCOVERY_TARGET_SIZE", "Discovery target is outside the safe scan boundary", target, "Use a CIDR between /16 and /30."))
+			}
+		}
+		if scheduleConfig.ImportPolicy != "review" {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_IMPORT_POLICY", "Discovery import policy is unsafe or unsupported", scheduleConfig.ImportPolicy, "Use review so scheduled scans never mutate monitored inventory automatically."))
+		}
+	}
+}
+
 func blocker(code string, title string, message string, recommendation string) Finding {
 	return Finding{Code: code, Severity: SeverityBlocker, Category: categoryForCode(code), Title: title, Message: message, Recommendation: recommendation}
 }
@@ -125,6 +220,9 @@ func categoryForCode(code string) string {
 	}
 	if strings.HasPrefix(code, "PATH_") {
 		return "filesystem"
+	}
+	if strings.HasPrefix(code, "DISCOVERY_") {
+		return "discovery"
 	}
 	return "configuration"
 }

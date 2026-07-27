@@ -1,12 +1,14 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.7.2)
+# Splunk Ping Monitor Configuration (Go v5.9.0)
 # ============================================
-# Preferred configuration file for pingmonitor.exe.
+# Legacy-compatible configuration example. New deployments use config.json.
 # Relative paths are resolved from the directory containing this file.
 # Supported fallback formats: config.yaml, config.json.
 # ============================================
 
 @{
+    config_schema_version = 2
+
     # ----------------------------------------
     # CORE CYCLE SETTINGS
     # ----------------------------------------
@@ -29,6 +31,9 @@
     output_mode = "file"
     log_path = "./logs/ping_results.log"
     log_rotation_size_mb = 50
+    log_retention_files = 10
+    log_retention_days = 14
+    log_compress_rotated = $true
 
     # ----------------------------------------
     # PING ENGINE
@@ -136,5 +141,28 @@
         max_spool_bytes = "512MB"
         max_envelopes = 10000
         drain_max_envelopes = 100
+    }
+
+    # ----------------------------------------
+    # DISCOVERY HISTORY AND SCHEDULING
+    # ----------------------------------------
+    discovery = @{
+        history_path = "./data/discovery"
+        # Weekly schedules remain review-only: scan results are never
+        # silently added to the monitored inventory.
+        schedules = @(
+            # @{
+            #     id = "weekly-core"
+            #     enabled = $true
+            #     targets = @("10.20.0.0/24")
+            #     frequency = "weekly"
+            #     day = "Sunday"
+            #     time = "02:00"
+            #     timezone = "America/New_York"
+            #     timeout_ms = 500
+            #     concurrency = 50
+            #     import_policy = "review"
+            # }
+        )
     }
 }

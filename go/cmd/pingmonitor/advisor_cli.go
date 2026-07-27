@@ -45,7 +45,7 @@ func runAdvisorCommand(args []string) (bool, int) {
 	if err := flags.Parse(args[1:]); err != nil {
 		return true, 2
 	}
-	resolvedConfig := resolveRuntimePath(*configPath, root, "config.psd1")
+	resolvedConfig := resolveConfigRuntimePath(*configPath, root)
 	resolvedEndpoints := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
 	opts := advisor.AnalyzeOptions{ConfigPath: resolvedConfig, EndpointsPath: resolvedEndpoints, RootDir: root, Profile: *profile, ProductVersion: buildinfo.Version}
 	ctx := context.Background()

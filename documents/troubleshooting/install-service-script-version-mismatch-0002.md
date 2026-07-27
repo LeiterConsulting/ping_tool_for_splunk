@@ -41,7 +41,7 @@ From the deployment directory, run:
 ./pingmonitor.exe --version
 ```
 
-Record the complete version, such as `v5.7.2`. Use that exact release tag when obtaining the matching service script.
+Record the complete version, such as `v5.9.0`. Use that exact release tag when obtaining the matching service script.
 
 If the executable does not support `--version`, it is itself old enough that the complete deployment should be reviewed before changing the service.
 
@@ -91,10 +91,10 @@ The raw tagged-file URL follows this pattern:
 https://raw.githubusercontent.com/LeiterConsulting/ping_tool_for_splunk/<release-tag>/Install-Service.ps1
 ```
 
-For example, an executable reporting `v5.7.2` should use:
+For example, an executable reporting `v5.9.0` should use:
 
 ```text
-https://raw.githubusercontent.com/LeiterConsulting/ping_tool_for_splunk/v5.7.2/Install-Service.ps1
+https://raw.githubusercontent.com/LeiterConsulting/ping_tool_for_splunk/v5.9.0/Install-Service.ps1
 ```
 
 Do not substitute `main` for the release tag. The default branch may be newer or older than the deployed executable.

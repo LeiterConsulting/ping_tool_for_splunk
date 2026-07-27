@@ -1,0 +1,162 @@
+<dashboard version="1.1">
+  <label>CMDB Inventory</label>
+  <description>Current endpoint inventory, monitoring policy, identity, and collector-confirmed state. Paused and maintenance endpoints are shown as suppressed—not falsely reported as down.</description>
+
+  <init>
+    <set token="cmdb_config_loaded">true</set>
+  </init>
+
+  <search id="cmdb_config_loader">
+    <query>| inputlookup ping_monitor_settings_lookup
+| search _key="global"
+| head 1
+| append [| makeresults | eval index="ping", sourcetype="ping_monitor"]
+| head 1
+| eval pm_index=if(isnull(index) OR index=="", "ping", index)
+| eval pm_sourcetype=if(isnull(sourcetype) OR sourcetype=="", "ping_monitor", sourcetype)</query>
+    <earliest>-1m</earliest>
+    <latest>now</latest>
+    <done>
+      <set token="pm_index">$result.pm_index$</set>
+      <set token="pm_sourcetype">$result.pm_sourcetype$</set>
+    </done>
+  </search>
+
+  <fieldset submitButton="false" autoRun="true">
+    <input type="dropdown" token="monitoring_filter" searchWhenChanged="true">
+      <label>Monitoring Policy</label>
+      <choice value="*">All Policies</choice>
+      <choice value="Active">Active</choice>
+      <choice value="Maintenance">Maintenance</choice>
+      <choice value="Paused">Paused</choice>
+      <default>*</default>
+    </input>
+    <input type="dropdown" token="group_filter" searchWhenChanged="true">
+      <label>Group</label>
+      <choice value="*">All Groups</choice>
+      <default>*</default>
+      <fieldForLabel>group</fieldForLabel>
+      <fieldForValue>group</fieldForValue>
+      <search>
+        <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| where isnotnull(group) AND group!=""
+| stats count by group
+| fields group
+| sort group</query>
+        <earliest>0</earliest>
+        <latest>now</latest>
+      </search>
+    </input>
+    <input type="text" token="inventory_search" searchWhenChanged="true">
+      <label>Inventory Search</label>
+      <default></default>
+    </input>
+  </fieldset>
+
+  <row depends="$cmdb_config_loaded$">
+    <panel>
+      <single>
+        <title>Known Endpoints</title>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| stats count AS total</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Actively Monitored</title>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| where monitoring_status="Active"
+| stats count AS active</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Maintenance</title>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| where monitoring_status="Maintenance"
+| stats count AS maintenance</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+    <panel>
+      <single>
+        <title>Paused</title>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| where monitoring_status="Paused"
+| stats count AS paused</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+      </single>
+    </panel>
+  </row>
+
+  <row depends="$cmdb_config_loaded$">
+    <panel>
+      <title>Current Inventory and Signal Truth</title>
+      <table>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| search (monitoring_status="$monitoring_filter$" OR "$monitoring_filter$"="*")
+| search (group="$group_filter$" OR "$group_filter$"="*")
+| search endpoint_key="*$inventory_search$*" OR hostname="*$inventory_search$*" OR fqdn="*$inventory_search$*" OR target_ip="*$inventory_search$*" OR vendor="*$inventory_search$*" OR device="*$inventory_search$*"
+| eval fqdn=coalesce(fqdn, "Not resolved"), group=coalesce(group, "Unassigned"), maintenance_reason=coalesce(maintenance_reason, "")
+| table endpoint_key, hostname, fqdn, target_ip, monitoring_status, inventory_state, observation_status, signal_quality, group, entitytype, device, vendor, dev, last_latency_ms, last_packet_loss_pct, maintenance_until, maintenance_reason, first_seen_human, last_seen_human
+| rename endpoint_key AS "Endpoint ID", hostname AS "Hostname", fqdn AS "FQDN", target_ip AS "IP Address", monitoring_status AS "Monitoring", inventory_state AS "Current State", observation_status AS "Observation", signal_quality AS "Signal Quality", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", dev AS "Dev", last_latency_ms AS "Last Latency (ms)", last_packet_loss_pct AS "Last Packet Loss %", maintenance_until AS "Maintenance Until", maintenance_reason AS "Maintenance Reason", first_seen_human AS "First Seen", last_seen_human AS "Last Seen"
+| sort "Monitoring", "Current State", "Hostname"</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="count">25</option>
+        <option name="drilldown">none</option>
+        <option name="wrap">true</option>
+      </table>
+    </panel>
+  </row>
+
+  <row depends="$cmdb_config_loaded$">
+    <panel>
+      <title>Monitoring Policy Distribution</title>
+      <chart>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| stats count by monitoring_status</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+    <panel>
+      <title>FQDN Coverage</title>
+      <chart>
+        <search>
+          <query>`ping_cmdb_inventory($pm_index$, $pm_sourcetype$)`
+| eval fqdn_coverage=if(isnotnull(fqdn) AND fqdn!="", "FQDN present", "FQDN missing")
+| stats count by fqdn_coverage</query>
+          <earliest>0</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="charting.chart">pie</option>
+        <option name="charting.drilldown">none</option>
+      </chart>
+    </panel>
+  </row>
+</dashboard>

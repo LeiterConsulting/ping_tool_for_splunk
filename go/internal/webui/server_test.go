@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	filerevision "github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
 )
@@ -42,14 +43,14 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := staticHandler(staticRoot, "v5.7.2")
+	handler := staticHandler(staticRoot, "v5.9.0")
 
 	indexResponse := httptest.NewRecorder()
 	handler.ServeHTTP(indexResponse, httptest.NewRequest(http.MethodGet, "/", nil))
 	if indexResponse.Code != http.StatusOK {
 		t.Fatalf("index status = %d", indexResponse.Code)
 	}
-	for _, expected := range []string{"/app.css?v=v5.7.2", "/app.js?v=v5.7.2"} {
+	for _, expected := range []string{"/app.css?v=v5.9.0", "/app.js?v=v5.9.0"} {
 		if !strings.Contains(indexResponse.Body.String(), expected) {
 			t.Fatalf("index does not contain versioned asset %q", expected)
 		}
@@ -59,7 +60,7 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	}
 
 	assetResponse := httptest.NewRecorder()
-	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, "/app.js?v=v5.7.2", nil))
+	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, "/app.js?v=v5.9.0", nil))
 	if assetResponse.Code != http.StatusOK {
 		t.Fatalf("asset status = %d", assetResponse.Code)
 	}
@@ -144,7 +145,7 @@ func TestAdvisorAPIAnalyzeAndApplySafeFixes(t *testing.T) {
 	if err := os.WriteFile(endpointsPath, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "v5.7.0"})
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "v5.9.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -906,6 +907,60 @@ func TestStatusUsesEffectiveConfigWithoutReparsingDisk(t *testing.T) {
 	}
 	if !payload.ConfigRestartRequired {
 		t.Fatal("config_restart_required = false after disk revision changed")
+	}
+}
+
+func TestPersistDiscoverySnapshotRetainsHistoryAndCalculatesDelta(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	request := discoveryRunRequest{TargetNetwork: "10.0.0.0", SubnetMask: 24, TimeoutMs: 500, ThrottleLimit: 25}
+	first := discoveryResponse{
+		GeneratedAt: "2026-07-27T12:00:00Z", ScanID: "scan-1", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 2},
+		Items:   []models.Endpoint{{IP: "10.0.0.1", Hostname: "one"}, {IP: "10.0.0.2", Hostname: "two"}},
+	}
+	if err := server.persistDiscoverySnapshot(request, &first); err != nil {
+		t.Fatal(err)
+	}
+	if first.Delta.New != 2 || first.Delta.Missing != 0 {
+		t.Fatalf("first delta = %+v", first.Delta)
+	}
+	second := discoveryResponse{
+		GeneratedAt: "2026-07-28T12:00:00Z", ScanID: "scan-2", Target: "10.0.0.0/24",
+		Summary: endpointSummary{Total: 2},
+		Items:   []models.Endpoint{{IP: "10.0.0.2", Hostname: "two"}, {IP: "10.0.0.3", Hostname: "three"}},
+	}
+	if err := server.persistDiscoverySnapshot(request, &second); err != nil {
+		t.Fatal(err)
+	}
+	if second.Delta.PreviousScanID != "scan-1" || second.Delta.New != 1 || second.Delta.Missing != 1 || second.Delta.Unchanged != 1 {
+		t.Fatalf("second delta = %+v", second.Delta)
+	}
+	scans, err := filepath.Glob(filepath.Join(root, "history", "scans", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 2 {
+		t.Fatalf("history files = %d, want 2", len(scans))
+	}
+}
+
+func TestPreviousScheduleOccurrenceSupportsCatchUpAndTimezone(t *testing.T) {
+	scheduleConfig := config.DiscoverySchedule{
+		ID: "weekly", Frequency: "weekly", Day: "sunday", Time: "02:00", Timezone: "America/New_York",
+	}
+	now := time.Date(2026, time.July, 27, 12, 0, 0, 0, time.UTC)
+	occurrence, err := previousScheduleOccurrence(scheduleConfig, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if occurrence.Weekday() != time.Sunday || occurrence.Hour() != 2 || !occurrence.Before(now) {
+		t.Fatalf("occurrence = %s", occurrence)
 	}
 }
 

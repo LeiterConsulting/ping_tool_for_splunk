@@ -7,21 +7,39 @@ import (
 	"strings"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Endpoint matches endpoints.csv schema.
 // Note: Field names match v4 payload keys (lowercase + underscores) where applicable.
 type Endpoint struct {
-	EndpointID      string `json:"endpoint_id,omitempty"`
-	IP              string `json:"ip"`
-	Hostname        string `json:"hostname"`
-	Dev             bool   `json:"dev"`
-	Group           string `json:"group"`
-	Description     string `json:"description"`
-	EntityType      string `json:"entitytype"`
-	Device          string `json:"device"`
-	Vendor          string `json:"vendor"`
-	AdditionalNotes string `json:"additional_notes"`
+	EndpointID          string   `json:"endpoint_id,omitempty"`
+	IP                  string   `json:"ip"`
+	Hostname            string   `json:"hostname"`
+	FQDN                string   `json:"fqdn,omitempty"`
+	Dev                 bool     `json:"dev"`
+	MonitoringEnabled   *bool    `json:"monitoring_enabled,omitempty"`
+	MaintenanceUntil    string   `json:"maintenance_until,omitempty"`
+	MaintenanceReason   string   `json:"maintenance_reason,omitempty"`
+	DNSStatus           string   `json:"dns_status,omitempty"`
+	DNSForwardConfirmed bool     `json:"dns_forward_confirmed,omitempty"`
+	DiscoveredAt        string   `json:"discovered_at,omitempty"`
+	DiscoveryScanID     string   `json:"discovery_scan_id,omitempty"`
+	DiscoverySource     string   `json:"discovery_source,omitempty"`
+	DiscoveryLatencyMs  *float64 `json:"discovery_latency_ms,omitempty"`
+	Group               string   `json:"group"`
+	Description         string   `json:"description"`
+	EntityType          string   `json:"entitytype"`
+	Device              string   `json:"device"`
+	Vendor              string   `json:"vendor"`
+	AdditionalNotes     string   `json:"additional_notes"`
+}
+
+func (e Endpoint) IsMonitoringEnabled() bool {
+	return e.MonitoringEnabled == nil || *e.MonitoringEnabled
+}
+
+func Bool(value bool) *bool {
+	return &value
 }
 
 type PingEvent struct {
@@ -35,7 +53,9 @@ type PingEvent struct {
 	ReceivedAt          string   `json:"received_at,omitempty"`
 	TargetIP            string   `json:"target_ip"`
 	Hostname            string   `json:"hostname"`
+	FQDN                string   `json:"fqdn,omitempty"`
 	Dev                 bool     `json:"dev"`
+	MonitoringEnabled   bool     `json:"monitoring_enabled"`
 	Group               string   `json:"group"`
 	Description         string   `json:"description"`
 	EntityType          string   `json:"entitytype"`
@@ -69,7 +89,11 @@ type SummaryEvent struct {
 	Timestamp              string   `json:"timestamp"`
 	TargetIP               string   `json:"target_ip"`
 	Hostname               string   `json:"hostname"`
+	FQDN                   string   `json:"fqdn,omitempty"`
 	Dev                    bool     `json:"dev"`
+	MonitoringEnabled      bool     `json:"monitoring_enabled"`
+	MaintenanceUntil       string   `json:"maintenance_until,omitempty"`
+	MaintenanceReason      string   `json:"maintenance_reason,omitempty"`
 	Group                  string   `json:"group"`
 	Description            string   `json:"description"`
 	EntityType             string   `json:"entitytype"`

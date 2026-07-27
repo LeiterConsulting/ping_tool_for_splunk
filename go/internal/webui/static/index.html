@@ -256,6 +256,8 @@
                 <button class="secondary-button" id="deselect-all-endpoints-button" type="button">Deselect All</button>
                 <button class="secondary-button" id="mark-selected-dev-button" type="button">Mark Selected Dev</button>
                 <button class="secondary-button" id="mark-selected-production-button" type="button">Mark Selected Prod</button>
+                <button class="secondary-button" id="pause-selected-button" type="button">Pause Monitoring</button>
+                <button class="secondary-button" id="resume-selected-button" type="button">Resume Monitoring</button>
                 <button class="danger-button" id="delete-endpoint-button" type="button">Delete Selected</button>
               </div>
 
@@ -284,16 +286,18 @@
                       <th class="table-select-col">Select</th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="ip">IP</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="hostname">Hostname</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="fqdn">FQDN</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="group">Group</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="entitytype">Type</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="device">Device</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="vendor">Vendor</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="dev">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="monitoring_enabled">Monitoring</button></th>
                     </tr>
                   </thead>
                   <tbody id="endpoint-rows">
                     <tr>
-                      <td colspan="8" class="empty-cell">Loading endpoints...</td>
+                      <td colspan="10" class="empty-cell">Loading endpoints...</td>
                     </tr>
                   </tbody>
                 </table>
@@ -320,6 +324,10 @@
                     <span>Hostname</span>
                     <input id="endpoint-hostname" class="text-input" type="text" placeholder="core-switch-a">
                   </label>
+                  <label class="field-group field-span-2">
+                    <span>FQDN</span>
+                    <input id="endpoint-fqdn" class="text-input" type="text" placeholder="core-switch-a.example.com">
+                  </label>
                   <label class="field-group">
                     <span>Group</span>
                     <input id="endpoint-group" class="text-input" type="text" placeholder="network">
@@ -344,11 +352,23 @@
                     <span>Additional Notes</span>
                     <textarea id="endpoint-notes" class="text-input text-area" rows="4" placeholder="Change notes, owner, exception reason, or rollout context"></textarea>
                   </label>
+                  <label class="field-group">
+                    <span>Maintenance Until (RFC3339)</span>
+                    <input id="endpoint-maintenance-until" class="text-input" type="text" placeholder="2026-07-28T04:00:00Z">
+                  </label>
+                  <label class="field-group">
+                    <span>Maintenance Reason</span>
+                    <input id="endpoint-maintenance-reason" class="text-input" type="text" placeholder="Approved change window">
+                  </label>
                 </div>
 
                 <label class="checkbox-row">
                   <input id="endpoint-dev" type="checkbox">
                   <span>Treat this endpoint as development or test and exclude it from production summary rollups.</span>
+                </label>
+                <label class="checkbox-row">
+                  <input id="endpoint-monitoring-enabled" type="checkbox">
+                  <span>Probe this endpoint. Clear this independently of dev/prod classification to suppress monitoring.</span>
                 </label>
               </form>
             </article>
@@ -404,6 +424,8 @@
                 <button class="secondary-button" id="deselect-all-discovery-button" type="button">Deselect All</button>
                 <button class="secondary-button" id="mark-discovery-dev-button" type="button">Mark Selected Dev</button>
                 <button class="secondary-button" id="mark-discovery-production-button" type="button">Mark Selected Prod</button>
+                <button class="secondary-button" id="export-discovery-all-button" type="button">Export All CSV</button>
+                <button class="secondary-button" id="export-discovery-selected-button" type="button">Export Selected CSV</button>
                 <button class="secondary-button" id="add-discovery-selected-button" type="button">Add Selected to Device List</button>
               </div>
 
@@ -463,16 +485,19 @@
                       <th class="table-select-col">Select</th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="ip">IP</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="hostname">Hostname</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="fqdn">FQDN</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="group">Group</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="entitytype">Type</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="device">Device</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="vendor">Vendor</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dev">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dns_status">DNS Evidence</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="discovery_latency_ms">Discovery RTT</button></th>
                     </tr>
                   </thead>
                   <tbody id="discovery-rows">
                     <tr>
-                      <td colspan="8" class="empty-cell">Discovery results will appear here after a run.</td>
+                      <td colspan="11" class="empty-cell">Discovery results will appear here after a run.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -565,6 +590,73 @@
                     <label class="field-group">
                       <span>Log Rotation (MB)</span>
                       <input id="cfg-log-rotation" class="text-input" type="number" min="1">
+                    </label>
+                    <label class="field-group">
+                      <span>Rotated Files to Keep</span>
+                      <input id="cfg-log-retention-files" class="text-input" type="number" min="0">
+                    </label>
+                    <label class="field-group">
+                      <span>Retention Age (days)</span>
+                      <input id="cfg-log-retention-days" class="text-input" type="number" min="0">
+                    </label>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-log-compress-rotated" type="checkbox">
+                    <span>Compress rotated result logs after the active writer has safely reopened.</span>
+                  </label>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Weekly Discovery Schedule</h3>
+                      <p class="summary-note">Runs independently of inventory import. Results are retained for review and delta export.</p>
+                    </div>
+                  </div>
+                  <label class="checkbox-row">
+                    <input id="cfg-discovery-enabled" type="checkbox">
+                    <span>Enable the primary weekly discovery schedule.</span>
+                  </label>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Schedule ID</span>
+                      <input id="cfg-discovery-id" class="text-input" type="text" placeholder="weekly-network-discovery">
+                    </label>
+                    <label class="field-group">
+                      <span>History Path</span>
+                      <input id="cfg-discovery-history-path" class="text-input" type="text" placeholder="./data/discovery">
+                    </label>
+                    <label class="field-group field-span-2">
+                      <span>Target Networks (one CIDR per line)</span>
+                      <textarea id="cfg-discovery-targets" class="text-input text-area" rows="4" placeholder="10.10.0.0/16&#10;10.20.0.0/16"></textarea>
+                    </label>
+                    <label class="field-group">
+                      <span>Day</span>
+                      <select id="cfg-discovery-day" class="text-input">
+                        <option value="sunday">Sunday</option>
+                        <option value="monday">Monday</option>
+                        <option value="tuesday">Tuesday</option>
+                        <option value="wednesday">Wednesday</option>
+                        <option value="thursday">Thursday</option>
+                        <option value="friday">Friday</option>
+                        <option value="saturday">Saturday</option>
+                      </select>
+                    </label>
+                    <label class="field-group">
+                      <span>Local Time</span>
+                      <input id="cfg-discovery-time" class="text-input" type="time" value="02:00">
+                    </label>
+                    <label class="field-group">
+                      <span>Timezone</span>
+                      <input id="cfg-discovery-timezone" class="text-input" type="text" placeholder="America/New_York">
+                    </label>
+                    <label class="field-group">
+                      <span>Timeout (ms)</span>
+                      <input id="cfg-discovery-schedule-timeout" class="text-input" type="number" min="100" value="500">
+                    </label>
+                    <label class="field-group">
+                      <span>Concurrency</span>
+                      <input id="cfg-discovery-concurrency" class="text-input" type="number" min="1" value="25">
                     </label>
                   </div>
                 </article>

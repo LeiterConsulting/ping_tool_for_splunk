@@ -195,14 +195,24 @@ function Resolve-HostnameFromIP {
     
     try {
         $dns = [System.Net.Dns]::GetHostEntry($IPAddress)
-        $hostname = $dns.HostName
-        
-        # Clean up FQDN to short name
-        if ($hostname -match '\.') {
-            $shortName = $hostname.Split('.')[0]
-            return $shortName
+        $fqdn = $dns.HostName.TrimEnd('.').ToLowerInvariant()
+        if ([string]::IsNullOrWhiteSpace($fqdn)) {
+            return $null
         }
-        return $hostname
+        $shortName = if ($fqdn -match '\.') { $fqdn.Split('.')[0] } else { $fqdn }
+        $forwardConfirmed = $false
+        try {
+            $forwardConfirmed = @([System.Net.Dns]::GetHostAddresses($fqdn) | ForEach-Object { $_.IPAddressToString }) -contains $IPAddress
+        }
+        catch {
+            $forwardConfirmed = $false
+        }
+        return [PSCustomObject]@{
+            Hostname         = $shortName
+            FQDN             = $fqdn
+            Status           = if ($forwardConfirmed) { 'forward_confirmed' } else { 'ptr_only' }
+            ForwardConfirmed = $forwardConfirmed
+        }
     }
     catch {
         return $null
@@ -637,14 +647,20 @@ Write-Host "Resolving hostnames and classifying devices..." -ForegroundColor Yel
 
 $endpoints = @()
 $counter = 0
+$scanId = [Guid]::NewGuid().ToString()
+$discoveredAt = [DateTime]::UtcNow.ToString('o')
 
 foreach ($host_ in ($onlineHosts | Sort-Object { [version]($_.IP -replace '(\d+)\.(\d+)\.(\d+)\.(\d+)', '$1.$2.$3.$4') })) {
     $counter++
     $pct = [math]::Round(($counter / $onlineHosts.Count) * 100)
     Write-Progress -Activity "Resolving hostnames" -Status "$($host_.IP)" -PercentComplete $pct
     
-    $hostname = Resolve-HostnameFromIP -IPAddress $host_.IP
-    
+    $dnsResult = Resolve-HostnameFromIP -IPAddress $host_.IP
+    $hostname = if ($dnsResult) { $dnsResult.Hostname } else { $null }
+    $fqdn = if ($dnsResult) { $dnsResult.FQDN } else { "" }
+    $dnsStatus = if ($dnsResult) { $dnsResult.Status } else { "unresolved" }
+    $dnsForwardConfirmed = if ($dnsResult) { [bool]$dnsResult.ForwardConfirmed } else { $false }
+
     if (-not $hostname) {
         # Generate a placeholder hostname from IP
         $hostname = "host-$($host_.IP -replace '\.', '-')"
@@ -657,6 +673,7 @@ foreach ($host_ in ($onlineHosts | Sort-Object { [version]($_.IP -replace '(\d+)
     $endpoints += [PSCustomObject]@{
         ip               = $host_.IP
         hostname         = $hostname.ToLower()
+        fqdn             = $fqdn
         group            = $group
         description      = $description
         entitytype       = $classification.EntityType
@@ -664,7 +681,15 @@ foreach ($host_ in ($onlineHosts | Sort-Object { [version]($_.IP -replace '(\d+)
         vendor           = $classification.Vendor
         additional_notes = ""
         dev              = if ($group -eq 'development') { $true } else { $false }
-        latency_ms       = $host_.Latency
+        monitoring_enabled = $true
+        maintenance_until = ""
+        maintenance_reason = ""
+        dns_status       = $dnsStatus
+        dns_forward_confirmed = $dnsForwardConfirmed
+        discovered_at    = $discoveredAt
+        discovery_scan_id = $scanId
+        discovery_source = $discoveryTarget.Display
+        discovery_latency_ms = $host_.Latency
     }
 }
 
@@ -711,7 +736,7 @@ if ($vendorEndpoints.Count -gt 0) {
 Write-Host "Exporting to $OutputPath..." -ForegroundColor Yellow
 
 # Create CSV with all columns for the current endpoint schema
-$csvData = $endpoints | Select-Object ip, hostname, group, description, entitytype, device, vendor, additional_notes, dev
+$csvData = $endpoints | Select-Object ip, hostname, fqdn, group, description, entitytype, device, vendor, additional_notes, dev, monitoring_enabled, maintenance_until, maintenance_reason, dns_status, dns_forward_confirmed, discovered_at, discovery_scan_id, discovery_source, discovery_latency_ms
 $csvData | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
 
 Write-Host ""
@@ -720,7 +745,7 @@ Write-Host "  Discovery Complete!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
 Write-Host "Output file: $OutputPath" -ForegroundColor White
-Write-Host "CSV Columns: ip, hostname, group, description, entitytype, device, vendor, additional_notes, dev" -ForegroundColor Gray
+Write-Host "CSV includes endpoint fields plus FQDN, DNS evidence, scan identity, discovery time, source, and discovery latency." -ForegroundColor Gray
 Write-Host ""
 Write-Host "Next steps:" -ForegroundColor Yellow
 Write-Host "  1. Review the generated CSV file" -ForegroundColor Gray

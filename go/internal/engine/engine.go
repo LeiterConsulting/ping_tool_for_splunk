@@ -5,6 +5,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,11 +65,12 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		collectorID = collectorHost
 	}
 	activeEndpoints := append([]models.Endpoint(nil), endpoints...)
-	startupCapacity, err := calculateScheduleCapacity(cfg, len(activeEndpoints), opts.RunOnce)
+	startupProbeEndpoints, _ := partitionEndpoints(activeEndpoints, time.Now())
+	startupCapacity, err := calculateScheduleCapacity(cfg, len(startupProbeEndpoints), opts.RunOnce)
 	if err != nil {
 		return err
 	}
-	diagnostics.LogScheduleCapacity(len(activeEndpoints), cfg.ParallelThreads, startupCapacity.ProbeBudget.Milliseconds(), startupCapacity.Interval.Milliseconds(), startupCapacity.DispatchDelay.Milliseconds(), startupCapacity.WorstCaseLoadPct)
+	diagnostics.LogScheduleCapacity(len(startupProbeEndpoints), cfg.ParallelThreads, startupCapacity.ProbeBudget.Milliseconds(), startupCapacity.Interval.Milliseconds(), startupCapacity.DispatchDelay.Milliseconds(), startupCapacity.WorstCaseLoadPct)
 	lastReloadWarn := time.Time{}
 	lastReloadErr := ""
 
@@ -151,7 +153,8 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 					lastReloadErr = msg
 				}
 			} else if changed && len(reloaded) > 0 {
-				if _, capacityErr := calculateScheduleCapacity(cfg, len(reloaded), opts.RunOnce); capacityErr != nil {
+				reloadedProbeEndpoints, _ := partitionEndpoints(reloaded, time.Now())
+				if _, capacityErr := calculateScheduleCapacity(cfg, len(reloadedProbeEndpoints), opts.RunOnce); capacityErr != nil {
 					opts.Runtime.EndpointReloadFailed(capacityErr)
 					diagnostics.LogWarn("endpoints reload rejected; using previous set", map[string]interface{}{
 						"path": opts.EndpointsPath, "cycle": cycle, "error": capacityErr.Error(),
@@ -179,11 +182,19 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		failed := 0
 		partial := 0
 		cycleEndpoints := append([]models.Endpoint(nil), activeEndpoints...)
-		capacity, err := calculateScheduleCapacity(cfg, len(cycleEndpoints), opts.RunOnce)
+		probeEndpoints, suppressedEndpoints := partitionEndpoints(cycleEndpoints, cycleStart)
+		capacity, err := calculateScheduleCapacity(cfg, len(probeEndpoints), opts.RunOnce)
 		if err != nil {
 			return err
 		}
 		opts.Runtime.CycleStarted(cycle, cycleID, len(cycleEndpoints), cycleStart)
+
+		for _, suppressed := range suppressedEndpoints {
+			result := runSuppressedEndpoint(cfg, collectorHost, collectorID, cycleID, suppressed, cycleStart)
+			if err := out.HandleResult(ctx, nil, result.Summary); err != nil {
+				return err
+			}
+		}
 
 		// Spread dispatches across the cycle. This avoids a synchronized burst of
 		// ICMP and output work while keeping each endpoint close to the configured
@@ -211,10 +222,10 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 					}
 				}
 			}
-		}(cycleEndpoints, cycleID, dispatchDelay)
+		}(probeEndpoints, cycleID, dispatchDelay)
 
-		// Collect exactly len(endpoints) results.
-		for i := 0; i < len(cycleEndpoints); i++ {
+		// Collect exactly one result for each endpoint that was eligible to probe.
+		for i := 0; i < len(probeEndpoints); i++ {
 			select {
 			case r := <-results:
 				if !r.IsDev {
@@ -296,6 +307,10 @@ func probeDispatchDelay(cfg config.Config, endpointCount int, runOnce bool) time
 }
 
 func calculateScheduleCapacity(cfg config.Config, endpointCount int, runOnce bool) (scheduleCapacity, error) {
+	if endpointCount == 0 {
+		interval := time.Duration(cfg.CycleIntervalSeconds) * time.Second
+		return scheduleCapacity{Interval: interval}, nil
+	}
 	plan := schedule.Analyze(cfg, endpointCount)
 	capacity := scheduleCapacity{
 		ProbeBudget:      plan.ProbeBudgetDuration,
@@ -311,6 +326,56 @@ func calculateScheduleCapacity(cfg config.Config, endpointCount int, runOnce boo
 		return capacity, err
 	}
 	return capacity, nil
+}
+
+func partitionEndpoints(endpoints []models.Endpoint, now time.Time) ([]models.Endpoint, []models.Endpoint) {
+	probe := make([]models.Endpoint, 0, len(endpoints))
+	suppressed := make([]models.Endpoint, 0)
+	for _, endpoint := range endpoints {
+		if _, isSuppressed := endpointSuppression(endpoint, now); isSuppressed {
+			suppressed = append(suppressed, endpoint)
+			continue
+		}
+		probe = append(probe, endpoint)
+	}
+	return probe, suppressed
+}
+
+func endpointSuppression(endpoint models.Endpoint, now time.Time) (string, bool) {
+	if !endpoint.IsMonitoringEnabled() {
+		return "monitoring_disabled", true
+	}
+	if value := strings.TrimSpace(endpoint.MaintenanceUntil); value != "" {
+		until, err := time.Parse(time.RFC3339, value)
+		if err == nil && now.Before(until) {
+			return "scheduled_maintenance", true
+		}
+	}
+	return "", false
+}
+
+func runSuppressedEndpoint(cfg config.Config, collectorHost string, collectorID string, cycleID string, endpoint models.Endpoint, observedAt time.Time) pingResult {
+	reason, _ := endpointSuppression(endpoint, observedAt)
+	stateName := "disabled"
+	if reason == "scheduled_maintenance" {
+		stateName = "maintenance"
+	}
+	timestamp := util.FormatDotNetO(observedAt)
+	endpointID := models.StableEndpointID(endpoint.EndpointID, endpoint.IP)
+	summary := buildSummary(endpoint, summaryIdentity{
+		EventID:     util.EventID(collectorHost, endpoint.IP, "monitoring_control", timestamp, -1),
+		CollectorID: collectorID, EndpointID: endpointID, CycleID: cycleID,
+		Timestamp: timestamp, RecordType: "monitoring_control", ProbeBackend: "suppressed",
+	})
+	summary.MeasurementValid = false
+	summary.ObservationStatus = "suppressed"
+	summary.State = stateName
+	summary.StateReason = reason
+	summary.StateConfidence = "confirmed"
+	summary.CycleIntervalSeconds = cfg.CycleIntervalSeconds
+	summary.StaleAfterIntervals = cfg.Health.StaleAfterIntervals
+	summary.StaleAfterSeconds = cfg.CycleIntervalSeconds * cfg.Health.StaleAfterIntervals
+	return pingResult{Summary: summary, Status: "suppressed", IsDev: endpoint.Dev}
 }
 
 func maxDuration(a time.Duration, b time.Duration) time.Duration {
@@ -411,7 +476,8 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, c
 			SchemaVersion: models.SchemaVersion,
 			EventID:       id, CollectorID: collectorID, EndpointID: endpointID, CycleID: cycleID,
 			Timestamp: ts, SentAt: util.FormatDotNetO(sentAt),
-			TargetIP: ep.IP, Hostname: ep.Hostname, Dev: ep.Dev, Group: ep.Group,
+			TargetIP: ep.IP, Hostname: ep.Hostname, FQDN: ep.FQDN, Dev: ep.Dev,
+			MonitoringEnabled: ep.IsMonitoringEnabled(), Group: ep.Group,
 			Description: ep.Description, EntityType: ep.EntityType, Device: ep.Device, Vendor: ep.Vendor,
 			Notes: ep.AdditionalNotes, MeasurementValid: attemptValid, ProbeBackend: pr.Backend,
 			PingNumber: sequence, PingsInCycle: count, RecordType: recordTypePing,
@@ -569,7 +635,9 @@ func buildSummary(ep models.Endpoint, identity summaryIdentity) models.SummaryEv
 		SchemaVersion: models.SchemaVersion,
 		EventID:       identity.EventID, CollectorID: identity.CollectorID, EndpointID: identity.EndpointID,
 		CycleID: identity.CycleID, Timestamp: identity.Timestamp, ProbeBackend: identity.ProbeBackend,
-		TargetIP: ep.IP, Hostname: ep.Hostname, Dev: ep.Dev, Group: ep.Group,
+		TargetIP: ep.IP, Hostname: ep.Hostname, FQDN: ep.FQDN, Dev: ep.Dev,
+		MonitoringEnabled: ep.IsMonitoringEnabled(), MaintenanceUntil: ep.MaintenanceUntil,
+		MaintenanceReason: ep.MaintenanceReason, Group: ep.Group,
 		Description: ep.Description, EntityType: ep.EntityType, Device: ep.Device, Vendor: ep.Vendor,
 		Notes: ep.AdditionalNotes, RecordType: identity.RecordType,
 	}

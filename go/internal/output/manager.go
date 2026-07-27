@@ -52,7 +52,11 @@ func NewManager(cfg config.Config, collectorHost string, collectorID string) (*M
 	useHEC := (cfg.OutputMode == "hec" || cfg.OutputMode == "both") && cfg.HEC.Enabled && cfg.Metrics.Mode != "metrics_only"
 
 	if useFile {
-		writer, err := fileout.New(cfg.LogPath, cfg.LogRotationSizeMB)
+		writer, err := fileout.NewWithOptions(fileout.Options{
+			Path: cfg.LogPath, MaxSizeMB: cfg.LogRotationSizeMB,
+			RetentionFiles: cfg.LogRetentionFiles, RetentionDays: cfg.LogRetentionDays,
+			CompressRotated: cfg.LogCompressRotated,
+		})
 		if err != nil {
 			return nil, err
 		}

@@ -10,10 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	"gopkg.in/yaml.v3"
+)
+
+const (
+	LegacySchemaVersion  = 1
+	CurrentSchemaVersion = 2
 )
 
 type Diagnostics struct {
@@ -94,7 +100,26 @@ type Delivery struct {
 	DrainMaxEnvelopes int    `json:"drain_max_envelopes" yaml:"drain_max_envelopes"`
 }
 
+type DiscoverySchedule struct {
+	ID           string   `json:"id" yaml:"id"`
+	Enabled      bool     `json:"enabled" yaml:"enabled"`
+	Targets      []string `json:"targets" yaml:"targets"`
+	Frequency    string   `json:"frequency" yaml:"frequency"`
+	Day          string   `json:"day" yaml:"day"`
+	Time         string   `json:"time" yaml:"time"`
+	Timezone     string   `json:"timezone" yaml:"timezone"`
+	TimeoutMs    int      `json:"timeout_ms" yaml:"timeout_ms"`
+	Concurrency  int      `json:"concurrency" yaml:"concurrency"`
+	ImportPolicy string   `json:"import_policy" yaml:"import_policy"`
+}
+
+type Discovery struct {
+	HistoryPath string              `json:"history_path" yaml:"history_path"`
+	Schedules   []DiscoverySchedule `json:"schedules" yaml:"schedules"`
+}
+
 type Config struct {
+	ConfigSchemaVersion  int         `json:"config_schema_version,omitempty" yaml:"config_schema_version,omitempty"`
 	PingsPerCycle        int         `json:"pings_per_cycle" yaml:"pings_per_cycle"`
 	CycleIntervalSeconds int         `json:"cycle_interval_seconds" yaml:"cycle_interval_seconds"`
 	TimeoutMs            int         `json:"timeout_ms" yaml:"timeout_ms"`
@@ -102,6 +127,9 @@ type Config struct {
 	OutputMode           string      `json:"output_mode" yaml:"output_mode"`
 	LogPath              string      `json:"log_path" yaml:"log_path"`
 	LogRotationSizeMB    int         `json:"log_rotation_size_mb" yaml:"log_rotation_size_mb"`
+	LogRetentionFiles    int         `json:"log_retention_files" yaml:"log_retention_files"`
+	LogRetentionDays     int         `json:"log_retention_days" yaml:"log_retention_days"`
+	LogCompressRotated   bool        `json:"log_compress_rotated" yaml:"log_compress_rotated"`
 	EmitIndividualPings  bool        `json:"emit_individual_pings" yaml:"emit_individual_pings"`
 	Ping                 Ping        `json:"ping" yaml:"ping"`
 	Health               Health      `json:"health" yaml:"health"`
@@ -110,10 +138,12 @@ type Config struct {
 	HEC                  HEC         `json:"hec" yaml:"hec"`
 	Metrics              Metrics     `json:"metrics" yaml:"metrics"`
 	Delivery             Delivery    `json:"delivery" yaml:"delivery"`
+	Discovery            Discovery   `json:"discovery" yaml:"discovery"`
 }
 
 func Defaults(root string) Config {
 	return Config{
+		ConfigSchemaVersion:  LegacySchemaVersion,
 		PingsPerCycle:        4,
 		CycleIntervalSeconds: 60,
 		TimeoutMs:            1000,
@@ -121,6 +151,9 @@ func Defaults(root string) Config {
 		OutputMode:           "file",
 		LogPath:              filepath.Join(root, "logs", "ping_results.log"),
 		LogRotationSizeMB:    50,
+		LogRetentionFiles:    0,
+		LogRetentionDays:     0,
+		LogCompressRotated:   false,
 		EmitIndividualPings:  true,
 		Ping:                 Ping{Mode: "auto"},
 		Health:               Health{DownAfterFailures: 3, RecoveryAfterSuccesses: 2, StaleAfterIntervals: 2},
@@ -172,21 +205,43 @@ func Defaults(root string) Config {
 			MaxEnvelopes:      10000,
 			DrainMaxEnvelopes: 100,
 		},
+		Discovery: Discovery{
+			HistoryPath: filepath.Join(root, "data", "discovery"),
+		},
 	}
 }
 
+func CurrentDefaults(root string) Config {
+	cfg := Defaults(root)
+	cfg.ConfigSchemaVersion = CurrentSchemaVersion
+	cfg.LogRetentionFiles = 10
+	cfg.LogRetentionDays = 14
+	cfg.LogCompressRotated = true
+	return cfg
+}
+
 func Load(ctx context.Context, path string, root string) (Config, string, error) {
-	// If caller passed config.psd1, try that first.
-	if strings.HasSuffix(strings.ToLower(path), ".psd1") {
+	// An existing explicitly selected supported file is authoritative. This is
+	// essential when an operator keeps config.psd1 as a rollback source while
+	// activating an upgraded config.json with --config.
+	if isSupportedConfigExt(path) {
 		if _, err := os.Stat(path); err == nil {
-			cfg, err := loadFromPSD1(ctx, path, root)
-			if err != nil {
-				return Config{}, "", fmt.Errorf("load %s: %w", path, err)
-			}
-			cfg = resolvePaths(cfg, filepath.Dir(path), root)
-			return cfg, "config.psd1", nil
+			return loadConfigPath(ctx, path, root)
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return Config{}, "", err
+		} else if !strings.EqualFold(filepath.Base(path), "config.psd1") {
+			cfg := Defaults(root)
+			if strings.EqualFold(filepath.Ext(path), ".json") {
+				cfg = CurrentDefaults(root)
+			}
+			if _, saveErr := SaveConfig(ctx, path, root, cfg); saveErr != nil {
+				return Config{}, "", fmt.Errorf("config %s does not exist and could not be initialized: %w", path, saveErr)
+			}
+			loaded, source, loadErr := loadConfigPath(ctx, path, root)
+			if loadErr != nil {
+				return Config{}, "", loadErr
+			}
+			return loaded, "generated " + source, nil
 		}
 	}
 
@@ -194,53 +249,70 @@ func Load(ctx context.Context, path string, root string) (Config, string, error)
 	baseDir := filepath.Dir(path)
 	candidates := []string{
 		filepath.Join(baseDir, "config.psd1"),
+		filepath.Join(baseDir, "config.json"),
 		filepath.Join(baseDir, "config.yaml"),
 		filepath.Join(baseDir, "config.yml"),
-		filepath.Join(baseDir, "config.json"),
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err != nil {
 			continue
 		}
-		switch strings.ToLower(filepath.Ext(c)) {
-		case ".psd1":
-			cfg, err := loadFromPSD1(ctx, c, root)
-			if err != nil {
-				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
-			}
-			cfg = resolvePaths(cfg, filepath.Dir(c), root)
-			return cfg, "config.psd1", nil
-		case ".yaml", ".yml":
-			cfg, err := loadFromYAML(c, root)
-			if err != nil {
-				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
-			}
-			cfg = resolvePaths(cfg, filepath.Dir(c), root)
-			return cfg, "config.yaml", nil
-		case ".json":
-			cfg, err := loadFromJSON(c, root)
-			if err != nil {
-				return Config{}, "", fmt.Errorf("load %s: %w", c, err)
-			}
-			cfg = resolvePaths(cfg, filepath.Dir(c), root)
-			return cfg, "config.json", nil
-		}
+		return loadConfigPath(ctx, c, root)
 	}
 
-	// Nothing usable found: generate a Go-native fallback config.
-	cfg := Defaults(root)
-	outPath := filepath.Join(baseDir, "config.yaml")
-	if err := writeYAML(outPath, cfg); err != nil {
-		return Config{}, "", fmt.Errorf("no config found and failed to write fallback config.yaml: %w", err)
+	// Nothing usable found: generate the current, versioned JSON configuration.
+	cfg := CurrentDefaults(root)
+	outPath := filepath.Join(baseDir, "config.json")
+	if err := writeJSONFile(outPath, cfg); err != nil {
+		return Config{}, "", fmt.Errorf("no config found and failed to write fallback config.json: %w", err)
 	}
 	cfg = resolvePaths(cfg, filepath.Dir(outPath), root)
-	return cfg, "generated config.yaml", nil
+	return cfg, "generated config.json", nil
+}
+
+func loadConfigPath(ctx context.Context, path string, root string) (Config, string, error) {
+	var (
+		cfg    Config
+		source string
+		err    error
+	)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".psd1":
+		source = "config.psd1"
+		cfg, err = loadFromPSD1(ctx, path, root)
+	case ".yaml", ".yml":
+		source = "config.yaml"
+		cfg, err = loadFromYAML(path, root)
+	case ".json":
+		source = "config.json"
+		cfg, err = loadFromJSON(path, root)
+	default:
+		return Config{}, "", fmt.Errorf("unsupported config format: %s", filepath.Ext(path))
+	}
+	if err != nil {
+		return Config{}, "", fmt.Errorf("load %s: %w", path, err)
+	}
+	return resolvePaths(cfg, filepath.Dir(path), root), source, nil
 }
 
 func loadFromYAML(path string, root string) (Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
+	}
+	schemaVersion, err := configSchemaVersionYAML(b)
+	if err != nil {
+		return Config{}, err
+	}
+	if schemaVersion == CurrentSchemaVersion {
+		var doc configDocumentV2
+		if err := yaml.Unmarshal(b, &doc); err != nil {
+			return Config{}, err
+		}
+		return configFromDocumentV2(doc, root)
+	}
+	if schemaVersion != LegacySchemaVersion {
+		return Config{}, fmt.Errorf("unsupported config_schema_version %d; this runtime supports versions 1 and %d", schemaVersion, CurrentSchemaVersion)
 	}
 	cfg := Defaults(root)
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
@@ -253,6 +325,20 @@ func loadFromJSON(path string, root string) (Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, err
+	}
+	schemaVersion, err := configSchemaVersionJSON(b)
+	if err != nil {
+		return Config{}, err
+	}
+	if schemaVersion == CurrentSchemaVersion {
+		var doc configDocumentV2
+		if err := json.Unmarshal(b, &doc); err != nil {
+			return Config{}, err
+		}
+		return configFromDocumentV2(doc, root)
+	}
+	if schemaVersion != LegacySchemaVersion {
+		return Config{}, fmt.Errorf("unsupported config_schema_version %d; this runtime supports versions 1 and %d", schemaVersion, CurrentSchemaVersion)
 	}
 	cfg := Defaults(root)
 	if err := json.Unmarshal(b, &cfg); err != nil {
@@ -297,6 +383,9 @@ func loadFromPSD1(ctx context.Context, path string, root string) (Config, error)
 
 	cfg := Defaults(root)
 	applyPSD1Map(&cfg, raw)
+	if cfg.ConfigSchemaVersion != LegacySchemaVersion && cfg.ConfigSchemaVersion != CurrentSchemaVersion {
+		return Config{}, fmt.Errorf("unsupported config_schema_version %d; this runtime supports versions 1 and %d", cfg.ConfigSchemaVersion, CurrentSchemaVersion)
+	}
 	return normalize(cfg), nil
 }
 
@@ -313,6 +402,9 @@ func resolvePaths(cfg Config, configDir string, root string) Config {
 	if cfg.Delivery.SpoolPath != "" && !filepath.IsAbs(cfg.Delivery.SpoolPath) {
 		cfg.Delivery.SpoolPath = filepath.Clean(filepath.Join(configDir, cfg.Delivery.SpoolPath))
 	}
+	if cfg.Discovery.HistoryPath != "" && !filepath.IsAbs(cfg.Discovery.HistoryPath) {
+		cfg.Discovery.HistoryPath = filepath.Clean(filepath.Join(configDir, cfg.Discovery.HistoryPath))
+	}
 	// If configDir is empty for some reason, ensure defaults still resolve under root.
 	if cfg.LogPath == "" {
 		cfg.LogPath = filepath.Join(root, "logs", "ping_results.log")
@@ -321,6 +413,7 @@ func resolvePaths(cfg Config, configDir string, root string) Config {
 }
 
 func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
+	cfg.ConfigSchemaVersion = getInt(raw, "config_schema_version", cfg.ConfigSchemaVersion)
 	cfg.PingsPerCycle = getInt(raw, "pings_per_cycle", cfg.PingsPerCycle)
 	cfg.CycleIntervalSeconds = getInt(raw, "cycle_interval_seconds", cfg.CycleIntervalSeconds)
 	cfg.TimeoutMs = getInt(raw, "timeout_ms", cfg.TimeoutMs)
@@ -328,6 +421,9 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 	cfg.OutputMode = getString(raw, "output_mode", cfg.OutputMode)
 	cfg.LogPath = getString(raw, "log_path", cfg.LogPath)
 	cfg.LogRotationSizeMB = getInt(raw, "log_rotation_size_mb", cfg.LogRotationSizeMB)
+	cfg.LogRetentionFiles = getInt(raw, "log_retention_files", cfg.LogRetentionFiles)
+	cfg.LogRetentionDays = getInt(raw, "log_retention_days", cfg.LogRetentionDays)
+	cfg.LogCompressRotated = getBool(raw, "log_compress_rotated", cfg.LogCompressRotated)
 	cfg.EmitIndividualPings = getBool(raw, "emit_individual_pings", cfg.EmitIndividualPings)
 
 	if m, ok := getMap(raw, "ping"); ok {
@@ -400,9 +496,16 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 		cfg.Delivery.MaxEnvelopes = getInt(m, "max_envelopes", cfg.Delivery.MaxEnvelopes)
 		cfg.Delivery.DrainMaxEnvelopes = getInt(m, "drain_max_envelopes", cfg.Delivery.DrainMaxEnvelopes)
 	}
+	if m, ok := getMap(raw, "discovery"); ok {
+		cfg.Discovery.HistoryPath = getString(m, "history_path", cfg.Discovery.HistoryPath)
+		cfg.Discovery.Schedules = getDiscoverySchedules(m, "schedules")
+	}
 }
 
 func normalize(cfg Config) Config {
+	if cfg.ConfigSchemaVersion < LegacySchemaVersion {
+		cfg.ConfigSchemaVersion = LegacySchemaVersion
+	}
 	if cfg.PingsPerCycle < 1 {
 		cfg.PingsPerCycle = 4
 	}
@@ -417,6 +520,12 @@ func normalize(cfg Config) Config {
 	}
 	if cfg.LogRotationSizeMB < 1 {
 		cfg.LogRotationSizeMB = 50
+	}
+	if cfg.LogRetentionFiles < 0 {
+		cfg.LogRetentionFiles = 0
+	}
+	if cfg.LogRetentionDays < 0 {
+		cfg.LogRetentionDays = 0
 	}
 	if cfg.Ping.Mode == "" {
 		cfg.Ping.Mode = "auto"
@@ -459,6 +568,12 @@ func normalize(cfg Config) Config {
 	}
 	if cfg.Delivery.DrainMaxEnvelopes < 1 {
 		cfg.Delivery.DrainMaxEnvelopes = 100
+	}
+	if cfg.Discovery.HistoryPath == "" {
+		cfg.Discovery.HistoryPath = filepath.Join("data", "discovery")
+	}
+	for i := range cfg.Discovery.Schedules {
+		normalizeDiscoverySchedule(&cfg.Discovery.Schedules[i])
 	}
 	return cfg
 }
@@ -533,6 +648,96 @@ func getInt(m map[string]interface{}, key string, def int) int {
 	return def
 }
 
+func getDiscoverySchedules(m map[string]interface{}, key string) []DiscoverySchedule {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return nil
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	schedules := make([]DiscoverySchedule, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		schedule := DiscoverySchedule{
+			ID:           getString(raw, "id", ""),
+			Enabled:      getBool(raw, "enabled", false),
+			Targets:      getStringSlice(raw, "targets"),
+			Frequency:    getString(raw, "frequency", ""),
+			Day:          getString(raw, "day", ""),
+			Time:         getString(raw, "time", ""),
+			Timezone:     getString(raw, "timezone", ""),
+			TimeoutMs:    getInt(raw, "timeout_ms", 0),
+			Concurrency:  getInt(raw, "concurrency", 0),
+			ImportPolicy: getString(raw, "import_policy", ""),
+		}
+		normalizeDiscoverySchedule(&schedule)
+		schedules = append(schedules, schedule)
+	}
+	return schedules
+}
+
+func getStringSlice(m map[string]interface{}, key string) []string {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return nil
+	}
+	switch items := value.(type) {
+	case []interface{}:
+		values := make([]string, 0, len(items))
+		for _, item := range items {
+			if text := strings.TrimSpace(fmt.Sprint(item)); text != "" {
+				values = append(values, text)
+			}
+		}
+		return values
+	case []string:
+		return append([]string(nil), items...)
+	default:
+		if text := strings.TrimSpace(fmt.Sprint(items)); text != "" {
+			return []string{text}
+		}
+		return nil
+	}
+}
+
+func normalizeDiscoverySchedule(schedule *DiscoverySchedule) {
+	schedule.ID = strings.TrimSpace(schedule.ID)
+	schedule.Frequency = strings.ToLower(strings.TrimSpace(schedule.Frequency))
+	if schedule.Frequency == "" {
+		schedule.Frequency = "weekly"
+	}
+	schedule.Day = strings.ToLower(strings.TrimSpace(schedule.Day))
+	if schedule.Day == "" {
+		schedule.Day = "sunday"
+	}
+	schedule.Time = strings.TrimSpace(schedule.Time)
+	if schedule.Time == "" {
+		schedule.Time = "02:00"
+	}
+	schedule.Timezone = strings.TrimSpace(schedule.Timezone)
+	if schedule.Timezone == "" {
+		schedule.Timezone = "Local"
+	}
+	if schedule.TimeoutMs < 100 {
+		schedule.TimeoutMs = 500
+	}
+	if schedule.Concurrency < 1 {
+		schedule.Concurrency = 25
+	}
+	schedule.ImportPolicy = strings.ToLower(strings.TrimSpace(schedule.ImportPolicy))
+	if schedule.ImportPolicy == "" {
+		schedule.ImportPolicy = "review"
+	}
+	for i := range schedule.Targets {
+		schedule.Targets[i] = strings.TrimSpace(schedule.Targets[i])
+	}
+}
+
 func LoadEndpoints(path string) ([]models.Endpoint, error) {
 	return loadEndpoints(path, false)
 }
@@ -602,17 +807,43 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("endpoints CSV record %d: %w", record, err)
 		}
+		monitoringEnabled, err := parseCSVBoolDefault(get(row, "monitoring_enabled"), true)
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: invalid monitoring_enabled value: %w", record, err)
+		}
+		dnsForwardConfirmed, err := parseCSVBoolDefault(get(row, "dns_forward_confirmed"), false)
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: invalid dns_forward_confirmed value: %w", record, err)
+		}
+		var discoveryLatency *float64
+		if value := get(row, "discovery_latency_ms"); value != "" {
+			parsed, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				return nil, fmt.Errorf("endpoints CSV record %d: invalid discovery_latency_ms value %q", record, value)
+			}
+			discoveryLatency = &parsed
+		}
 		ep := models.Endpoint{
-			EndpointID:      models.StableEndpointID(get(row, "endpoint_id"), ip),
-			IP:              ip,
-			Hostname:        hn,
-			Dev:             dev,
-			Group:           firstNonEmpty(get(row, "group"), "default"),
-			Description:     get(row, "description"),
-			EntityType:      get(row, "entitytype"),
-			Device:          get(row, "device"),
-			Vendor:          get(row, "vendor"),
-			AdditionalNotes: get(row, "additional_notes"),
+			EndpointID:          models.StableEndpointID(get(row, "endpoint_id"), ip),
+			IP:                  ip,
+			Hostname:            hn,
+			FQDN:                get(row, "fqdn"),
+			Dev:                 dev,
+			MonitoringEnabled:   models.Bool(monitoringEnabled),
+			MaintenanceUntil:    get(row, "maintenance_until"),
+			MaintenanceReason:   get(row, "maintenance_reason"),
+			DNSStatus:           get(row, "dns_status"),
+			DNSForwardConfirmed: dnsForwardConfirmed,
+			DiscoveredAt:        get(row, "discovered_at"),
+			DiscoveryScanID:     get(row, "discovery_scan_id"),
+			DiscoverySource:     get(row, "discovery_source"),
+			DiscoveryLatencyMs:  discoveryLatency,
+			Group:               firstNonEmpty(get(row, "group"), "default"),
+			Description:         get(row, "description"),
+			EntityType:          get(row, "entitytype"),
+			Device:              get(row, "device"),
+			Vendor:              get(row, "vendor"),
+			AdditionalNotes:     get(row, "additional_notes"),
 		}
 		eps = append(eps, ep)
 	}
@@ -629,8 +860,8 @@ func writeEndpointsTemplate(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	content := "ip,hostname,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev\n" +
-		"127.0.0.1,localhost,default,loopback,,,,,false\n"
+	content := "ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason\n" +
+		"127.0.0.1,localhost,,default,loopback,,,,,,false,true,,\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 
@@ -656,4 +887,11 @@ func parseCSVBoolStrict(v string) (bool, error) {
 	default:
 		return false, fmt.Errorf("invalid dev value %q", v)
 	}
+}
+
+func parseCSVBoolDefault(value string, defaultValue bool) (bool, error) {
+	if strings.TrimSpace(value) == "" {
+		return defaultValue, nil
+	}
+	return parseCSVBoolStrict(value)
 }

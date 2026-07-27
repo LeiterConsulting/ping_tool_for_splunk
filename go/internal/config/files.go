@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -16,7 +15,6 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
-	"gopkg.in/yaml.v3"
 )
 
 var endpointIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
@@ -55,7 +53,7 @@ func ResolveConfigSource(preferredPath string) (SourceInfo, error) {
 		}
 	}
 
-	return newSourceInfo(filepath.Join(baseDir, "config.yaml")), nil
+	return newSourceInfo(filepath.Join(baseDir, "config.json")), nil
 }
 
 func LoadEditable(ctx context.Context, preferredPath string, root string) (Config, SourceInfo, error) {
@@ -66,6 +64,9 @@ func LoadEditable(ctx context.Context, preferredPath string, root string) (Confi
 
 	if _, err := os.Stat(info.Path); errors.Is(err, os.ErrNotExist) {
 		cfg := Defaults(root)
+		if info.Format == "json" {
+			cfg = CurrentDefaults(root)
+		}
 		if _, saveErr := SaveConfig(ctx, preferredPath, root, cfg); saveErr != nil {
 			return Config{}, SourceInfo{}, saveErr
 		}
@@ -97,7 +98,7 @@ func SaveConfig(ctx context.Context, preferredPath string, root string, cfg Conf
 
 	if _, err := os.Stat(info.Path); errors.Is(err, os.ErrNotExist) {
 		if !isSupportedConfigExt(info.Path) {
-			info = newSourceInfo(filepath.Join(filepath.Dir(preferredPath), "config.yaml"))
+			info = newSourceInfo(filepath.Join(filepath.Dir(preferredPath), "config.json"))
 		}
 	} else if err != nil {
 		return SourceInfo{}, err
@@ -128,7 +129,10 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 
 	var buf bytes.Buffer
 	writer := csv.NewWriter(&buf)
-	if err := writer.Write([]string{"ip", "hostname", "group", "description", "entitytype", "device", "vendor", "additional_notes", "endpoint_id", "dev"}); err != nil {
+	if err := writer.Write([]string{
+		"ip", "hostname", "fqdn", "group", "description", "entitytype", "device", "vendor",
+		"additional_notes", "endpoint_id", "dev", "monitoring_enabled", "maintenance_until", "maintenance_reason",
+	}); err != nil {
 		return err
 	}
 	for _, endpoint := range endpoints {
@@ -139,6 +143,7 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 		record := []string{
 			strings.TrimSpace(endpoint.IP),
 			strings.TrimSpace(endpoint.Hostname),
+			strings.TrimSpace(endpoint.FQDN),
 			group,
 			strings.TrimSpace(endpoint.Description),
 			strings.TrimSpace(endpoint.EntityType),
@@ -147,6 +152,9 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 			strings.TrimSpace(endpoint.AdditionalNotes),
 			models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
 			strconv.FormatBool(endpoint.Dev),
+			strconv.FormatBool(endpoint.IsMonitoringEnabled()),
+			strings.TrimSpace(endpoint.MaintenanceUntil),
+			strings.TrimSpace(endpoint.MaintenanceReason),
 		}
 		if err := writer.Write(record); err != nil {
 			return err
@@ -184,6 +192,15 @@ func ValidateEndpoints(endpoints []models.Endpoint) error {
 		if len(hostname) > 253 || strings.ContainsAny(hostname, "\r\n\t") {
 			return fmt.Errorf("endpoint %d has invalid hostname %q", index+1, hostname)
 		}
+		fqdn := strings.TrimSpace(endpoint.FQDN)
+		if len(fqdn) > 253 || strings.ContainsAny(fqdn, "\r\n\t") {
+			return fmt.Errorf("endpoint %d has invalid fqdn %q", index+1, fqdn)
+		}
+		if maintenanceUntil := strings.TrimSpace(endpoint.MaintenanceUntil); maintenanceUntil != "" {
+			if _, err := time.Parse(time.RFC3339, maintenanceUntil); err != nil {
+				return fmt.Errorf("endpoint %d has invalid maintenance_until %q; use RFC3339 such as 2026-07-27T22:00:00Z", index+1, maintenanceUntil)
+			}
+		}
 
 		endpointID := models.StableEndpointID(endpoint.EndpointID, canonicalTarget)
 		if !endpointIDPattern.MatchString(endpointID) {
@@ -199,7 +216,7 @@ func ValidateEndpoints(endpoints []models.Endpoint) error {
 }
 
 func writeJSONFile(path string, cfg Config) error {
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	b, err := marshalConfigJSON(cfg)
 	if err != nil {
 		return err
 	}
@@ -208,7 +225,7 @@ func writeJSONFile(path string, cfg Config) error {
 }
 
 func writeYAMLFile(path string, cfg Config) error {
-	b, err := yaml.Marshal(cfg)
+	b, err := marshalConfigYAML(cfg)
 	if err != nil {
 		return err
 	}
@@ -269,7 +286,7 @@ func isSupportedConfigExt(path string) bool {
 func newSourceInfo(path string) SourceInfo {
 	format := strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), ".")
 	if format == "" {
-		format = "yaml"
+		format = "json"
 	}
 	label := filepath.Base(path)
 	if label == "" {

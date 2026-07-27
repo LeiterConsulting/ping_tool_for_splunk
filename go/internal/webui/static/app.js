@@ -40,8 +40,10 @@ const state = {
     progressSummary: 'No discovery run yet.',
     items: [],
     summary: null,
+    delta: null,
     logs: '',
     durationMs: 0,
+    generatedAt: '',
     selectedIndices: new Set(),
     mergeMode: 'skip_existing',
     abortController: null,
@@ -110,6 +112,8 @@ const elements = {
   deselectAllEndpointsButton: document.getElementById('deselect-all-endpoints-button'),
   markSelectedDevButton: document.getElementById('mark-selected-dev-button'),
   markSelectedProductionButton: document.getElementById('mark-selected-production-button'),
+  pauseSelectedButton: document.getElementById('pause-selected-button'),
+  resumeSelectedButton: document.getElementById('resume-selected-button'),
   deleteEndpointButton: document.getElementById('delete-endpoint-button'),
   deleteCurrentEndpointButton: document.getElementById('delete-current-endpoint-button'),
   resetEndpointsButton: document.getElementById('reset-endpoints-button'),
@@ -121,6 +125,7 @@ const elements = {
   endpointFields: {
     ip: document.getElementById('endpoint-ip'),
     hostname: document.getElementById('endpoint-hostname'),
+    fqdn: document.getElementById('endpoint-fqdn'),
     group: document.getElementById('endpoint-group'),
     description: document.getElementById('endpoint-description'),
     entitytype: document.getElementById('endpoint-entitytype'),
@@ -128,6 +133,9 @@ const elements = {
     vendor: document.getElementById('endpoint-vendor'),
     additional_notes: document.getElementById('endpoint-notes'),
     dev: document.getElementById('endpoint-dev'),
+    monitoring_enabled: document.getElementById('endpoint-monitoring-enabled'),
+    maintenance_until: document.getElementById('endpoint-maintenance-until'),
+    maintenance_reason: document.getElementById('endpoint-maintenance-reason'),
   },
   searchInput: document.getElementById('search-input'),
   filterButtons: Array.from(document.querySelectorAll('[data-filter]')),
@@ -145,6 +153,8 @@ const elements = {
   deselectAllDiscoveryButton: document.getElementById('deselect-all-discovery-button'),
   markDiscoveryDevButton: document.getElementById('mark-discovery-dev-button'),
   markDiscoveryProductionButton: document.getElementById('mark-discovery-production-button'),
+  exportDiscoveryAllButton: document.getElementById('export-discovery-all-button'),
+  exportDiscoverySelectedButton: document.getElementById('export-discovery-selected-button'),
   addDiscoverySelectedButton: document.getElementById('add-discovery-selected-button'),
   discoverySelectionStatus: document.getElementById('discovery-selection-status'),
   discoveryTableStatus: document.getElementById('discovery-table-status'),
@@ -178,6 +188,18 @@ const elements = {
     outputMode: document.getElementById('cfg-output-mode'),
     logPath: document.getElementById('cfg-log-path'),
     logRotation: document.getElementById('cfg-log-rotation'),
+    logRetentionFiles: document.getElementById('cfg-log-retention-files'),
+    logRetentionDays: document.getElementById('cfg-log-retention-days'),
+    logCompressRotated: document.getElementById('cfg-log-compress-rotated'),
+    discoveryEnabled: document.getElementById('cfg-discovery-enabled'),
+    discoveryID: document.getElementById('cfg-discovery-id'),
+    discoveryHistoryPath: document.getElementById('cfg-discovery-history-path'),
+    discoveryTargets: document.getElementById('cfg-discovery-targets'),
+    discoveryDay: document.getElementById('cfg-discovery-day'),
+    discoveryTime: document.getElementById('cfg-discovery-time'),
+    discoveryTimezone: document.getElementById('cfg-discovery-timezone'),
+    discoveryScheduleTimeout: document.getElementById('cfg-discovery-schedule-timeout'),
+    discoveryConcurrency: document.getElementById('cfg-discovery-concurrency'),
     pingMode: document.getElementById('cfg-ping-mode'),
     diagnosticsEnabled: document.getElementById('cfg-diagnostics-enabled'),
     handleProbeMode: document.getElementById('cfg-handle-probe-mode'),
@@ -618,6 +640,7 @@ function emptyEndpoint() {
   return {
     ip: '',
     hostname: '',
+    fqdn: '',
     group: 'default',
     description: '',
     entitytype: '',
@@ -625,6 +648,9 @@ function emptyEndpoint() {
     vendor: '',
     additional_notes: '',
     dev: false,
+    monitoring_enabled: true,
+    maintenance_until: '',
+    maintenance_reason: '',
   };
 }
 
@@ -633,6 +659,7 @@ function normalizeEndpoint(endpoint) {
 	endpoint_id: String(endpoint.endpoint_id || '').trim(),
     ip: String(endpoint.ip || '').trim(),
     hostname: String(endpoint.hostname || '').trim(),
+    fqdn: String(endpoint.fqdn || '').trim(),
     group: String(endpoint.group || 'default').trim() || 'default',
     description: String(endpoint.description || '').trim(),
     entitytype: String(endpoint.entitytype || '').trim(),
@@ -640,6 +667,9 @@ function normalizeEndpoint(endpoint) {
     vendor: String(endpoint.vendor || '').trim(),
     additional_notes: String(endpoint.additional_notes || '').trim(),
     dev: Boolean(endpoint.dev),
+    monitoring_enabled: endpoint.monitoring_enabled !== false,
+    maintenance_until: String(endpoint.maintenance_until || '').trim(),
+    maintenance_reason: String(endpoint.maintenance_reason || '').trim(),
   };
 }
 
@@ -679,6 +709,12 @@ function validateEndpointDraft() {
     seen.set(key, index);
     if (!hostname || hostname.length > 253 || /[\r\n\t]/.test(hostname)) {
       return { index, field: 'hostname', message: `Endpoint ${index + 1} needs a valid hostname.` };
+    }
+    if (endpoint.fqdn.length > 253 || /[\r\n\t]/.test(endpoint.fqdn)) {
+      return { index, field: 'fqdn', message: `Endpoint ${index + 1} has an invalid FQDN.` };
+    }
+    if (endpoint.maintenance_until && Number.isNaN(Date.parse(endpoint.maintenance_until))) {
+      return { index, field: 'maintenance_until', message: `Endpoint ${index + 1} maintenance time must use RFC3339, for example 2026-07-28T04:00:00Z.` };
     }
   }
   return null;
@@ -1040,6 +1076,7 @@ function filterEndpoints() {
       return [
         endpoint.ip,
         endpoint.hostname,
+        endpoint.fqdn,
         endpoint.group,
         endpoint.description,
         endpoint.entitytype,
@@ -1315,6 +1352,7 @@ function loadEndpointForm(endpoint) {
   const current = endpoint || emptyEndpoint();
   elements.endpointFields.ip.value = current.ip || '';
   elements.endpointFields.hostname.value = current.hostname || '';
+  elements.endpointFields.fqdn.value = current.fqdn || '';
   elements.endpointFields.group.value = current.group || 'default';
   elements.endpointFields.description.value = current.description || '';
   elements.endpointFields.entitytype.value = current.entitytype || '';
@@ -1322,6 +1360,9 @@ function loadEndpointForm(endpoint) {
   elements.endpointFields.vendor.value = current.vendor || '';
   elements.endpointFields.additional_notes.value = current.additional_notes || '';
   elements.endpointFields.dev.checked = Boolean(current.dev);
+  elements.endpointFields.monitoring_enabled.checked = current.monitoring_enabled !== false;
+  elements.endpointFields.maintenance_until.value = current.maintenance_until || '';
+  elements.endpointFields.maintenance_reason.value = current.maintenance_reason || '';
 }
 
 function readEndpointForm() {
@@ -1330,6 +1371,7 @@ function readEndpointForm() {
 	endpoint_id: current.endpoint_id,
     ip: readTextValue(elements.endpointFields.ip),
     hostname: readTextValue(elements.endpointFields.hostname),
+    fqdn: readTextValue(elements.endpointFields.fqdn),
     group: readTextValue(elements.endpointFields.group),
     description: readTextValue(elements.endpointFields.description),
     entitytype: readTextValue(elements.endpointFields.entitytype),
@@ -1337,6 +1379,9 @@ function readEndpointForm() {
     vendor: readTextValue(elements.endpointFields.vendor),
     additional_notes: readTextValue(elements.endpointFields.additional_notes),
     dev: elements.endpointFields.dev.checked,
+    monitoring_enabled: elements.endpointFields.monitoring_enabled.checked,
+    maintenance_until: readTextValue(elements.endpointFields.maintenance_until),
+    maintenance_reason: readTextValue(elements.endpointFields.maintenance_reason),
   });
 }
 
@@ -1469,7 +1514,7 @@ function renderEndpointTable() {
   elements.endpointSelectionStatus.textContent = `${selectedCount} selected from ${filtered.length} matching endpoint${filtered.length === 1 ? '' : 's'}`;
 
   if (view.totalItems === 0) {
-    elements.endpointRows.innerHTML = '<tr><td colspan="8" class="empty-cell">No endpoints match the current filter.</td></tr>';
+    elements.endpointRows.innerHTML = '<tr><td colspan="10" class="empty-cell">No endpoints match the current filter.</td></tr>';
     return;
   }
 
@@ -1484,11 +1529,13 @@ function renderEndpointTable() {
         <td class="table-select-col"><input class="table-row-checkbox" type="checkbox" data-index="${index}" ${state.selectedEndpointIndices.has(index) ? 'checked' : ''} aria-label="Select ${escapeHtml(label)}"></td>
         <td>${escapeHtml(endpoint.ip)}</td>
         <td>${escapeHtml(endpoint.hostname)}</td>
+        <td>${escapeHtml(endpoint.fqdn || '-')}</td>
         <td>${escapeHtml(endpoint.group || 'default')}</td>
         <td>${escapeHtml(endpoint.entitytype || '-')}</td>
         <td>${escapeHtml(endpoint.device || '-')}</td>
         <td>${escapeHtml(endpoint.vendor || '-')}</td>
         <td><span class="mode-badge ${endpoint.dev ? 'dev' : 'production'}">${endpoint.dev ? 'Dev' : 'Production'}</span></td>
+        <td><span class="mode-badge ${endpoint.monitoring_enabled === false ? 'dev' : 'production'}">${endpoint.monitoring_enabled === false ? 'Paused' : (endpoint.maintenance_until && Date.parse(endpoint.maintenance_until) > Date.now() ? 'Maintenance' : 'Active')}</span></td>
       </tr>
     `;
   }).join('');
@@ -1510,6 +1557,8 @@ function renderEndpointButtons() {
   elements.deselectAllEndpointsButton.disabled = selectedCount === 0;
   elements.markSelectedDevButton.disabled = actionIndices.length === 0;
   elements.markSelectedProductionButton.disabled = actionIndices.length === 0;
+  elements.pauseSelectedButton.disabled = actionIndices.length === 0;
+  elements.resumeSelectedButton.disabled = actionIndices.length === 0;
   elements.deleteEndpointButton.disabled = actionIndices.length === 0;
   elements.deleteCurrentEndpointButton.disabled = !hasEditorSelection;
   Object.values(elements.endpointFields).forEach((field) => field.removeAttribute('aria-invalid'));
@@ -1553,7 +1602,10 @@ function buildDiscoverySummaryText() {
     return state.discovery.progressSummary || 'Discovery is running.';
   }
   if (state.discovery.summary) {
-    return `${state.discovery.summary.total} endpoints found in ${state.discovery.durationMs} ms. Production ${state.discovery.summary.production}, dev ${state.discovery.summary.dev}, groups ${state.discovery.summary.groups}.`;
+    const delta = state.discovery.delta
+      ? ` New ${state.discovery.delta.new}, missing ${state.discovery.delta.missing}, unchanged ${state.discovery.delta.unchanged}.`
+      : '';
+    return `${state.discovery.summary.total} endpoints found in ${state.discovery.durationMs} ms. Production ${state.discovery.summary.production}, dev ${state.discovery.summary.dev}, groups ${state.discovery.summary.groups}.${delta}`;
   }
   return state.discovery.progressSummary || 'No discovery run yet.';
 }
@@ -1588,6 +1640,8 @@ function renderDiscovery() {
   elements.deselectAllDiscoveryButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.markDiscoveryDevButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.markDiscoveryProductionButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.exportDiscoveryAllButton.disabled = !hasResults || state.discovery.running;
+  elements.exportDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.addDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.discoveryMergeMode.disabled = !hasResults || state.discovery.running;
   renderDiscoveryPreflight();
@@ -1598,7 +1652,7 @@ function renderDiscovery() {
       : (state.discovery.available
         ? 'Discovery results will appear here after a run.'
         : 'Discovery is unavailable because the companion workflow is not present in this deployment.');
-    elements.discoveryRows.innerHTML = `<tr><td colspan="8" class="empty-cell">${emptyMessage}</td></tr>`;
+    elements.discoveryRows.innerHTML = `<tr><td colspan="11" class="empty-cell">${emptyMessage}</td></tr>`;
     return;
   }
 
@@ -1609,11 +1663,14 @@ function renderDiscovery() {
         <td class="table-select-col"><input class="table-row-checkbox" type="checkbox" data-index="${index}" ${state.discovery.selectedIndices.has(index) ? 'checked' : ''} aria-label="Select ${escapeHtml(label)}"></td>
         <td>${escapeHtml(endpoint.ip)}</td>
         <td>${escapeHtml(endpoint.hostname)}</td>
+        <td>${escapeHtml(endpoint.fqdn || '-')}</td>
         <td>${escapeHtml(endpoint.group || 'default')}</td>
         <td>${escapeHtml(endpoint.entitytype || '-')}</td>
         <td>${escapeHtml(endpoint.device || '-')}</td>
         <td>${escapeHtml(endpoint.vendor || '-')}</td>
         <td><span class="mode-badge ${endpoint.dev ? 'dev' : 'production'}">${endpoint.dev ? 'Dev' : 'Production'}</span></td>
+        <td>${escapeHtml(endpoint.dns_status || 'unresolved')}</td>
+        <td>${endpoint.discovery_latency_ms == null ? '-' : `${escapeHtml(endpoint.discovery_latency_ms)} ms`}</td>
       </tr>
     `;
   }).join('');
@@ -1629,6 +1686,8 @@ function loadConfigForm(cfg, secrets = {}) {
   const retry = hec.retry || {};
   const metrics = cfg.metrics || {};
   const delivery = cfg.delivery || {};
+  const discovery = cfg.discovery || {};
+  const primarySchedule = (discovery.schedules || [])[0] || {};
 
   elements.settingsFields.pingsPerCycle.value = cfg.pings_per_cycle ?? '';
   elements.settingsFields.cycleInterval.value = cfg.cycle_interval_seconds ?? '';
@@ -1638,6 +1697,18 @@ function loadConfigForm(cfg, secrets = {}) {
   elements.settingsFields.outputMode.value = cfg.output_mode || 'file';
   elements.settingsFields.logPath.value = cfg.log_path || '';
   elements.settingsFields.logRotation.value = cfg.log_rotation_size_mb ?? '';
+  elements.settingsFields.logRetentionFiles.value = cfg.log_retention_files ?? 0;
+  elements.settingsFields.logRetentionDays.value = cfg.log_retention_days ?? 0;
+  elements.settingsFields.logCompressRotated.checked = Boolean(cfg.log_compress_rotated);
+  elements.settingsFields.discoveryEnabled.checked = Boolean(primarySchedule.enabled);
+  elements.settingsFields.discoveryID.value = primarySchedule.id || 'weekly-network-discovery';
+  elements.settingsFields.discoveryHistoryPath.value = discovery.history_path || './data/discovery';
+  elements.settingsFields.discoveryTargets.value = (primarySchedule.targets || []).join('\n');
+  elements.settingsFields.discoveryDay.value = primarySchedule.day || 'sunday';
+  elements.settingsFields.discoveryTime.value = primarySchedule.time || '02:00';
+  elements.settingsFields.discoveryTimezone.value = primarySchedule.timezone || 'Local';
+  elements.settingsFields.discoveryScheduleTimeout.value = primarySchedule.timeout_ms ?? 500;
+  elements.settingsFields.discoveryConcurrency.value = primarySchedule.concurrency ?? 25;
   elements.settingsFields.pingMode.value = ping.mode || 'auto';
   elements.settingsFields.diagnosticsEnabled.checked = Boolean(diagnostics.enabled);
   elements.settingsFields.handleProbeMode.value = diagnostics.handle_probe_mode || 'none';
@@ -1700,6 +1771,9 @@ function readConfigForm() {
     output_mode: readTextValue(elements.settingsFields.outputMode) || 'file',
     log_path: readTextValue(elements.settingsFields.logPath),
     log_rotation_size_mb: readNumberValue(elements.settingsFields.logRotation, 50),
+    log_retention_files: readNumberValue(elements.settingsFields.logRetentionFiles, 0),
+    log_retention_days: readNumberValue(elements.settingsFields.logRetentionDays, 0),
+    log_compress_rotated: elements.settingsFields.logCompressRotated.checked,
     emit_individual_pings: elements.settingsFields.emitIndividualPings.checked,
     ping: {
       mode: readTextValue(elements.settingsFields.pingMode) || 'auto',
@@ -1771,6 +1845,23 @@ function readConfigForm() {
 	  max_envelopes: readNumberValue(elements.settingsFields.deliveryMaxEnvelopes, 10000),
 	  drain_max_envelopes: readNumberValue(elements.settingsFields.deliveryDrainMax, 100),
 	},
+    discovery: {
+      ...(preserved.discovery || {}),
+      history_path: readTextValue(elements.settingsFields.discoveryHistoryPath) || './data/discovery',
+      schedules: [{
+        ...((preserved.discovery?.schedules || [])[0] || {}),
+        id: readTextValue(elements.settingsFields.discoveryID) || 'weekly-network-discovery',
+        enabled: elements.settingsFields.discoveryEnabled.checked,
+        targets: readTextValue(elements.settingsFields.discoveryTargets).split(/[\r\n,]+/).map((value) => value.trim()).filter(Boolean),
+        frequency: 'weekly',
+        day: readTextValue(elements.settingsFields.discoveryDay) || 'sunday',
+        time: readTextValue(elements.settingsFields.discoveryTime) || '02:00',
+        timezone: readTextValue(elements.settingsFields.discoveryTimezone) || 'Local',
+        timeout_ms: readNumberValue(elements.settingsFields.discoveryScheduleTimeout, 500),
+        concurrency: readNumberValue(elements.settingsFields.discoveryConcurrency, 25),
+        import_policy: 'review',
+      }, ...((preserved.discovery?.schedules || []).slice(1))],
+    },
   };
 }
 
@@ -2226,6 +2317,32 @@ function setEndpointModeForSelection(isDev) {
   setMessage(elements.endpointBanner, 'success', `Marked ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} as ${isDev ? 'dev' : 'production'} in the working draft.`);
 }
 
+function setEndpointMonitoringForSelection(enabled) {
+  const indexes = getEndpointActionIndices();
+  if (indexes.length === 0) {
+    return;
+  }
+  if (!enabled && !window.confirm(`Pause monitoring for ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'}? The collector will emit an explicit disabled control state instead of sending ICMP probes.`)) {
+    return;
+  }
+  indexes.forEach((index) => {
+    if (!state.endpoints[index]) {
+      return;
+    }
+    state.endpoints[index].monitoring_enabled = enabled;
+    if (enabled) {
+      state.endpoints[index].maintenance_until = '';
+      state.endpoints[index].maintenance_reason = '';
+    }
+  });
+  state.endpointsDirty = true;
+  if (indexes.includes(state.selectedEndpointIndex)) {
+    loadEndpointForm(state.endpoints[state.selectedEndpointIndex]);
+  }
+  renderAll();
+  setMessage(elements.endpointBanner, enabled ? 'success' : 'warning', `${enabled ? 'Resumed' : 'Paused'} monitoring for ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} in the working draft. Save endpoints to apply.`);
+}
+
 async function saveConfig() {
   try {
     const payload = await putJson('/api/config', { config: readConfigForm(), revision: state.configRevision });
@@ -2383,6 +2500,43 @@ function addSelectedDiscoveryToEndpoints() {
   scrollSectionIntoView('#inventory');
 }
 
+function csvCell(value) {
+  const text = String(value ?? '');
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportDiscoveryCsv(selectedOnly) {
+  const indexes = selectedOnly
+    ? getDiscoveryActionIndices()
+    : state.discovery.items.map((_, index) => index);
+  if (indexes.length === 0) {
+    setMessage(elements.discoveryBanner, 'warning', selectedOnly ? 'Select at least one discovery result to export.' : 'Run discovery before exporting results.');
+    return;
+  }
+  const columns = [
+    'ip', 'hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor',
+    'additional_notes', 'dev', 'monitoring_enabled', 'maintenance_until', 'maintenance_reason',
+    'dns_status', 'dns_forward_confirmed', 'discovered_at', 'discovery_scan_id',
+    'discovery_source', 'discovery_latency_ms',
+  ];
+  const lines = [columns.map(csvCell).join(',')];
+  indexes.forEach((index) => {
+    const endpoint = state.discovery.items[index] || {};
+    lines.push(columns.map((column) => csvCell(endpoint[column])).join(','));
+  });
+  const blob = new Blob([`\uFEFF${lines.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  const stamp = (state.discovery.generatedAt || new Date().toISOString()).replaceAll(':', '').replaceAll('-', '').replace(/\.\d+Z$/, 'Z');
+  anchor.href = url;
+  anchor.download = `pingmonitor_discovery_${selectedOnly ? 'selected_' : ''}${stamp}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+  setMessage(elements.discoveryBanner, 'success', `Exported ${indexes.length} discovery result${indexes.length === 1 ? '' : 's'} to CSV.`);
+}
+
 function handleDiscoveryStreamEvent(event) {
   if (event.summary_text) {
     state.discovery.progressSummary = event.summary_text;
@@ -2403,8 +2557,10 @@ function handleDiscoveryStreamEvent(event) {
       state.discovery.running = false;
       state.discovery.items = deepClone(event.items || []);
       state.discovery.summary = event.summary || null;
+      state.discovery.delta = event.delta || null;
       state.discovery.logs = event.logs || state.discovery.logs;
       state.discovery.durationMs = event.duration_ms || 0;
+      state.discovery.generatedAt = event.generated_at || new Date().toISOString();
       state.discovery.selectedIndices.clear();
       setMessage(elements.discoveryBanner, 'success', `Discovery completed with ${state.discovery.items.length} endpoint${state.discovery.items.length === 1 ? '' : 's'}. Review and merge the results when ready.`);
       break;
@@ -2468,6 +2624,7 @@ async function runDiscovery() {
   state.discovery.progressSummary = 'Starting discovery run.';
   state.discovery.items = [];
   state.discovery.summary = null;
+  state.discovery.delta = null;
   state.discovery.logs = '';
   state.discovery.durationMs = 0;
   state.discovery.selectedIndices.clear();
@@ -2603,6 +2760,8 @@ elements.selectAllEndpointsButton.addEventListener('click', selectAllVisibleEndp
 elements.deselectAllEndpointsButton.addEventListener('click', deselectAllEndpoints);
 elements.markSelectedDevButton.addEventListener('click', () => setEndpointModeForSelection(true));
 elements.markSelectedProductionButton.addEventListener('click', () => setEndpointModeForSelection(false));
+elements.pauseSelectedButton.addEventListener('click', () => setEndpointMonitoringForSelection(false));
+elements.resumeSelectedButton.addEventListener('click', () => setEndpointMonitoringForSelection(true));
 elements.deleteEndpointButton.addEventListener('click', deleteSelectedEndpoint);
 elements.deleteCurrentEndpointButton.addEventListener('click', deleteCurrentEndpoint);
 elements.endpointPageSize.addEventListener('change', (event) => {
@@ -2630,6 +2789,8 @@ elements.selectAllDiscoveryButton.addEventListener('click', selectAllVisibleDisc
 elements.deselectAllDiscoveryButton.addEventListener('click', deselectAllDiscovery);
 elements.markDiscoveryDevButton.addEventListener('click', () => setDiscoveryModeForSelection(true));
 elements.markDiscoveryProductionButton.addEventListener('click', () => setDiscoveryModeForSelection(false));
+elements.exportDiscoveryAllButton.addEventListener('click', () => exportDiscoveryCsv(false));
+elements.exportDiscoverySelectedButton.addEventListener('click', () => exportDiscoveryCsv(true));
 elements.addDiscoverySelectedButton.addEventListener('click', addSelectedDiscoveryToEndpoints);
 elements.discoveryMergeMode.addEventListener('change', (event) => {
   state.discovery.mergeMode = event.target.value || 'skip_existing';

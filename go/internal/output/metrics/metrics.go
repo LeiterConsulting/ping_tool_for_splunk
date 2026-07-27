@@ -85,10 +85,12 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 		"hostname":                             sum.Hostname, "target_ip": sum.TargetIP,
 		"collector_id": sum.CollectorID, "endpoint_id": sum.EndpointID,
 		"state": sum.State, "observation_status": sum.ObservationStatus,
-		"state_reason": sum.StateReason, "probe_backend": sum.ProbeBackend,
+		"state_reason": sum.StateReason, "probe_backend": sum.ProbeBackend, "record_type": sum.RecordType,
 		"dev": sum.Dev, "group": sum.Group, "description": sum.Description,
 		"entitytype": sum.EntityType, "device": sum.Device, "vendor": sum.Vendor,
-		"additional_notes": sum.Notes,
+		"additional_notes": sum.Notes, "fqdn": sum.FQDN,
+		"monitoring_enabled": sum.MonitoringEnabled, "maintenance_until": sum.MaintenanceUntil,
+		"maintenance_reason": sum.MaintenanceReason,
 	}
 	if sum.PacketLossPct != nil {
 		fields["metric_name:ping.packet_loss_pct"] = *sum.PacketLossPct

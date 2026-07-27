@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +25,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
@@ -74,11 +77,24 @@ type statusResponse struct {
 	DiscoveryScriptPath    string               `json:"discovery_script_path,omitempty"`
 	Mode                   string               `json:"mode"`
 	Delivery               *outbox.Status       `json:"delivery,omitempty"`
+	ResultLog              *resultLogStatus     `json:"result_log,omitempty"`
 	Runtime                runtimeinfo.Snapshot `json:"runtime"`
 	ConfigRevision         string               `json:"config_revision,omitempty"`
 	EndpointsRevision      string               `json:"endpoints_revision,omitempty"`
 	ConfigRestartRequired  bool                 `json:"config_restart_required"`
 	EndpointsReloadPending bool                 `json:"endpoints_reload_pending"`
+}
+
+type resultLogStatus struct {
+	Enabled           bool   `json:"enabled"`
+	Path              string `json:"path"`
+	CurrentBytes      int64  `json:"current_bytes"`
+	MaxBytes          int64  `json:"max_bytes"`
+	ArchiveCount      int    `json:"archive_count"`
+	RetentionFiles    int    `json:"retention_files"`
+	RetentionDays     int    `json:"retention_days"`
+	CompressRotated   bool   `json:"compress_rotated"`
+	ThresholdExceeded bool   `json:"threshold_exceeded"`
 }
 
 type endpointSummary struct {
@@ -133,7 +149,10 @@ type discoveryRunRequest struct {
 
 type discoveryResponse struct {
 	GeneratedAt string            `json:"generated_at"`
+	ScanID      string            `json:"scan_id"`
+	Target      string            `json:"target"`
 	Summary     endpointSummary   `json:"summary"`
+	Delta       discoveryDelta    `json:"delta"`
 	Items       []models.Endpoint `json:"items"`
 	Logs        string            `json:"logs,omitempty"`
 	DurationMs  int64             `json:"duration_ms"`
@@ -144,7 +163,10 @@ type discoveryStreamEvent struct {
 	SummaryText string            `json:"summary_text,omitempty"`
 	LogLine     string            `json:"log_line,omitempty"`
 	GeneratedAt string            `json:"generated_at,omitempty"`
+	ScanID      string            `json:"scan_id,omitempty"`
+	Target      string            `json:"target,omitempty"`
 	Summary     *endpointSummary  `json:"summary,omitempty"`
+	Delta       *discoveryDelta   `json:"delta,omitempty"`
 	Items       []models.Endpoint `json:"items,omitempty"`
 	Logs        string            `json:"logs,omitempty"`
 	DurationMs  int64             `json:"duration_ms,omitempty"`
@@ -163,6 +185,24 @@ type discoveryScanResult struct {
 	Logs     string
 	Progress discoveryProgressState
 	Err      error
+}
+
+type discoveryDelta struct {
+	PreviousScanID string `json:"previous_scan_id,omitempty"`
+	New            int    `json:"new"`
+	Missing        int    `json:"missing"`
+	Unchanged      int    `json:"unchanged"`
+}
+
+type discoverySnapshot struct {
+	SchemaVersion int                 `json:"schema_version"`
+	ScanID        string              `json:"scan_id"`
+	GeneratedAt   string              `json:"generated_at"`
+	Target        string              `json:"target"`
+	Request       discoveryRunRequest `json:"request"`
+	Summary       endpointSummary     `json:"summary"`
+	Delta         discoveryDelta      `json:"delta"`
+	Items         []models.Endpoint   `json:"items"`
 }
 
 type outputTestRequest struct {
@@ -202,10 +242,11 @@ type apiServer struct {
 	statusConfigMu  sync.RWMutex
 	statusConfig    config.Config
 	hasStatusConfig bool
+	discoveryMu     sync.Mutex
 }
 
 func Start(ctx context.Context, opts Options) error {
-	handler, err := newHandler(opts)
+	handler, api, err := newHandlerAndServer(opts)
 	if err != nil {
 		return err
 	}
@@ -215,7 +256,7 @@ func Start(ctx context.Context, opts Options) error {
 		return err
 	}
 
-	server := &http.Server{
+	httpServer := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -230,26 +271,41 @@ func Start(ctx context.Context, opts Options) error {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			diagnostics.LogError("web ui shutdown failed", err, nil)
 		}
 	}()
 
 	go func() {
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := httpServer.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			diagnostics.LogError("web ui serve failed", err, map[string]interface{}{
 				"listen_addr": listener.Addr().String(),
 			})
 		}
 	}()
 
+	go api.runDiscoveryScheduler(ctx)
+
 	return nil
 }
 
+// StartDiscoveryScheduler runs configured discovery schedules when the admin UI
+// listener is disabled. Callers must use either Start or StartDiscoveryScheduler
+// for a deployment, not both, so manual and scheduled scans share one lock.
+func StartDiscoveryScheduler(ctx context.Context, opts Options) {
+	server := newAPIServer(opts)
+	go server.runDiscoveryScheduler(ctx)
+}
+
 func newHandler(opts Options) (http.Handler, error) {
+	handler, _, err := newHandlerAndServer(opts)
+	return handler, err
+}
+
+func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 	staticRoot, err := fs.Sub(staticFiles, "static")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	server := newAPIServer(opts)
 
@@ -275,13 +331,14 @@ func newHandler(opts Options) (http.Handler, error) {
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
 	mux.Handle("/", staticHandler(staticRoot, opts.Version))
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; connect-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		mux.ServeHTTP(w, r)
-	}), nil
+	})
+	return handler, server, nil
 }
 
 func newAPIServer(opts Options) *apiServer {
@@ -384,6 +441,27 @@ func cleanPathForStatus(path string) string {
 	return filepath.Clean(path)
 }
 
+func inspectResultLog(cfg config.Config) *resultLogStatus {
+	enabled := cfg.OutputMode == "file" || cfg.OutputMode == "both"
+	status := &resultLogStatus{
+		Enabled: enabled, Path: cfg.LogPath,
+		MaxBytes:       int64(cfg.LogRotationSizeMB) * 1024 * 1024,
+		RetentionFiles: cfg.LogRetentionFiles, RetentionDays: cfg.LogRetentionDays,
+		CompressRotated: cfg.LogCompressRotated,
+	}
+	if !enabled {
+		return status
+	}
+	if info, err := os.Stat(cfg.LogPath); err == nil {
+		status.CurrentBytes = info.Size()
+	}
+	base := strings.TrimSuffix(cfg.LogPath, filepath.Ext(cfg.LogPath))
+	archives, _ := filepath.Glob(base + "_*.log*")
+	status.ArchiveCount = len(archives)
+	status.ThresholdExceeded = status.MaxBytes > 0 && status.CurrentBytes > status.MaxBytes
+	return status
+}
+
 func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -400,6 +478,7 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	configRestartRequired := runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveConfigRevision != "" && configRevision != runtimeSnapshot.EffectiveConfigRevision
 	endpointsReloadPending := runtimeSnapshot.Mode == "monitor" && runtimeSnapshot.EffectiveEndpointsRevision != "" && endpointsRevision != runtimeSnapshot.EffectiveEndpointsRevision
 	var delivery *outbox.Status
+	var resultLog *resultLogStatus
 	if cfg, ok := s.effectiveStatusConfig(); ok &&
 		(((cfg.OutputMode == "hec" || cfg.OutputMode == "both") && cfg.HEC.Enabled) || cfg.Metrics.Enabled) {
 		spoolPath := cfg.Delivery.SpoolPath
@@ -413,6 +492,9 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 			delivery = &outbox.Status{State: "not_started"}
 		}
 	}
+	if cfg, ok := s.effectiveStatusConfig(); ok {
+		resultLog = inspectResultLog(cfg)
+	}
 	writeJSON(w, http.StatusOK, statusResponse{
 		Product:                "Ping Monitor",
 		Version:                s.opts.Version,
@@ -424,6 +506,7 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		DiscoveryScriptPath:    s.opts.DiscoveryScriptPath,
 		Mode:                   "editable",
 		Delivery:               delivery,
+		ResultLog:              resultLog,
 		Runtime:                runtimeSnapshot,
 		ConfigRevision:         configRevision,
 		EndpointsRevision:      endpointsRevision,
@@ -884,6 +967,10 @@ func mergeWriteOnlySecrets(candidate *config.Config, existing config.Config, cle
 }
 
 func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunRequest) (discoveryResponse, error) {
+	if !s.discoveryMu.TryLock() {
+		return discoveryResponse{}, errors.New("another discovery run is already active")
+	}
+	defer s.discoveryMu.Unlock()
 	cmd, tempPath, cleanup, err := s.prepareDiscoveryCommand(ctx, request)
 	if err != nil {
 		return discoveryResponse{}, err
@@ -898,16 +985,28 @@ func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunReques
 	if err != nil {
 		return discoveryResponse{}, err
 	}
-	return discoveryResponse{
+	response := discoveryResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		ScanID:      discoveryScanID(endpoints),
+		Target:      discoveryTargetLabel(request),
 		Summary:     summarizeEndpoints(endpoints),
 		Items:       endpoints,
 		Logs:        sanitizeDiscoveryLog(string(out)),
 		DurationMs:  time.Since(start).Milliseconds(),
-	}, nil
+	}
+	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
+		return discoveryResponse{}, fmt.Errorf("persist discovery history: %w", err)
+	}
+	return response, nil
 }
 
 func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRunRequest, emit func(discoveryStreamEvent) error) error {
+	if !s.discoveryMu.TryLock() {
+		err := errors.New("another discovery run is already active")
+		_ = emit(discoveryStreamEvent{Type: "error", Error: err.Error()})
+		return err
+	}
+	defer s.discoveryMu.Unlock()
 	cmd, tempPath, cleanup, err := s.prepareDiscoveryCommand(ctx, request)
 	if err != nil {
 		_ = emit(discoveryStreamEvent{Type: "error", Error: err.Error()})
@@ -981,14 +1080,31 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 		return streamErr
 	}
 	summary := summarizeEndpoints(endpoints)
-	return emit(discoveryStreamEvent{
-		Type:        "complete",
+	response := discoveryResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		SummaryText: fmt.Sprintf("Discovery completed with %d endpoint%s.", len(endpoints), pluralSuffix(len(endpoints))),
-		Summary:     &summary,
+		ScanID:      discoveryScanID(endpoints),
+		Target:      discoveryTargetLabel(request),
+		Summary:     summary,
 		Items:       endpoints,
 		Logs:        result.Logs,
 		DurationMs:  time.Since(start).Milliseconds(),
+	}
+	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
+		streamErr := fmt.Errorf("persist discovery history: %w", err)
+		_ = emit(discoveryStreamEvent{Type: "error", SummaryText: result.Progress.SummaryText, Logs: result.Logs, Error: streamErr.Error()})
+		return streamErr
+	}
+	return emit(discoveryStreamEvent{
+		Type:        "complete",
+		GeneratedAt: response.GeneratedAt,
+		ScanID:      response.ScanID,
+		Target:      response.Target,
+		SummaryText: fmt.Sprintf("Discovery completed with %d endpoint%s.", len(endpoints), pluralSuffix(len(endpoints))),
+		Summary:     &summary,
+		Delta:       &response.Delta,
+		Items:       endpoints,
+		Logs:        result.Logs,
+		DurationMs:  response.DurationMs,
 	})
 }
 
@@ -1023,6 +1139,285 @@ func (s *apiServer) prepareDiscoveryCommand(ctx context.Context, request discove
 		cleanupScript()
 	}
 	return exec.CommandContext(ctx, pwsh, args...), tempPath, cleanup, nil
+}
+
+func discoveryScanID(endpoints []models.Endpoint) string {
+	for _, endpoint := range endpoints {
+		if value := strings.TrimSpace(endpoint.DiscoveryScanID); value != "" {
+			return value
+		}
+	}
+	return fmt.Sprintf("scan-%d", time.Now().UTC().UnixNano())
+}
+
+func discoveryTargetLabel(request discoveryRunRequest) string {
+	if request.TargetNetwork == "" {
+		return fmt.Sprintf("local/%d", request.SubnetMask)
+	}
+	return fmt.Sprintf("%s/%d", request.TargetNetwork, request.SubnetMask)
+}
+
+func discoveryHistoryPath(cfg config.Config, configPath string) string {
+	historyPath := strings.TrimSpace(cfg.Discovery.HistoryPath)
+	if historyPath == "" {
+		historyPath = filepath.Join("data", "discovery")
+	}
+	if !filepath.IsAbs(historyPath) {
+		historyPath = filepath.Join(filepath.Dir(configPath), historyPath)
+	}
+	return filepath.Clean(historyPath)
+}
+
+func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, response *discoveryResponse) error {
+	cfg, ok := s.effectiveStatusConfig()
+	if !ok {
+		cfg = config.Defaults(filepath.Dir(s.opts.ConfigPath))
+	}
+	historyPath := discoveryHistoryPath(cfg, s.opts.ConfigPath)
+	scansPath := filepath.Join(historyPath, "scans")
+	if err := os.MkdirAll(scansPath, 0o755); err != nil {
+		return err
+	}
+
+	targetHashBytes := sha256.Sum256([]byte(strings.ToLower(response.Target)))
+	targetKey := hex.EncodeToString(targetHashBytes[:8])
+	targetLatestPath := filepath.Join(historyPath, "latest_"+targetKey+".json")
+	var previous discoverySnapshot
+	if data, err := os.ReadFile(targetLatestPath); err == nil {
+		_ = json.Unmarshal(data, &previous)
+	}
+	response.Delta = calculateDiscoveryDelta(previous, response.Items)
+
+	snapshot := discoverySnapshot{
+		SchemaVersion: 1,
+		ScanID:        response.ScanID,
+		GeneratedAt:   response.GeneratedAt,
+		Target:        response.Target,
+		Request:       request,
+		Summary:       response.Summary,
+		Delta:         response.Delta,
+		Items:         response.Items,
+	}
+	stamp := strings.NewReplacer("-", "", ":", "").Replace(response.GeneratedAt)
+	stamp = strings.TrimSuffix(stamp, "Z")
+	scanPath := filepath.Join(scansPath, fmt.Sprintf("%s_%s.json", stamp, sanitizeFileComponent(response.ScanID)))
+	if err := writeJSONAtomic(scanPath, snapshot); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(targetLatestPath, snapshot); err != nil {
+		return err
+	}
+	return writeJSONAtomic(filepath.Join(historyPath, "latest.json"), snapshot)
+}
+
+func calculateDiscoveryDelta(previous discoverySnapshot, current []models.Endpoint) discoveryDelta {
+	delta := discoveryDelta{PreviousScanID: previous.ScanID}
+	previousIPs := make(map[string]struct{}, len(previous.Items))
+	currentIPs := make(map[string]struct{}, len(current))
+	for _, endpoint := range previous.Items {
+		previousIPs[strings.ToLower(strings.TrimSpace(endpoint.IP))] = struct{}{}
+	}
+	for _, endpoint := range current {
+		key := strings.ToLower(strings.TrimSpace(endpoint.IP))
+		currentIPs[key] = struct{}{}
+		if _, exists := previousIPs[key]; exists {
+			delta.Unchanged++
+		} else {
+			delta.New++
+		}
+	}
+	for key := range previousIPs {
+		if _, exists := currentIPs[key]; !exists {
+			delta.Missing++
+		}
+	}
+	return delta
+}
+
+func sanitizeFileComponent(value string) string {
+	var builder strings.Builder
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' {
+			builder.WriteRune(char)
+		}
+	}
+	if builder.Len() == 0 {
+		return "scan"
+	}
+	return builder.String()
+}
+
+func writeJSONAtomic(path string, value any) error {
+	content, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return err
+	}
+	content = append(content, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0o600); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if _, err := temp.Write(content); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		_ = temp.Close()
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err == nil {
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return os.Rename(tempPath, path)
+}
+
+type discoveryScheduleRunState struct {
+	LastRunAt     time.Time `json:"last_run_at,omitempty"`
+	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
+	LastError     string    `json:"last_error,omitempty"`
+}
+
+func (s *apiServer) runDiscoveryScheduler(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	states := make(map[string]discoveryScheduleRunState)
+	for {
+		s.evaluateDiscoverySchedules(ctx, states)
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *apiServer) evaluateDiscoverySchedules(ctx context.Context, states map[string]discoveryScheduleRunState) {
+	cfg, ok := s.effectiveStatusConfig()
+	if !ok || len(cfg.Discovery.Schedules) == 0 || !discoveryScriptAvailable(s.opts.DiscoveryScriptPath) {
+		return
+	}
+	historyPath := discoveryHistoryPath(cfg, s.opts.ConfigPath)
+	statePath := filepath.Join(historyPath, "schedule_state.json")
+	if len(states) == 0 {
+		if data, err := os.ReadFile(statePath); err == nil {
+			loaded := make(map[string]discoveryScheduleRunState)
+			if json.Unmarshal(data, &loaded) == nil {
+				for key, state := range loaded {
+					states[key] = state
+				}
+			}
+		}
+	}
+	now := time.Now()
+	for _, schedule := range cfg.Discovery.Schedules {
+		if !schedule.Enabled || len(schedule.Targets) == 0 {
+			continue
+		}
+		state := states[schedule.ID]
+		occurrence, err := previousScheduleOccurrence(schedule, now)
+		if err != nil {
+			if state.LastError != err.Error() {
+				diagnostics.LogWarn("discovery schedule invalid", map[string]interface{}{"schedule_id": schedule.ID, "error": err.Error()})
+			}
+			state.LastError = err.Error()
+			states[schedule.ID] = state
+			continue
+		}
+		if !state.LastRunAt.IsZero() && !state.LastRunAt.Before(occurrence) {
+			continue
+		}
+		if !state.LastAttemptAt.IsZero() && now.Sub(state.LastAttemptAt) < 15*time.Minute {
+			continue
+		}
+		state.LastAttemptAt = now.UTC()
+		state.LastError = ""
+		states[schedule.ID] = state
+		_ = writeJSONAtomic(statePath, states)
+
+		runErr := s.runScheduledDiscovery(ctx, schedule)
+		state = states[schedule.ID]
+		if runErr != nil {
+			state.LastError = runErr.Error()
+			diagnostics.LogWarn("scheduled discovery failed", map[string]interface{}{"schedule_id": schedule.ID, "error": runErr.Error()})
+		} else {
+			state.LastRunAt = time.Now().UTC()
+			state.LastError = ""
+			diagnostics.LogInfo("scheduled discovery completed", map[string]interface{}{"schedule_id": schedule.ID, "targets": len(schedule.Targets)})
+		}
+		states[schedule.ID] = state
+		_ = writeJSONAtomic(statePath, states)
+	}
+}
+
+func (s *apiServer) runScheduledDiscovery(ctx context.Context, schedule config.DiscoverySchedule) error {
+	for _, target := range schedule.Targets {
+		request := discoveryRunRequest{
+			TargetNetwork: target,
+			TimeoutMs:     schedule.TimeoutMs,
+			ThrottleLimit: schedule.Concurrency,
+		}
+		if err := normalizeDiscoveryRunRequest(&request); err != nil {
+			return err
+		}
+		if _, err := s.runDiscovery(ctx, request); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func previousScheduleOccurrence(schedule config.DiscoverySchedule, now time.Time) (time.Time, error) {
+	if schedule.Frequency != "weekly" {
+		return time.Time{}, fmt.Errorf("schedule %q frequency must be weekly", schedule.ID)
+	}
+	location := time.Local
+	if !strings.EqualFold(schedule.Timezone, "local") {
+		loaded, err := time.LoadLocation(schedule.Timezone)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("schedule %q timezone %q is invalid", schedule.ID, schedule.Timezone)
+		}
+		location = loaded
+	}
+	weekday, ok := parseWeekday(schedule.Day)
+	if !ok {
+		return time.Time{}, fmt.Errorf("schedule %q day %q is invalid", schedule.ID, schedule.Day)
+	}
+	var hour, minute int
+	if _, err := fmt.Sscanf(schedule.Time, "%d:%d", &hour, &minute); err != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return time.Time{}, fmt.Errorf("schedule %q time %q must use 24-hour HH:MM", schedule.ID, schedule.Time)
+	}
+	localNow := now.In(location)
+	daysBack := (int(localNow.Weekday()) - int(weekday) + 7) % 7
+	date := localNow.AddDate(0, 0, -daysBack)
+	occurrence := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, 0, 0, location)
+	if occurrence.After(localNow) {
+		occurrence = occurrence.AddDate(0, 0, -7)
+	}
+	return occurrence, nil
+}
+
+func parseWeekday(value string) (time.Weekday, bool) {
+	for day := time.Sunday; day <= time.Saturday; day++ {
+		if strings.EqualFold(value, day.String()) {
+			return day, true
+		}
+	}
+	return time.Sunday, false
 }
 
 func normalizeDiscoveryRunRequest(request *discoveryRunRequest) error {

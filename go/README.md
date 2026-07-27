@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.7.2 is the current Go runtime. It ensures the confirmation-gated controlled restart cannot be hidden by stale browser assets after an upgrade.
+Ping Monitor v5.9.0 is the current Go runtime. It adds bounded local logging, discovery history and scheduling, FQDN inventory evidence, explicit monitoring policy, and an opt-in versioned configuration upgrade path.
 
 ## Current Go Release
 
-- Version: `v5.7.2`
+- Version: `v5.9.0`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.7.2.md](../RELEASE_NOTES_v5.7.2.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.9.0.md](../RELEASE_NOTES_v5.9.0.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -17,11 +17,14 @@ Ping Monitor v5.7.2 is the current Go runtime. It ensures the confirmation-gated
 - Embedded admin UI with live runtime truth, revision-safe endpoint/config editing, cancellable discovery, dev/prod marking, and HEC connectivity tests.
 - Configuration Advisor with tolerant multi-error CSV inspection, worst-case capacity evidence, operating profiles, safe inventory cleanup, and confirmed config optimization.
 - Fsynced, bounded HEC/metrics outbox with asynchronous delivery, restart recovery, per-sink progress, and optional indexer acknowledgment.
+- Continuous result-log rotation with archive retention and optional gzip compression.
+- Durable discovery snapshots, CSV export, FQDN evidence, target deltas, and weekly schedules.
+- Probe suppression through explicit monitoring and maintenance policy, independent of dev/prod classification.
 
 ## Runtime Compatibility
 
-- Uses `config.psd1` and `endpoints.csv` fields compatible with the older Windows runtime model.
-- Emits schema v3 events with stable collector, endpoint, cycle, and event identities plus measured-versus-censored latency metadata. Core `record_type` values remain compatible.
+- Uses existing `config.psd1`, flat JSON/YAML, and `endpoints.csv` fields without requiring migration.
+- Emits schema v4 events with stable identities, measured-versus-censored latency, FQDN, and monitoring-policy metadata. Core summary and ping `record_type` values remain compatible.
 - Maintains metrics compatibility behavior through `metrics.compat_mode`.
 
 ## Quick Start
@@ -48,7 +51,7 @@ With the default file names, the binary prefers `config.psd1` and `endpoints.csv
 
 | Flag | Purpose |
 |------|---------|
-| `--config` | Path to `config.psd1` (preferred), `config.yaml`, or `config.json` |
+| `--config` | Path to `config.psd1`, `config.json`, `config.yaml`, or `config.yml` |
 | `--endpoints` | Path to `endpoints.csv` |
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
@@ -73,16 +76,27 @@ Use `--format json` with `analyze`, `optimize`, or `benchmark` for automation. A
 
 ## Configuration Model
 
-- `config.psd1` is the preferred config format for the Go runtime.
-- `config.yaml` and `config.json` are supported fallbacks.
-- If no supported config exists, the runtime and editable UI can initialize a new `config.yaml`.
+- New deployments initialize grouped schema-v2 `config.json`.
+- Existing `config.psd1`, flat `config.json`, `config.yaml`, and `config.yml` remain schema-v1-compatible inputs.
+- When multiple default-named files exist, startup preserves the existing resolution order: PSD1, JSON, YAML, YML.
 - Relative config paths are resolved from the directory containing the selected config file.
-- The current checked-in sample lives in [../config.psd1](../config.psd1).
+- The schema-v2 reference is [../config.example.json](../config.example.json); [../config.psd1](../config.psd1) remains the legacy-compatible example.
+
+Preview or apply a non-destructive migration:
+
+```powershell
+.\pingmonitor.exe config upgrade --config .\config.psd1 --to .\config.json --check
+.\pingmonitor.exe config upgrade --config .\config.psd1 --to .\config.json --apply
+```
+
+The source is never modified. Point the process or service at the new file only after reviewing it.
 
 ### Endpoint File Rules
 
 - `endpoints.csv` accepts legacy two-column files (`ip,hostname`).
 - The optional `endpoint_id` column is persisted by the UI; when absent, a deterministic ID is derived from the target IP.
+- Optional `fqdn`, `monitoring_enabled`, `maintenance_until`, and `maintenance_reason` columns add identity and monitoring policy.
+- Omitted `monitoring_enabled` is enabled. `dev` remains classification only.
 - Target values must be literal IP addresses. Malformed rows, duplicate canonical IPs/IDs, and invalid `dev` values are rejected.
 - `dev=true` endpoints emit `record_type=summary_dev` and `record_type=ping_dev`.
 - Standard production searches that use `record_type=summary` remain unaffected by dev/test devices.
@@ -109,7 +123,9 @@ It provides:
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
 - live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status
 - config editing against the active config file
-- cancellable discovery with host-count preflight and staged import workflows
+- cancellable discovery with host-count preflight, FQDN evidence, CSV export, scan history/deltas, and staged import workflows
+- timezone-aware weekly discovery schedules that remain review-only
+- monitoring pause/resume and timed maintenance controls
 - HEC event and metrics endpoint validation
 - settings help modals for the runtime configuration surface
 - a dedicated Advisor view with readiness counts, current/proposed schedule evidence, findings, change previews, safe fixes, profiles, and a bounded benchmark
@@ -172,7 +188,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.7.2`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.9.0`
 - Bash: `./go/build.sh dist`
 
 Current default targets:
@@ -221,10 +237,12 @@ The shipped installer:
 - rotates service stdout/stderr logs
 - enables the admin UI on `0.0.0.0:8080` by default
 - supports `-UIListen` to select a different bind address or port
-- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.7
+- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.9
 - supports `-DisableUI` for a headless service
 - supports `-ForceReinstall` when a binary or deployment path changes
 - runs the complete advisor during validation and surfaces recent service stdout/stderr automatically when a start fails
+
+When standard filenames are used, the installer can auto-detect the config and `endpoints.csv` in the binary's working directory. Pass an explicit absolute `-ConfigPath` when both a legacy PSD1 and an upgraded JSON file exist. `-DisableUI` disables the HTTP listener but does not disable configured discovery schedules.
 
 For an in-place upgrade, validate the replacement binary, stop the service, replace the existing binary, and restart the service. If the executable path changes, reinstall with `-ForceReinstall` so NSSM's persisted definition is checked again.
 

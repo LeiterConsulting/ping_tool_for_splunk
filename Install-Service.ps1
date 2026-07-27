@@ -225,7 +225,7 @@ function Assert-UIListenSafe {
         throw "UIListen port is outside 1-65535: $portPart"
     }
 
-    # v5.7 intentionally permits non-loopback listeners. -AllowRemoteUI remains
+    # Current releases intentionally permit non-loopback listeners. -AllowRemoteUI remains
     # accepted for command-line compatibility but is no longer required.
 }
 
@@ -259,7 +259,14 @@ function Get-DesiredServiceDefinition {
             Resolve-AbsolutePath -Path $ConfigPath -BasePath $ScriptDir -MustExist
         }
         else {
-            Resolve-AbsolutePath -Path 'config.psd1' -BasePath $workDir -MustExist
+            $candidate = @('config.psd1', 'config.json', 'config.yaml', 'config.yml') |
+                ForEach-Object { Join-Path $workDir $_ } |
+                Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } |
+                Select-Object -First 1
+            if (-not $candidate) {
+                throw "No supported configuration was found in $workDir. Supply -ConfigPath or create config.json."
+            }
+            [IO.Path]::GetFullPath($candidate)
         }
         $endpointFile = if ($EndpointsPath) {
             Resolve-AbsolutePath -Path $EndpointsPath -BasePath $ScriptDir -MustExist

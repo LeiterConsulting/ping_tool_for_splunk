@@ -47,7 +47,12 @@ try {
         -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `
         -WorkingDirectory $testRoot -Json
     $defaultDefinition = $defaultJson | ConvertFrom-Json
-    Assert-True ($defaultDefinition.UIListen -eq '0.0.0.0:8080') 'v5.7 service UI should default to 0.0.0.0:8080'
+    Assert-True ($defaultDefinition.UIListen -eq '0.0.0.0:8080') 'current service UI should default to 0.0.0.0:8080'
+
+    $detectedJson = & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
+        -EndpointsPath (Join-Path $testRoot 'endpoints.csv') -WorkingDirectory $testRoot -Json
+    $detectedDefinition = $detectedJson | ConvertFrom-Json
+    Assert-True ($detectedDefinition.ConfigPath -eq (Join-Path $testRoot 'config.json')) 'service validation should auto-detect config.json when PSD1 is absent'
 
     $remoteJson = & $installer -Validate -ServiceName PingMonitorDefinitionTest -BinaryPath $BinaryPath `
         -ConfigPath (Join-Path $testRoot 'config.json') -EndpointsPath (Join-Path $testRoot 'endpoints.csv') `

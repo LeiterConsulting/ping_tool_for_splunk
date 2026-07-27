@@ -2,6 +2,7 @@
   <view name="ping_overview" default="true"/>
   <view name="prod_devices"/>
   <view name="dev_devices"/>
+  <view name="cmdb_inventory"/>
   <view name="asset_correlation"/>
   <view name="setup"/>
   <collection label="Reports">

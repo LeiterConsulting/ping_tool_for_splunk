@@ -4,17 +4,17 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Latest Published Release
 
-- Go runtime: `v5.7.2`
-- Splunk app: `2.9.2` build `41`
-- Current runtime release notes: [RELEASE_NOTES_v5.7.2.md](RELEASE_NOTES_v5.7.2.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_2.9.2.md](RELEASE_NOTES_splunk_app_2.9.2.md)
+- Go runtime: `v5.9.0`
+- Splunk app: `3.0.0` build `42`
+- Current runtime release notes: [RELEASE_NOTES_v5.9.0.md](RELEASE_NOTES_v5.9.0.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.0.0.md](RELEASE_NOTES_splunk_app_3.0.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
 
 ## Current Runtime Options
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.7.2 | Primary runtime | Windows, Linux, macOS | `config.psd1` preferred; `config.yaml` and `config.json` supported as fallbacks |
+| Go v5.9.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -22,6 +22,10 @@ The top-level README now describes the current published release only. Older Pow
 ## What The Current Release Includes
 
 - Configuration Advisor with multi-error inventory validation, deterministic worst-case schedule modeling, operating profiles, revision-safe fixes, and a bounded non-SLA host benchmark.
+- Live size-based result-log rotation with count/age retention, optional compression, and runtime/advisor evidence.
+- FQDN-enriched discovery with CSV export, durable scan history, target deltas, and timezone-aware weekly schedules.
+- Independent monitoring policy and maintenance windows that suppress probes explicitly rather than fabricating downtime.
+- A versioned config upgrade workflow that leaves legacy files untouched until an operator activates the generated config.
 - Versioned, non-cacheable admin UI assets so browser sessions cannot mix an upgraded API with stale controls.
 - Operator-focused embedded admin UI with live collector/cycle/delivery truth, revision-safe endpoint and config editing, discovery, dev/prod marking, and HEC connectivity tests.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
@@ -54,7 +58,7 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 
 | Flag | Purpose |
 |------|---------|
-| `--config` | Path to `config.psd1` (preferred), `config.yaml`, or `config.json` |
+| `--config` | Path to `config.psd1`, `config.json`, `config.yaml`, or `config.yml` |
 | `--endpoints` | Path to `endpoints.csv` |
 | `--ui-listen` | Bind address for the local admin UI |
 | `--ui-only` | Start the UI without starting the monitoring engine |
@@ -66,7 +70,7 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 
 ### Configuration Advisor
 
-Version 5.7 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, whitespace normalization, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
+Version 5.9 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, monitoring-policy errors, invalid maintenance timestamps, discovery-schedule errors, unbounded log retention, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
 
 ```powershell
 # Read-only analysis; exits nonzero when blockers exist
@@ -94,13 +98,19 @@ The advisor never guesses a malformed IP address. Exact duplicate rows with iden
 
 ### Go Runtime Configuration
 
-- `config.psd1` is the preferred configuration file for `pingmonitor.exe`.
-- `config.yaml` and `config.json` are supported fallback formats for the Go runtime.
-- If no supported config file exists, the Go runtime and editable UI can initialize a new `config.yaml` automatically.
-- Relative paths in `config.psd1` are resolved from the directory containing that config file.
+- New deployments initialize the grouped, versioned schema-v2 format in `config.json`; [config.example.json](config.example.json) is the reference.
+- Existing `config.psd1`, flat JSON, and flat YAML files are schema-v1 inputs and remain valid without edits.
+- Startup preserves the compatibility resolution order: an existing co-located `config.psd1` is preferred, followed by `config.json`, `config.yaml`, and `config.yml`.
+- Relative paths are resolved from the directory containing the active config file.
 - The embedded UI edits the same active config file the runtime uses.
 
-See the checked-in sample in [config.psd1](config.psd1) for the full current schema.
+Preview a side-by-side migration without changing the active file:
+
+```powershell
+.\pingmonitor.exe config upgrade --config .\config.psd1 --to .\config.json --check
+```
+
+Use `--apply` when ready. The runtime writes and reload-verifies the target but never switches the service automatically; update the service's `--config` argument after validation. The legacy sample remains available in [config.psd1](config.psd1).
 
 ### Unix Shell Configuration
 
@@ -116,12 +126,12 @@ ip,hostname,dev
 10.0.0.50,app-server,false
 ```
 
-Full format:
+Extended inventory format:
 
 ```csv
-ip,hostname,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev
-192.168.1.1,router,network,Core Router,infrastructure,router,Cisco,Primary site,,false
-10.0.0.50,app-server,servers,Production App,server,vm,VMware,Critical,,false
+ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason
+192.168.1.1,router,router.example.com,network,Core Router,infrastructure,router,Cisco,Primary site,,false,true,,
+10.0.0.50,app-server,app-server.example.com,servers,Production App,server,vm,VMware,Critical,,false,true,,
 ```
 
 Endpoint file rules:
@@ -130,6 +140,9 @@ Endpoint file rules:
 - `ip` and `hostname` headers are required; column order is otherwise flexible.
 - The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, and duplicate endpoint IDs are rejected.
 - `endpoint_id` is optional; the runtime derives a stable target-based ID when it is blank.
+- `fqdn`, `monitoring_enabled`, `maintenance_until`, and `maintenance_reason` are optional.
+- Missing `monitoring_enabled` means `true`, so old endpoint files keep being monitored.
+- `monitoring_enabled=false` pauses probing. A future RFC 3339 `maintenance_until` pauses probing until expiry; `dev` alone never pauses probing.
 - `dev=true` endpoints emit `record_type=summary_dev` and, when enabled, `record_type=ping_dev`.
 - Production rollups stay on `record_type=summary`, so dev/test systems do not skew customer-facing availability.
 
@@ -154,7 +167,9 @@ The UI supports:
 - advisor analysis, current-versus-proposed schedule evidence, safe fixes, confirmed profile application, and a bounded local benchmark
 - full endpoint CRUD
 - explicitly selected bulk dev/prod and delete actions, with destructive confirmations
-- cancellable discovery with host-count preflight plus merge or overwrite workflows
+- cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, CSV export, durable scan deltas, and merge or overwrite workflows
+- weekly, timezone-aware discovery schedules with review-only import policy
+- explicit pause/resume monitoring controls and timed maintenance
 - HEC event and metrics endpoint test actions
 - settings help modals for the runtime configuration surface
 
@@ -170,13 +185,14 @@ If you only want to edit files without running the monitor:
 |-------|--------------|---------|
 | Core cycle | `pings_per_cycle`, `cycle_interval_seconds`, `timeout_ms`, `parallel_threads` | Controls ping count, cycle cadence, timeout, and concurrency |
 | Event volume | `emit_individual_pings` | Keeps per-ping events on or off while summary events always remain |
-| Output and logging | `output_mode`, `log_path`, `log_rotation_size_mb` | Chooses file, HEC, or both and controls local log output |
+| Output and logging | `output_mode`, `log_path`, `log_rotation_size_mb`, `log_retention_files`, `log_retention_days`, `log_compress_rotated` | Chooses file, HEC, or both and bounds local log output |
 | Ping engine | `ping.mode` | Selects `auto`, `raw`, or `exec`; Windows uses native ICMP in `auto`/`raw` |
 | Health | `health.down_after_failures`, `health.recovery_after_successes`, `health.stale_after_intervals` | Controls state hysteresis and checkpoint freshness |
 | Diagnostics and debug | `diagnostics.enabled`, `diagnostics.handle_probe_mode`, `debug.emit_memory_stats` | Enables runtime troubleshooting and memory instrumentation |
 | HEC events | `hec.enabled`, `hec.url`, `hec.token`, `hec.index`, `hec.sourcetype`, `hec.retry.*`, `hec.use_ack` | Controls direct event delivery, retry behavior, and optional indexer acknowledgment |
 | Metrics | `metrics.enabled`, `metrics.mode`, `metrics.index`, `metrics.hec_url`, `metrics.token`, `metrics.use_metrics_index`, `metrics.use_ack` | Controls metrics delivery and confirmation behavior |
 | Durable delivery | `delivery.spool_path`, `delivery.max_spool_bytes`, `delivery.max_envelopes`, `delivery.drain_max_envelopes` | Bounds the fsynced outbox and catch-up work without allowing silent drops |
+| Discovery | `discovery.history_path`, `discovery.schedules` | Stores scan evidence and defines review-only weekly discovery schedules |
 
 Default/current sample values live in [config.psd1](config.psd1).
 
@@ -188,6 +204,7 @@ Default/current sample values live in [config.psd1](config.psd1).
 - Packet loss is an observation, not a substitute for state. The Splunk app uses collector state for current v3 health and labels any state inferred from older history.
 - Exact latency is emitted only when the selected backend measured RTT. A platform result such as `time<1ms` is represented as censored with `latency_upper_bound_ms=1`; it is counted as a successful reply but excluded from exact min/average/max calculations.
 - `probe_elapsed_ms` is diagnostic wall time and is never presented as network RTT.
+- `monitoring_control` events state why an endpoint was not probed. Their observation is `suppressed`, and Splunk presents the endpoint as Maintenance or Paused rather than Down.
 
 For network output, a cycle is written atomically to the durable outbox before the background delivery worker contacts Splunk. `/api/status` reports backlog age/count/bytes and a confirmation mode:
 
@@ -210,13 +227,13 @@ Enable `use_ack` only after [indexer acknowledgment is enabled on the correspond
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_2.9.2_build41_20260715.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_3.0.0_build42_20260727.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.
-3. Use **Ping Monitor Overview** for whole-platform statistics, **Prod Devices** for current production-only breakdowns, **Dev Devices** for current dev/test devices, and **Asset Health Correlation** for enrichment workflows.
+3. Use **Ping Monitor Overview** for whole-platform statistics, **Prod Devices** for production-only breakdowns, **Dev Devices** for dev/test devices, **CMDB Inventory** for current identity/policy/state, and **Asset Health Correlation** for enrichment workflows.
 
-The current app package is AppInspect-validated for this release and includes the separate Prod Devices dashboard plus current-mode Dev Devices membership behavior.
+The CMDB view reads old summaries and schema-v4 control events together. Historical v1-v3 events remain searchable through the normalization macros.
 
 ### File-Based Ingestion
 
@@ -273,6 +290,8 @@ Open PowerShell with **Run as administrator** for installation and lifecycle ope
 
 The default working directory is the directory containing the selected Go binary. Therefore a service installed from the repository can safely target a separate deployment directory; relative runtime paths continue to resolve beside that deployed binary. Override this with `-WorkingDirectory` or place service output elsewhere with `-LogDirectory`.
 
+`-ConfigPath` and `-EndpointsPath` may be omitted when the deployment files use standard names in that working directory. The installer checks `config.psd1`, `config.json`, `config.yaml`, and `config.yml` in compatibility order and requires `endpoints.csv`. Use explicit absolute paths when more than one config exists—especially after generating an upgraded JSON config—so the persisted service definition cannot select the wrong file.
+
 By default the service:
 
 - runs as `LocalSystem` through NSSM;
@@ -293,7 +312,9 @@ Use a different address/port or disable the UI when required:
 .\Install-Service.ps1 -Install -DisableUI
 ```
 
-Version 5.7 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
+`-DisableUI` disables only the HTTP administration listener. Configured discovery schedules and the monitoring engine continue to run.
+
+Version 5.9 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
 
 `-Validate` now runs the full Configuration Advisor preflight and shows all blockers and recommendations before NSSM is changed. Start, restart, and install operations include a startup stabilization check; failures automatically include the recent NSSM stdout/stderr tail when available.
 

@@ -2,6 +2,15 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
+## Version 3.0.0
+
+### What's New in v3.0.0
+
+- **CMDB Inventory**: Adds a current inventory view with stable endpoint identity, FQDN, first/last seen, monitoring policy, maintenance context, enrichment fields, and collector-confirmed state.
+- **Suppression truth**: Schema-v4 `monitoring_control` events appear as Paused or Maintenance instead of being interpreted as packet loss or downtime.
+- **Historical continuity**: Existing v1-v3 summary events remain normalized and searchable. No historical reindex is required.
+- **Setup-driven searches**: The new view uses the events index and sourcetype already configured in Setup.
+
 ## Version 2.9.2
 
 ### What's New in v2.9.2
@@ -49,13 +58,13 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_2.9.2_build41_20260715.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_3.0.0_build42_20260727.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
 ## Paired Go Runtime
 
-This Splunk app is intended to pair with the current Go runtime release, `v5.5.0`.
+This Splunk app is intended to pair with the current Go runtime release, `v5.9.0`.
 
 - Drop `pingmonitor.exe` into an existing deployment folder and it will pick up the co-located `config.psd1` and `endpoints.csv` on startup.
 - If the embedded admin UI is enabled, those active files are loaded into the UI immediately so the existing deployment can be managed without rebuilding configuration by hand.
@@ -67,6 +76,7 @@ This Splunk app is intended to pair with the current Go runtime release, `v5.5.0
 - **Setup Page**: Save the events index, sourcetype, and metrics index from the in-app configuration page
 - **Real-time Ping Monitoring**: Track endpoint availability and latency
 - **Health Correlation**: Enrich your data with ping health status from a KV Store-backed lookup
+- **CMDB Inventory**: Review current identity, monitoring policy, maintenance, signal quality, and FQDN coverage
 - **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency
 - **Splunk Cloud-Ready Package**: AppInspect-clean packaging and app metadata for Cloud deployment
 
@@ -75,8 +85,9 @@ This Splunk app is intended to pair with the current Go runtime release, `v5.5.0
 1. **Ping Monitor Overview** - Whole-platform dashboard across production and dev/test devices
 2. **Prod Devices** - Dedicated production-only view for devices whose latest mode is not dev
 3. **Dev Devices** - Dedicated dev/test view for endpoints currently flagged as development/test
-4. **Asset Health Correlation** - Enrich other data sources with ping health
-5. **Setup** - In-app configuration page for events and metrics data sources
+4. **CMDB Inventory** - Current identity, monitoring policy, and signal-truth view
+5. **Asset Health Correlation** - Enrich other data sources with ping health
+6. **Setup** - In-app configuration page for events and metrics data sources
 
 ## Configuration
 

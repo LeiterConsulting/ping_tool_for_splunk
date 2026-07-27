@@ -24,6 +24,12 @@ import (
 )
 
 func main() {
+	if handled, exitCode := runConfigCommand(os.Args[1:]); handled {
+		if exitCode != 0 {
+			os.Exit(exitCode)
+		}
+		return
+	}
 	if handled, exitCode := runAdvisorCommand(os.Args[1:]); handled {
 		if exitCode != 0 {
 			os.Exit(exitCode)
@@ -31,7 +37,7 @@ func main() {
 		return
 	}
 	var (
-		configPath    = flag.String("config", "config.psd1", "Path to config.psd1 (preferred) or config.yaml/config.json")
+		configPath    = flag.String("config", "config.psd1", "Path to an existing config.psd1/config.yaml/config.json; new deployments use config.json")
 		endpointsPath = flag.String("endpoints", "endpoints.csv", "Path to endpoints.csv")
 		runOnce       = flag.Bool("run-once", false, "Run a single cycle and exit")
 		maxCycles     = flag.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
@@ -58,7 +64,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	resolvedConfigPath := resolveRuntimePath(*configPath, root, "config.psd1")
+	resolvedConfigPath := resolveConfigRuntimePath(*configPath, root)
 	resolvedEndpointsPath := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
 	if *validateOnly {
 		report := advisor.AnalyzeDeployment(context.Background(), advisor.AnalyzeOptions{
@@ -162,6 +168,17 @@ func main() {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
 			os.Exit(2)
 		}
+	} else {
+		webui.StartDiscoveryScheduler(ctx, webui.Options{
+			ConfigPath:              resolvedConfigPath,
+			EndpointsPath:           resolvedEndpointsPath,
+			RootDir:                 root,
+			Version:                 buildinfo.Version,
+			CollectorID:             collectorID,
+			Runtime:                 runtimeTracker,
+			EffectiveConfig:         &deployment.Config,
+			EffectiveConfigProvider: effectiveConfig.Get,
+		})
 	}
 
 	err = runMonitorLoop(ctx, deployment, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode, collectorID, *runOnce, *maxCycles, runtimeTracker, effectiveConfig, restartRequests)
@@ -218,4 +235,20 @@ func resolveRuntimePath(path string, root string, defaultName string) string {
 		return rootCandidate
 	}
 	return rootCandidate
+}
+
+func resolveConfigRuntimePath(value string, root string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" && trimmed != "config.psd1" {
+		return resolveRuntimePath(trimmed, root, "config.psd1")
+	}
+	for _, directory := range []string{root, "."} {
+		for _, name := range []string{"config.psd1", "config.json", "config.yaml", "config.yml"} {
+			candidate := filepath.Join(directory, name)
+			if _, err := os.Stat(candidate); err == nil {
+				return filepath.Clean(candidate)
+			}
+		}
+	}
+	return filepath.Join(root, "config.json")
 }
