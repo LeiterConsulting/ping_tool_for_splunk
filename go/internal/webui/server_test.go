@@ -95,9 +95,12 @@ func TestStaticUIProvidesContextHelpForEveryConfigurationField(t *testing.T) {
 		}
 	}
 	for _, requiredID := range []string{
-		"endpoint-ip", "endpoint-hostname", "endpoint-fqdn", "endpoint-dev", "endpoint-monitoring-enabled",
+		"endpoint-ip", "endpoint-hostname", "endpoint-fqdn", "endpoint-device-mode", "endpoint-alerting-enabled",
+		"endpoint-alerting-reason", "endpoint-dynamic-address", "endpoint-asset-id", "endpoint-classification-source", "endpoint-monitoring-enabled",
 		"endpoint-maintenance-until", "discovery-target-network", "discovery-subnet-mask",
-		"discovery-timeout-ms", "discovery-throttle-limit", "discovery-merge-mode",
+		"discovery-timeout-ms", "discovery-throttle-limit", "discovery-merge-mode", "discovery-bulk-group",
+		"discovery-bulk-entitytype", "discovery-bulk-device", "discovery-bulk-vendor",
+		"discovery-review-note",
 	} {
 		if !strings.Contains(appJS, fmt.Sprintf("'%s': helpTopic(", requiredID)) {
 			t.Errorf("operator field %s has no contextual help topic", requiredID)
@@ -881,7 +884,7 @@ func TestStaticShellServesIndex(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
-	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", "Endpoint Inventory", "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete This Endpoint") {
+	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", "Endpoint Inventory", "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete This Endpoint", "Needs Review", "Defer Review", "Return to Needs Review", "/review_workflow.js?v=test") {
 		t.Fatalf("body missing expected shell markers: %q", body)
 	}
 	for header, want := range map[string]string{
@@ -1007,9 +1010,12 @@ func TestPersistDiscoverySnapshotRetainsHistoryAndCalculatesDelta(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	newItems, missingItems := calculateDiscoveryItemChanges(first.Items, detail.Items)
+	newItems, missingItems, unresolvedItems := calculateDiscoveryItemChanges(first.Items, detail.Items)
 	if len(newItems) != 1 || newItems[0].IP != "10.0.0.3" || len(missingItems) != 1 || missingItems[0].IP != "10.0.0.1" {
 		t.Fatalf("item changes new=%#v missing=%#v", newItems, missingItems)
+	}
+	if len(unresolvedItems) != 0 {
+		t.Fatalf("unresolved items = %#v, want none", unresolvedItems)
 	}
 }
 
@@ -1017,6 +1023,10 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 	root := t.TempDir()
 	cfg := config.Defaults(root)
 	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	cfg.Discovery.Subnets = []config.DiscoverySubnet{{
+		ID: "lab", CIDR: "10.0.0.0/24", Name: "Lab", VLAN: "100", Location: "HQ",
+		AddressingMode: "static", RoutingDomain: "corp",
+	}}
 	var emittedBatchID string
 	var emitted []json.RawMessage
 	server := newAPIServer(Options{
@@ -1071,6 +1081,9 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 	if scan.RecordType != "discovery_scan_summary" || scan.NewEndpoints != 1 || scan.MissingEndpoints != 1 || scan.Unchanged != 1 || !scan.BaselineAvailable {
 		t.Fatalf("scan event = %#v", scan)
 	}
+	if scan.SubnetID != "lab" || scan.SubnetName != "Lab" || scan.SubnetVLAN != "100" || scan.SubnetLocation != "HQ" || scan.RoutingDomain != "corp" {
+		t.Fatalf("scan subnet metadata = %#v", scan)
+	}
 	byIP := make(map[string]models.DiscoveryEvent)
 	for _, raw := range emitted[1:] {
 		var event models.DiscoveryEvent
@@ -1085,6 +1098,9 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 		if _, exists := fields["state"]; exists {
 			t.Fatalf("discovery evidence incorrectly claimed monitoring state: %s", raw)
 		}
+		if event.SubnetID != "lab" {
+			t.Fatalf("discovery event subnet id = %q", event.SubnetID)
+		}
 	}
 	if event := byIP["10.0.0.1"]; event.DiscoveryStatus != "not_observed" || event.DiscoveryDelta != "missing" || event.DiscoveryObserved {
 		t.Fatalf("missing evidence = %#v", event)
@@ -1094,6 +1110,178 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 	}
 	if event := byIP["10.0.0.3"]; event.DiscoveryDelta != "new" || !event.DiscoveryObserved {
 		t.Fatalf("new evidence = %#v", event)
+	}
+}
+
+func TestDynamicDiscoveryUsesStableIdentityAndDoesNotInventNewAssets(t *testing.T) {
+	previous := discoverySnapshot{ScanID: "scan-1", Items: []models.Endpoint{
+		{IP: "10.0.0.10", FQDN: "laptop.example.test", DNSForwardConfirmed: true, DynamicAddress: true},
+		{IP: "10.0.0.20", Hostname: "unresolved-a", DynamicAddress: true},
+	}}
+	current := []models.Endpoint{
+		{IP: "10.0.0.11", FQDN: "laptop.example.test", DNSForwardConfirmed: true, DynamicAddress: true},
+		{IP: "10.0.0.21", Hostname: "unresolved-b", DynamicAddress: true},
+	}
+	delta := calculateDiscoveryDelta(previous, current)
+	if delta.New != 0 || delta.Missing != 0 || delta.Unchanged != 1 || delta.UnresolvedDynamic != 1 {
+		t.Fatalf("dynamic delta = %#v", delta)
+	}
+	newItems, missingItems, unresolved := calculateDiscoveryItemChanges(previous.Items, current)
+	if len(newItems) != 0 || len(missingItems) != 0 || len(unresolved) != 1 || unresolved[0].IP != "10.0.0.21" {
+		t.Fatalf("dynamic changes new=%#v missing=%#v unresolved=%#v", newItems, missingItems, unresolved)
+	}
+}
+
+func TestDiscoveryEnrichmentAppliesSubnetAndRegexRules(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.Subnets = []config.DiscoverySubnet{
+		{ID: "broad", CIDR: "10.20.0.0/16", Name: "Broad", AddressingMode: "static"},
+		{ID: "servers", CIDR: "10.20.30.0/24", Name: "Server VLAN", VLAN: "230", Location: "NYC", AddressingMode: "dhcp", RoutingDomain: "corp"},
+	}
+	cfg.Classification.Rules = []config.ClassificationRule{{
+		ID: "server", Enabled: true, Source: "hostname", Pattern: `^(?P<site>[a-z]{3})-srv-`,
+		Assignments: map[string]string{"group": "${site} servers", "entitytype": "server", "device": "vm"},
+	}}
+	server := newAPIServer(Options{ConfigPath: filepath.Join(root, "config.psd1"), RootDir: root, EffectiveConfig: &cfg})
+	items, err := server.enrichDiscoveryEndpoints("10.20.30.0/24", []models.Endpoint{{
+		IP: "10.20.30.10", Hostname: "nyc-srv-001", Group: "default",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].DynamicAddress || items[0].Group != "nyc servers" ||
+		items[0].EntityType != "server" || items[0].Device != "vm" || items[0].ClassificationSource != "rule:server" ||
+		items[0].DiscoveryReviewState != models.DiscoveryReviewNeedsReview ||
+		items[0].SubnetID != "servers" || items[0].SubnetName != "Server VLAN" || items[0].SubnetVLAN != "230" ||
+		items[0].SubnetLocation != "NYC" || items[0].AddressingMode != "dhcp" || items[0].RoutingDomain != "corp" {
+		t.Fatalf("enriched item = %#v", items)
+	}
+}
+
+func TestClassificationPreviewHandlerReturnsChangesWithoutMutation(t *testing.T) {
+	server := newAPIServer(Options{RootDir: t.TempDir()})
+	body := `{
+		"rules":[{"id":"network","enabled":true,"source":"hostname","pattern":"^(?P<site>[a-z]{3})-(?P<role>sw|fw)-","assignments":{"group":"${site}","entitytype":"network","device":"${role}"}}],
+		"items":[{"ip":"10.0.0.1","hostname":"nyc-sw-01","group":"default"}]
+	}`
+	response := httptest.NewRecorder()
+	server.handleClassificationPreview(response, httptest.NewRequest(http.MethodPost, "/api/classification/preview", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("preview status = %d body=%s", response.Code, response.Body.String())
+	}
+	var payload classificationPreviewResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Results) != 1 || payload.Results[0].Endpoint.Group != "nyc" ||
+		payload.Results[0].Endpoint.Device != "sw" || payload.Results[0].Endpoint.EntityType != "network" ||
+		payload.Results[0].Endpoint.ClassificationSource != "rule:network" {
+		t.Fatalf("preview payload = %#v", payload)
+	}
+}
+
+func TestDiscoveryReviewRegistryPersistsDecisionAndMetadataAcrossAddressChange(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	body := `{
+		"state":"deferred",
+		"note":"Awaiting CMDB owner",
+		"items":[{
+			"ip":"10.20.30.10","hostname":"laptop-01","fqdn":"laptop-01.example.test",
+			"dns_forward_confirmed":true,"dynamic_address":true,"asset_id":"asset-42",
+			"group":"Workstations","entitytype":"Endpoint","device":"Laptop","vendor":"Example"
+		}]
+	}`
+	response := httptest.NewRecorder()
+	server.handleDiscoveryReviews(response, httptest.NewRequest(http.MethodPost, "/api/discovery/reviews", strings.NewReader(body)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("review status = %d body=%s", response.Code, response.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Discovery.HistoryPath, "reviews.json")); err != nil {
+		t.Fatalf("review registry was not persisted: %v", err)
+	}
+
+	restarted := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: filepath.Join(root, "endpoints.csv"),
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	items, err := restarted.reconcileDiscoveryEndpoints([]models.Endpoint{{
+		IP: "10.20.30.99", Hostname: "laptop-01", FQDN: "laptop-01.example.test",
+		DNSForwardConfirmed: true, DynamicAddress: true, Group: "default",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].DiscoveryReviewState != models.DiscoveryReviewDeferred ||
+		items[0].DiscoveryReviewNote != "Awaiting CMDB owner" || items[0].AssetID != "asset-42" ||
+		items[0].Group != "Workstations" || items[0].IP != "10.20.30.99" {
+		t.Fatalf("reconciled review = %#v", items)
+	}
+}
+
+func TestDiscoveryInventoryReconciliationCarriesAssetIdentityAcrossDHCPChange(t *testing.T) {
+	root := t.TempDir()
+	endpointsPath := filepath.Join(root, "endpoints.csv")
+	known := models.Endpoint{
+		IP: "10.20.30.10", Hostname: "laptop-01", FQDN: "laptop-01.example.test",
+		DNSForwardConfirmed: true, DynamicAddress: true, AssetID: "asset-42", Group: "Managed",
+		DeviceMode: models.DeviceModeProduction, AlertingEnabled: models.Bool(false),
+	}
+	if err := config.SaveEndpoints(endpointsPath, []models.Endpoint{known}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults(root)
+	cfg.Discovery.HistoryPath = filepath.Join(root, "history")
+	server := newAPIServer(Options{
+		ConfigPath: filepath.Join(root, "config.psd1"), EndpointsPath: endpointsPath,
+		RootDir: root, EffectiveConfig: &cfg,
+	})
+	items, err := server.reconcileDiscoveryEndpoints([]models.Endpoint{{
+		IP: "10.20.30.99", Hostname: "laptop-01", FQDN: "laptop-01.example.test",
+		DNSForwardConfirmed: true, DynamicAddress: true, Group: "default",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].AssetID != "asset-42" || items[0].IP != "10.20.30.99" ||
+		items[0].DiscoveryReviewState != models.DiscoveryReviewApproved || items[0].IsAlertingEnabled() {
+		t.Fatalf("inventory reconciliation = %#v", items)
+	}
+
+	previous := discoverySnapshot{ScanID: "scan-1", Items: []models.Endpoint{{
+		IP: "10.20.30.10", Hostname: "laptop-01", FQDN: "laptop-01.example.test",
+		DNSForwardConfirmed: true, DynamicAddress: true,
+	}}}
+	delta := calculateDiscoveryDelta(previous, items)
+	if delta.New != 0 || delta.Missing != 0 || delta.Unchanged != 1 || delta.UnresolvedDynamic != 0 {
+		t.Fatalf("identity transition delta = %#v", delta)
+	}
+}
+
+func TestDiscoveryReviewHandlerRejectsApprovalWithoutEndpointSave(t *testing.T) {
+	server := newAPIServer(Options{RootDir: t.TempDir()})
+	response := httptest.NewRecorder()
+	server.handleDiscoveryReviews(response, httptest.NewRequest(http.MethodPost, "/api/discovery/reviews", strings.NewReader(`{
+		"state":"approved","items":[{"ip":"10.0.0.1","hostname":"one"}]
+	}`)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "saving the device") {
+		t.Fatalf("approval response = %d %s", response.Code, response.Body.String())
+	}
+}
+
+func TestClassificationPreviewHandlerRejectsInvalidRegex(t *testing.T) {
+	server := newAPIServer(Options{RootDir: t.TempDir()})
+	body := `{"rules":[{"id":"bad","enabled":true,"source":"hostname","pattern":"[","assignments":{"group":"x"}}],"items":[{"hostname":"test"}]}`
+	response := httptest.NewRecorder()
+	server.handleClassificationPreview(response, httptest.NewRequest(http.MethodPost, "/api/classification/preview", strings.NewReader(body)))
+	if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "pattern") {
+		t.Fatalf("preview status = %d body=%s", response.Code, response.Body.String())
 	}
 }
 

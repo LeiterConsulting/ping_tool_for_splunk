@@ -28,6 +28,7 @@ import (
 	_ "time/tzdata"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/advisor"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/classification"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
@@ -137,6 +138,15 @@ type configWriteRequest struct {
 	Revision          string        `json:"revision"`
 }
 
+type classificationPreviewRequest struct {
+	Rules []config.ClassificationRule `json:"rules"`
+	Items []models.Endpoint           `json:"items"`
+}
+
+type classificationPreviewResponse struct {
+	Results []classification.Result `json:"results"`
+}
+
 type secretStatus struct {
 	HECTokenConfigured     bool `json:"hec_token_configured"`
 	MetricsTokenConfigured bool `json:"metrics_token_configured"`
@@ -192,38 +202,52 @@ type discoveryScanResult struct {
 }
 
 type discoveryDelta struct {
-	PreviousScanID string `json:"previous_scan_id,omitempty"`
-	New            int    `json:"new"`
-	Missing        int    `json:"missing"`
-	Unchanged      int    `json:"unchanged"`
+	PreviousScanID    string `json:"previous_scan_id,omitempty"`
+	New               int    `json:"new"`
+	Missing           int    `json:"missing"`
+	Unchanged         int    `json:"unchanged"`
+	UnresolvedDynamic int    `json:"unresolved_dynamic"`
 }
 
 type discoveryItemChanges struct {
-	NewItems     []models.Endpoint
-	MissingItems []models.Endpoint
+	NewItems               []models.Endpoint
+	MissingItems           []models.Endpoint
+	UnresolvedDynamicItems []models.Endpoint
 }
 
 type discoverySnapshot struct {
-	SchemaVersion int                 `json:"schema_version"`
-	ScanID        string              `json:"scan_id"`
-	GeneratedAt   string              `json:"generated_at"`
-	Target        string              `json:"target"`
-	Request       discoveryRunRequest `json:"request"`
-	Summary       endpointSummary     `json:"summary"`
-	Delta         discoveryDelta      `json:"delta"`
-	Items         []models.Endpoint   `json:"items"`
-	DurationMs    int64               `json:"duration_ms,omitempty"`
+	SchemaVersion  int                 `json:"schema_version"`
+	ScanID         string              `json:"scan_id"`
+	GeneratedAt    string              `json:"generated_at"`
+	Target         string              `json:"target"`
+	SubnetID       string              `json:"subnet_id,omitempty"`
+	SubnetName     string              `json:"subnet_name,omitempty"`
+	SubnetVLAN     string              `json:"subnet_vlan,omitempty"`
+	SubnetLocation string              `json:"subnet_location,omitempty"`
+	AddressingMode string              `json:"addressing_mode,omitempty"`
+	RoutingDomain  string              `json:"routing_domain,omitempty"`
+	Request        discoveryRunRequest `json:"request"`
+	Summary        endpointSummary     `json:"summary"`
+	Delta          discoveryDelta      `json:"delta"`
+	Items          []models.Endpoint   `json:"items"`
+	DurationMs     int64               `json:"duration_ms,omitempty"`
 }
 
 type discoveryScanSummary struct {
-	ScanID      string          `json:"scan_id"`
-	GeneratedAt string          `json:"generated_at"`
-	Target      string          `json:"target"`
-	ScheduleID  string          `json:"schedule_id,omitempty"`
-	Summary     endpointSummary `json:"summary"`
-	Delta       discoveryDelta  `json:"delta"`
-	DurationMs  int64           `json:"duration_ms,omitempty"`
-	FileName    string          `json:"file_name,omitempty"`
+	ScanID         string          `json:"scan_id"`
+	GeneratedAt    string          `json:"generated_at"`
+	Target         string          `json:"target"`
+	SubnetID       string          `json:"subnet_id,omitempty"`
+	SubnetName     string          `json:"subnet_name,omitempty"`
+	SubnetVLAN     string          `json:"subnet_vlan,omitempty"`
+	SubnetLocation string          `json:"subnet_location,omitempty"`
+	AddressingMode string          `json:"addressing_mode,omitempty"`
+	RoutingDomain  string          `json:"routing_domain,omitempty"`
+	ScheduleID     string          `json:"schedule_id,omitempty"`
+	Summary        endpointSummary `json:"summary"`
+	Delta          discoveryDelta  `json:"delta"`
+	DurationMs     int64           `json:"duration_ms,omitempty"`
+	FileName       string          `json:"file_name,omitempty"`
 }
 
 type discoveryHistoryIndex struct {
@@ -258,9 +282,10 @@ type discoveryHistoryResponse struct {
 
 type discoveryHistoryDetail struct {
 	discoverySnapshot
-	NewItems          []models.Endpoint `json:"new_items"`
-	MissingItems      []models.Endpoint `json:"missing_items"`
-	BaselineAvailable bool              `json:"baseline_available"`
+	NewItems               []models.Endpoint `json:"new_items"`
+	MissingItems           []models.Endpoint `json:"missing_items"`
+	UnresolvedDynamicItems []models.Endpoint `json:"unresolved_dynamic_items"`
+	BaselineAvailable      bool              `json:"baseline_available"`
 }
 
 type outputTestRequest struct {
@@ -379,6 +404,7 @@ func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 	mux.HandleFunc("/api/status", server.handleStatus)
 	mux.HandleFunc("/api/endpoints", server.handleEndpoints)
 	mux.HandleFunc("/api/config", server.handleConfig)
+	mux.HandleFunc("/api/classification/preview", server.handleClassificationPreview)
 	mux.HandleFunc("/api/advisor", server.handleAdvisor)
 	mux.HandleFunc("/api/advisor/profiles", server.handleAdvisorProfiles)
 	mux.HandleFunc("/api/advisor/apply", server.handleAdvisorApply)
@@ -387,6 +413,7 @@ func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 	mux.HandleFunc("/api/discovery/run", server.handleDiscoveryRun)
 	mux.HandleFunc("/api/discovery/stream", server.handleDiscoveryStream)
 	mux.HandleFunc("/api/discovery/history", server.handleDiscoveryHistory)
+	mux.HandleFunc("/api/discovery/reviews", server.handleDiscoveryReviews)
 	mux.HandleFunc("/api/output/test", server.handleOutputTest)
 	mux.Handle("/", staticHandler(staticRoot, opts.Version))
 
@@ -705,6 +732,32 @@ func (s *apiServer) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *apiServer) handleClassificationPreview(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var request classificationPreviewRequest
+	if err := decodeJSONBody(r, &request); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if len(request.Items) > 1000 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "classification preview is limited to 1000 items"})
+		return
+	}
+	classifier, err := classification.Compile(request.Rules)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	results := make([]classification.Result, len(request.Items))
+	for index, endpoint := range request.Items {
+		results[index] = classifier.Apply(endpoint)
+	}
+	writeJSON(w, http.StatusOK, classificationPreviewResponse{Results: results})
+}
+
 func (s *apiServer) effectiveStatusConfig() (config.Config, bool) {
 	if s.opts.EffectiveConfigProvider != nil {
 		return s.opts.EffectiveConfigProvider()
@@ -986,13 +1039,23 @@ func (s *apiServer) handleDiscoveryHistory(w http.ResponseWriter, r *http.Reques
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		reconciled, reconcileErr := s.reconcileDiscoveryEndpoints(snapshot.Items)
+		if reconcileErr != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": reconcileErr.Error()})
+			return
+		}
+		snapshot.Items = reconciled
 		detail := discoveryHistoryDetail{discoverySnapshot: snapshot}
 		if snapshot.Delta.PreviousScanID == "" {
 			detail.BaselineAvailable = true
-			detail.NewItems = append([]models.Endpoint(nil), snapshot.Items...)
+			detail.NewItems, detail.MissingItems, detail.UnresolvedDynamicItems = calculateDiscoveryItemChanges(nil, snapshot.Items)
 		} else if previous, previousErr := loadDiscoverySnapshot(historyPath, index, snapshot.Delta.PreviousScanID); previousErr == nil {
+			if previous.Items, previousErr = s.reconcileDiscoveryEndpoints(previous.Items); previousErr != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": previousErr.Error()})
+				return
+			}
 			detail.BaselineAvailable = true
-			detail.NewItems, detail.MissingItems = calculateDiscoveryItemChanges(previous.Items, snapshot.Items)
+			detail.NewItems, detail.MissingItems, detail.UnresolvedDynamicItems = calculateDiscoveryItemChanges(previous.Items, snapshot.Items)
 		}
 		writeJSON(w, http.StatusOK, detail)
 		return
@@ -1119,6 +1182,10 @@ func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunReques
 	if err != nil {
 		return discoveryResponse{}, err
 	}
+	endpoints, err = s.enrichDiscoveryEndpoints(discoveryTargetLabel(request), endpoints)
+	if err != nil {
+		return discoveryResponse{}, err
+	}
 	response := discoveryResponse{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		ScanID:      discoveryScanID(endpoints),
@@ -1213,6 +1280,12 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 	endpoints, err := config.LoadEditableEndpoints(tempPath)
 	if err != nil {
 		streamErr := fmt.Errorf("discovery results load failed: %w", err)
+		_ = emit(discoveryStreamEvent{Type: "error", SummaryText: result.Progress.SummaryText, Logs: result.Logs, Error: streamErr.Error()})
+		return streamErr
+	}
+	endpoints, err = s.enrichDiscoveryEndpoints(discoveryTargetLabel(request), endpoints)
+	if err != nil {
+		streamErr := fmt.Errorf("discovery classification failed: %w", err)
 		_ = emit(discoveryStreamEvent{Type: "error", SummaryText: result.Progress.SummaryText, Logs: result.Logs, Error: streamErr.Error()})
 		return streamErr
 	}
@@ -1316,6 +1389,7 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 		cfg = config.Defaults(filepath.Dir(s.opts.ConfigPath))
 	}
 	historyPath := discoveryHistoryPath(cfg, s.opts.ConfigPath)
+	subnet, _ := discoverySubnetForTarget(cfg, response.Target)
 	scansPath := filepath.Join(historyPath, "scans")
 	if err := os.MkdirAll(scansPath, 0o755); err != nil {
 		return err
@@ -1328,19 +1402,30 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 	if data, err := os.ReadFile(targetLatestPath); err == nil {
 		_ = json.Unmarshal(data, &previous)
 	}
+	if subnet.AddressingMode == "dhcp" {
+		for index := range previous.Items {
+			previous.Items[index].DynamicAddress = true
+		}
+	}
 	response.Delta = calculateDiscoveryDelta(previous, response.Items)
-	response.changes.NewItems, response.changes.MissingItems = calculateDiscoveryItemChanges(previous.Items, response.Items)
+	response.changes.NewItems, response.changes.MissingItems, response.changes.UnresolvedDynamicItems = calculateDiscoveryItemChanges(previous.Items, response.Items)
 
 	snapshot := discoverySnapshot{
-		SchemaVersion: 1,
-		ScanID:        response.ScanID,
-		GeneratedAt:   response.GeneratedAt,
-		Target:        response.Target,
-		Request:       request,
-		Summary:       response.Summary,
-		Delta:         response.Delta,
-		Items:         response.Items,
-		DurationMs:    response.DurationMs,
+		SchemaVersion:  1,
+		ScanID:         response.ScanID,
+		GeneratedAt:    response.GeneratedAt,
+		Target:         response.Target,
+		SubnetID:       subnet.ID,
+		SubnetName:     subnet.Name,
+		SubnetVLAN:     subnet.VLAN,
+		SubnetLocation: subnet.Location,
+		AddressingMode: subnet.AddressingMode,
+		RoutingDomain:  subnet.RoutingDomain,
+		Request:        request,
+		Summary:        response.Summary,
+		Delta:          response.Delta,
+		Items:          response.Items,
+		DurationMs:     response.DurationMs,
 	}
 	stamp := strings.NewReplacer("-", "", ":", "").Replace(response.GeneratedAt)
 	stamp = strings.TrimSuffix(stamp, "Z")
@@ -1383,6 +1468,8 @@ func (s *apiServer) emitDiscoveryEvents(ctx context.Context, request discoveryRu
 	}
 	cycleID := "discovery-" + response.ScanID
 	baselineAvailable := response.Delta.PreviousScanID != ""
+	cfg, _ := s.effectiveStatusConfig()
+	subnet, _ := discoverySubnetForTarget(cfg, response.Target)
 	events := make([]json.RawMessage, 0, len(response.Items)+len(response.changes.MissingItems)+1)
 	summary := models.DiscoveryScanEvent{
 		SchemaVersion: models.SchemaVersion,
@@ -1399,11 +1486,18 @@ func (s *apiServer) emitDiscoveryEvents(ctx context.Context, request discoveryRu
 		PreviousScanID:    response.Delta.PreviousScanID,
 		ScheduleID:        request.ScheduleID,
 		TargetNetwork:     response.Target,
+		SubnetID:          subnet.ID,
+		SubnetName:        subnet.Name,
+		SubnetVLAN:        subnet.VLAN,
+		SubnetLocation:    subnet.Location,
+		AddressingMode:    subnet.AddressingMode,
+		RoutingDomain:     subnet.RoutingDomain,
 		BaselineAvailable: baselineAvailable,
 		EndpointsObserved: len(response.Items),
 		NewEndpoints:      response.Delta.New,
 		MissingEndpoints:  response.Delta.Missing,
 		Unchanged:         response.Delta.Unchanged,
+		UnresolvedDynamic: response.Delta.UnresolvedDynamic,
 		ScanDurationMs:    response.DurationMs,
 		TimeoutMs:         request.TimeoutMs,
 		ThrottleLimit:     request.ThrottleLimit,
@@ -1414,14 +1508,26 @@ func (s *apiServer) emitDiscoveryEvents(ctx context.Context, request discoveryRu
 	}
 	events = append(events, encoded)
 
-	newByIP := make(map[string]struct{}, len(response.changes.NewItems))
+	newByIdentity := make(map[string]struct{}, len(response.changes.NewItems))
 	for _, endpoint := range response.changes.NewItems {
-		newByIP[normalizedDiscoveryIP(endpoint.IP)] = struct{}{}
+		if key, ok := discoveryIdentityKey(endpoint); ok {
+			newByIdentity[key] = struct{}{}
+		}
+	}
+	unresolvedByIP := make(map[string]struct{}, len(response.changes.UnresolvedDynamicItems))
+	for _, endpoint := range response.changes.UnresolvedDynamicItems {
+		unresolvedByIP[normalizedDiscoveryIP(endpoint.IP)] = struct{}{}
 	}
 	for _, endpoint := range response.Items {
 		deltaStatus := "unchanged"
-		if _, isNew := newByIP[normalizedDiscoveryIP(endpoint.IP)]; isNew {
-			deltaStatus = "new"
+		if _, unresolved := unresolvedByIP[normalizedDiscoveryIP(endpoint.IP)]; unresolved {
+			deltaStatus = "unresolved_dynamic"
+		} else if key, ok := discoveryIdentityKey(endpoint); ok {
+			if _, isNew := newByIdentity[key]; isNew {
+				deltaStatus = "new"
+			}
+		} else {
+			deltaStatus = "unresolved_dynamic"
 		}
 		event, buildErr := s.discoveryEndpointEvent(request, response, endpoint, deltaStatus, true, baselineAvailable)
 		if buildErr != nil {
@@ -1447,6 +1553,8 @@ func (s *apiServer) discoveryEndpointEvent(
 	observed bool,
 	baselineAvailable bool,
 ) (json.RawMessage, error) {
+	cfg, _ := s.effectiveStatusConfig()
+	subnet, _ := discoverySubnetForTarget(cfg, response.Target)
 	discoveryStatus := "observed"
 	if !observed {
 		discoveryStatus = "not_observed"
@@ -1456,42 +1564,57 @@ func (s *apiServer) discoveryEndpointEvent(
 		source = "icmp_subnet_scan"
 	}
 	event := models.DiscoveryEvent{
-		SchemaVersion:       models.SchemaVersion,
-		EventID:             stableDiscoveryEventID(s.opts.CollectorID, response.ScanID, endpoint.IP, deltaStatus),
-		CollectorID:         s.opts.CollectorID,
-		CollectorHost:       s.opts.CollectorHost,
-		CycleID:             "discovery-" + response.ScanID,
-		Timestamp:           response.GeneratedAt,
-		RecordType:          "discovery_observation",
-		EvidenceKind:        "icmp_subnet_discovery",
-		ScanID:              response.ScanID,
-		PreviousScanID:      response.Delta.PreviousScanID,
-		ScheduleID:          request.ScheduleID,
-		TargetNetwork:       response.Target,
-		TargetIP:            endpoint.IP,
-		EndpointID:          models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
-		Hostname:            endpoint.Hostname,
-		FQDN:                endpoint.FQDN,
-		Dev:                 endpoint.Dev,
-		MonitoringEnabled:   endpoint.IsMonitoringEnabled(),
-		MaintenanceUntil:    endpoint.MaintenanceUntil,
-		MaintenanceReason:   endpoint.MaintenanceReason,
-		Group:               endpoint.Group,
-		Description:         endpoint.Description,
-		EntityType:          endpoint.EntityType,
-		Device:              endpoint.Device,
-		Vendor:              endpoint.Vendor,
-		Notes:               endpoint.AdditionalNotes,
-		DNSStatus:           endpoint.DNSStatus,
-		DNSForwardConfirmed: endpoint.DNSForwardConfirmed,
-		DiscoveredAt:        endpoint.DiscoveredAt,
-		DiscoverySource:     source,
-		DiscoveryLatencyMs:  endpoint.DiscoveryLatencyMs,
-		DiscoveryStatus:     discoveryStatus,
-		DiscoveryDelta:      deltaStatus,
-		DiscoveryObserved:   observed,
-		BaselineAvailable:   baselineAvailable,
-		ScanDurationMs:      response.DurationMs,
+		SchemaVersion:        models.SchemaVersion,
+		EventID:              stableDiscoveryEventID(s.opts.CollectorID, response.ScanID, endpoint.IP, deltaStatus),
+		CollectorID:          s.opts.CollectorID,
+		CollectorHost:        s.opts.CollectorHost,
+		CycleID:              "discovery-" + response.ScanID,
+		Timestamp:            response.GeneratedAt,
+		RecordType:           "discovery_observation",
+		EvidenceKind:         "icmp_subnet_discovery",
+		ScanID:               response.ScanID,
+		PreviousScanID:       response.Delta.PreviousScanID,
+		ScheduleID:           request.ScheduleID,
+		TargetNetwork:        response.Target,
+		SubnetID:             subnet.ID,
+		SubnetName:           subnet.Name,
+		SubnetVLAN:           subnet.VLAN,
+		SubnetLocation:       subnet.Location,
+		AddressingMode:       subnet.AddressingMode,
+		RoutingDomain:        subnet.RoutingDomain,
+		TargetIP:             endpoint.IP,
+		EndpointID:           models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
+		Hostname:             endpoint.Hostname,
+		FQDN:                 endpoint.FQDN,
+		Dev:                  endpoint.Dev,
+		DeviceMode:           endpoint.EffectiveDeviceMode(),
+		MonitoringEnabled:    endpoint.IsMonitoringEnabled(),
+		AlertingEnabled:      endpoint.IsAlertingEnabled(),
+		AlertingReason:       endpoint.AlertingReason,
+		MaintenanceUntil:     endpoint.MaintenanceUntil,
+		MaintenanceReason:    endpoint.MaintenanceReason,
+		AssetID:              endpoint.AssetID,
+		DynamicAddress:       endpoint.DynamicAddress,
+		ClassificationSource: endpoint.ClassificationSource,
+		DiscoveryReviewState: endpoint.DiscoveryReviewState,
+		DiscoveryReviewedAt:  endpoint.DiscoveryReviewedAt,
+		DiscoveryReviewNote:  endpoint.DiscoveryReviewNote,
+		Group:                endpoint.Group,
+		Description:          endpoint.Description,
+		EntityType:           endpoint.EntityType,
+		Device:               endpoint.Device,
+		Vendor:               endpoint.Vendor,
+		Notes:                endpoint.AdditionalNotes,
+		DNSStatus:            endpoint.DNSStatus,
+		DNSForwardConfirmed:  endpoint.DNSForwardConfirmed,
+		DiscoveredAt:         endpoint.DiscoveredAt,
+		DiscoverySource:      source,
+		DiscoveryLatencyMs:   endpoint.DiscoveryLatencyMs,
+		DiscoveryStatus:      discoveryStatus,
+		DiscoveryDelta:       deltaStatus,
+		DiscoveryObserved:    observed,
+		BaselineAvailable:    baselineAvailable,
+		ScanDurationMs:       response.DurationMs,
 	}
 	return json.Marshal(event)
 }
@@ -1511,58 +1634,185 @@ func normalizedDiscoveryIP(value string) string {
 
 func calculateDiscoveryDelta(previous discoverySnapshot, current []models.Endpoint) discoveryDelta {
 	delta := discoveryDelta{PreviousScanID: previous.ScanID}
-	previousIPs := make(map[string]struct{}, len(previous.Items))
-	currentIPs := make(map[string]struct{}, len(current))
-	for _, endpoint := range previous.Items {
-		previousIPs[strings.ToLower(strings.TrimSpace(endpoint.IP))] = struct{}{}
-	}
-	for _, endpoint := range current {
-		key := strings.ToLower(strings.TrimSpace(endpoint.IP))
-		currentIPs[key] = struct{}{}
-		if _, exists := previousIPs[key]; exists {
+	statuses, matchedPrevious, identifiablePrevious := matchDiscoveryItems(previous.Items, current)
+	for _, status := range statuses {
+		switch status {
+		case "unchanged":
 			delta.Unchanged++
-		} else {
+		case "new":
 			delta.New++
+		case "unresolved_dynamic":
+			delta.UnresolvedDynamic++
 		}
 	}
-	for key := range previousIPs {
-		if _, exists := currentIPs[key]; !exists {
+	for index, identifiable := range identifiablePrevious {
+		if identifiable && !matchedPrevious[index] {
 			delta.Missing++
 		}
 	}
 	return delta
 }
 
-func calculateDiscoveryItemChanges(previous []models.Endpoint, current []models.Endpoint) ([]models.Endpoint, []models.Endpoint) {
-	previousByIP := make(map[string]models.Endpoint, len(previous))
-	currentByIP := make(map[string]models.Endpoint, len(current))
-	for _, endpoint := range previous {
-		previousByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))] = endpoint
-	}
-	for _, endpoint := range current {
-		currentByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))] = endpoint
-	}
+func calculateDiscoveryItemChanges(previous []models.Endpoint, current []models.Endpoint) ([]models.Endpoint, []models.Endpoint, []models.Endpoint) {
+	statuses, matchedPrevious, identifiablePrevious := matchDiscoveryItems(previous, current)
 	newItems := make([]models.Endpoint, 0)
 	missingItems := make([]models.Endpoint, 0)
-	for _, endpoint := range current {
-		if _, exists := previousByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))]; !exists {
+	unresolvedItems := make([]models.Endpoint, 0)
+	for index, endpoint := range current {
+		switch statuses[index] {
+		case "unresolved_dynamic":
+			unresolvedItems = append(unresolvedItems, endpoint)
+		case "new":
 			newItems = append(newItems, endpoint)
 		}
 	}
-	for _, endpoint := range previous {
-		if _, exists := currentByIP[strings.ToLower(strings.TrimSpace(endpoint.IP))]; !exists {
+	for index, endpoint := range previous {
+		if identifiablePrevious[index] && !matchedPrevious[index] {
 			missingItems = append(missingItems, endpoint)
 		}
 	}
-	return newItems, missingItems
+	return newItems, missingItems, unresolvedItems
+}
+
+func matchDiscoveryItems(previous, current []models.Endpoint) ([]string, map[int]bool, []bool) {
+	previousAliases, previousCounts := discoveryStableAliasSets(previous)
+	currentAliases, currentCounts := discoveryStableAliasSets(current)
+	previousByAlias := make(map[string]int)
+	identifiablePrevious := make([]bool, len(previous))
+	for index, aliases := range previousAliases {
+		for _, alias := range aliases {
+			if previousCounts[alias] == 1 {
+				previousByAlias[alias] = index
+				identifiablePrevious[index] = true
+			}
+		}
+	}
+
+	statuses := make([]string, len(current))
+	matchedPrevious := make(map[int]bool)
+	for index, endpoint := range current {
+		matches := make(map[int]struct{})
+		identifiable := false
+		for _, alias := range currentAliases[index] {
+			if currentCounts[alias] != 1 {
+				continue
+			}
+			identifiable = true
+			if previousIndex, exists := previousByAlias[alias]; exists {
+				matches[previousIndex] = struct{}{}
+			}
+		}
+		if !identifiable || len(matches) > 1 {
+			if endpoint.DynamicAddress {
+				statuses[index] = "unresolved_dynamic"
+			} else {
+				statuses[index] = "new"
+			}
+			continue
+		}
+		if len(matches) == 0 {
+			statuses[index] = "new"
+			continue
+		}
+		for previousIndex := range matches {
+			statuses[index] = "unchanged"
+			matchedPrevious[previousIndex] = true
+		}
+	}
+	return statuses, matchedPrevious, identifiablePrevious
+}
+
+func discoveryStableAliasSets(items []models.Endpoint) ([][]string, map[string]int) {
+	sets := make([][]string, len(items))
+	counts := make(map[string]int)
+	for index, endpoint := range items {
+		sets[index] = stableDiscoveryAliases(endpoint)
+		for _, alias := range sets[index] {
+			counts[alias]++
+		}
+	}
+	return sets, counts
+}
+
+func discoveryIdentityKey(endpoint models.Endpoint) (string, bool) {
+	aliases := stableDiscoveryAliases(endpoint)
+	if len(aliases) > 0 {
+		return aliases[0], true
+	}
+	return "", false
 }
 
 func discoveryScanSummaryFromSnapshot(snapshot discoverySnapshot, fileName string) discoveryScanSummary {
 	return discoveryScanSummary{
 		ScanID: snapshot.ScanID, GeneratedAt: snapshot.GeneratedAt, Target: snapshot.Target,
-		ScheduleID: snapshot.Request.ScheduleID, Summary: snapshot.Summary, Delta: snapshot.Delta,
+		SubnetID: snapshot.SubnetID, SubnetName: snapshot.SubnetName, SubnetVLAN: snapshot.SubnetVLAN,
+		SubnetLocation: snapshot.SubnetLocation, AddressingMode: snapshot.AddressingMode,
+		RoutingDomain: snapshot.RoutingDomain,
+		ScheduleID:    snapshot.Request.ScheduleID, Summary: snapshot.Summary, Delta: snapshot.Delta,
 		DurationMs: snapshot.DurationMs, FileName: fileName,
 	}
+}
+
+func (s *apiServer) enrichDiscoveryEndpoints(target string, endpoints []models.Endpoint) ([]models.Endpoint, error) {
+	cfg, ok := s.effectiveStatusConfig()
+	if !ok {
+		cfg = config.Defaults(filepath.Dir(s.opts.ConfigPath))
+	}
+	classifier, err := classification.Compile(cfg.Classification.Rules)
+	if err != nil {
+		return nil, fmt.Errorf("classification rules: %w", err)
+	}
+	subnet, hasSubnet := discoverySubnetForTarget(cfg, target)
+	enriched := make([]models.Endpoint, len(endpoints))
+	for index, endpoint := range endpoints {
+		if hasSubnet {
+			endpoint.SubnetID = subnet.ID
+			endpoint.SubnetName = subnet.Name
+			endpoint.SubnetVLAN = subnet.VLAN
+			endpoint.SubnetLocation = subnet.Location
+			endpoint.AddressingMode = subnet.AddressingMode
+			endpoint.RoutingDomain = subnet.RoutingDomain
+			if subnet.AddressingMode == "dhcp" {
+				endpoint.DynamicAddress = true
+			}
+		}
+		enriched[index] = classifier.Apply(endpoint).Endpoint
+	}
+	return s.reconcileDiscoveryEndpoints(enriched)
+}
+
+func discoverySubnetForTarget(cfg config.Config, target string) (config.DiscoverySubnet, bool) {
+	_, targetNetwork, err := net.ParseCIDR(strings.TrimSpace(target))
+	if err != nil {
+		return config.DiscoverySubnet{}, false
+	}
+	targetBits, targetSize := targetNetwork.Mask.Size()
+	bestBits := -1
+	var best config.DiscoverySubnet
+	for _, subnet := range cfg.Discovery.Subnets {
+		_, network, parseErr := net.ParseCIDR(strings.TrimSpace(subnet.CIDR))
+		if parseErr != nil {
+			continue
+		}
+		bits, size := network.Mask.Size()
+		if size != targetSize || bits > targetBits || !network.Contains(targetNetwork.IP) {
+			continue
+		}
+		if bits > bestBits {
+			best = subnet
+			bestBits = bits
+		}
+	}
+	return best, bestBits >= 0
+}
+
+func normalizedCIDR(value string) string {
+	trimmed := strings.TrimSpace(value)
+	_, network, err := net.ParseCIDR(trimmed)
+	if err != nil {
+		return strings.ToLower(trimmed)
+	}
+	return strings.ToLower(network.String())
 }
 
 func sortDiscoveryScanSummaries(scans []discoveryScanSummary) {

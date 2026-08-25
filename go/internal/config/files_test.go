@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
@@ -23,6 +24,11 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 			DNSStatus: "forward_confirmed", DNSForwardConfirmed: true,
 			DiscoveredAt: "2026-07-27T12:00:00Z", DiscoveryScanID: "scan-123",
 			DiscoverySource: "icmp_subnet_scan", DiscoveryLatencyMs: &discoveryLatency,
+			DeviceMode: models.DeviceModeProduction, AlertingEnabled: models.Bool(false), AlertingReason: "planned silence",
+			AssetID: "asset-100", DynamicAddress: true, ClassificationSource: "rule:network",
+			DiscoveryReviewState: models.DiscoveryReviewApproved, DiscoveryReviewedAt: "2026-08-25T12:00:00Z", DiscoveryReviewNote: "Added to inventory",
+			SubnetID: "users", SubnetName: "User LAN", SubnetVLAN: "230", SubnetLocation: "NYC",
+			AddressingMode: "dhcp", RoutingDomain: "corp",
 		},
 		{IP: "10.0.0.25", Hostname: "qa-api", Group: "development", Description: "QA API", EntityType: "service", Device: "vm", Vendor: "VMware", AdditionalNotes: "Excluded", Dev: true},
 	}
@@ -49,6 +55,15 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 		loaded[0].DiscoveryScanID != "scan-123" || loaded[0].DiscoverySource != "icmp_subnet_scan" ||
 		loaded[0].DiscoveryLatencyMs == nil || *loaded[0].DiscoveryLatencyMs != discoveryLatency {
 		t.Fatalf("discovery evidence did not survive endpoint round trip: %#v", loaded[0])
+	}
+	if loaded[0].DeviceMode != models.DeviceModeProduction || loaded[0].IsAlertingEnabled() ||
+		loaded[0].AlertingReason != "planned silence" || loaded[0].AssetID != "asset-100" ||
+		!loaded[0].DynamicAddress || loaded[0].ClassificationSource != "rule:network" ||
+		loaded[0].DiscoveryReviewState != models.DiscoveryReviewApproved || loaded[0].DiscoveryReviewedAt != "2026-08-25T12:00:00Z" ||
+		loaded[0].DiscoveryReviewNote != "Added to inventory" ||
+		loaded[0].SubnetID != "users" || loaded[0].SubnetName != "User LAN" || loaded[0].SubnetVLAN != "230" ||
+		loaded[0].SubnetLocation != "NYC" || loaded[0].AddressingMode != "dhcp" || loaded[0].RoutingDomain != "corp" {
+		t.Fatalf("v5.11 policy fields did not survive endpoint round trip: %#v", loaded[0])
 	}
 	backups, err := filepath.Glob(path + ".*.bak")
 	if err != nil {
@@ -85,6 +100,16 @@ func TestSaveEndpoints_EmptyRoundTrip(t *testing.T) {
 	}
 	if len(loaded) != 0 {
 		t.Fatalf("len(loaded) = %d, want 0", len(loaded))
+	}
+}
+
+func TestValidateEndpointsRejectsDuplicateStableAssetID(t *testing.T) {
+	err := ValidateEndpoints([]models.Endpoint{
+		{IP: "10.0.0.1", Hostname: "one", AssetID: "Asset-42"},
+		{IP: "10.0.0.2", Hostname: "two", AssetID: "asset-42"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "duplicates asset_id") {
+		t.Fatalf("ValidateEndpoints() error = %v, want duplicate asset identity", err)
 	}
 }
 

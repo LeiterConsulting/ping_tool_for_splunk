@@ -42,6 +42,7 @@ type configDocumentV2 struct {
 	Logging             loggingDocumentV2    `json:"logging" yaml:"logging"`
 	Outputs             outputsDocumentV2    `json:"outputs" yaml:"outputs"`
 	Discovery           Discovery            `json:"discovery" yaml:"discovery"`
+	Classification      Classification       `json:"classification,omitempty" yaml:"classification,omitempty"`
 	Diagnostics         Diagnostics          `json:"diagnostics" yaml:"diagnostics"`
 	Debug               Debug                `json:"debug" yaml:"debug"`
 }
@@ -68,9 +69,10 @@ func configToDocumentV2(cfg Config) configDocumentV2 {
 		Outputs: outputsDocumentV2{
 			Mode: cfg.OutputMode, HEC: cfg.HEC, Metrics: cfg.Metrics, Delivery: cfg.Delivery,
 		},
-		Discovery:   cfg.Discovery,
-		Diagnostics: cfg.Diagnostics,
-		Debug:       cfg.Debug,
+		Discovery:      cfg.Discovery,
+		Classification: cfg.Classification,
+		Diagnostics:    cfg.Diagnostics,
+		Debug:          cfg.Debug,
 	}
 }
 
@@ -96,6 +98,7 @@ func configFromDocumentV2(doc configDocumentV2, root string) (Config, error) {
 	cfg.Metrics = doc.Outputs.Metrics
 	cfg.Delivery = doc.Outputs.Delivery
 	cfg.Discovery = doc.Discovery
+	cfg.Classification = doc.Classification
 	cfg.Diagnostics = doc.Diagnostics
 	cfg.Debug = doc.Debug
 	return normalize(cfg), nil

@@ -3,7 +3,10 @@
 
   const columns = Object.freeze([
     'ip', 'hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor',
-    'additional_notes', 'dev', 'monitoring_enabled', 'maintenance_until', 'maintenance_reason',
+    'additional_notes', 'asset_id', 'device_mode', 'dev', 'monitoring_enabled', 'alerting_enabled',
+    'alerting_reason', 'maintenance_until', 'maintenance_reason', 'dynamic_address', 'classification_source',
+    'discovery_review_state', 'discovery_reviewed_at', 'discovery_review_note',
+    'subnet_id', 'subnet_name', 'subnet_vlan', 'subnet_location', 'addressing_mode', 'routing_domain',
     'dns_status', 'dns_forward_confirmed', 'discovered_at', 'discovery_scan_id',
     'discovery_source', 'discovery_latency_ms',
   ]);

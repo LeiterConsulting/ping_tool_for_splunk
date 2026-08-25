@@ -108,6 +108,19 @@ func renderPSD1(cfg Config) string {
 	fmt.Fprintf(&builder, "        history_path = %s\n", psd1String(cfg.Discovery.HistoryPath))
 	fmt.Fprintf(&builder, "        retention_scans = %d\n", cfg.Discovery.RetentionScans)
 	fmt.Fprintf(&builder, "        retention_days = %d\n", cfg.Discovery.RetentionDays)
+	builder.WriteString("        subnets = @(\n")
+	for _, subnet := range cfg.Discovery.Subnets {
+		builder.WriteString("            @{\n")
+		fmt.Fprintf(&builder, "                id = %s\n", psd1String(subnet.ID))
+		fmt.Fprintf(&builder, "                cidr = %s\n", psd1String(subnet.CIDR))
+		fmt.Fprintf(&builder, "                name = %s\n", psd1String(subnet.Name))
+		fmt.Fprintf(&builder, "                vlan = %s\n", psd1String(subnet.VLAN))
+		fmt.Fprintf(&builder, "                location = %s\n", psd1String(subnet.Location))
+		fmt.Fprintf(&builder, "                addressing_mode = %s\n", psd1String(subnet.AddressingMode))
+		fmt.Fprintf(&builder, "                routing_domain = %s\n", psd1String(subnet.RoutingDomain))
+		builder.WriteString("            }\n")
+	}
+	builder.WriteString("        )\n")
 	builder.WriteString("        schedules = @(\n")
 	for _, schedule := range cfg.Discovery.Schedules {
 		builder.WriteString("            @{\n")
@@ -121,6 +134,28 @@ func renderPSD1(cfg Config) string {
 		fmt.Fprintf(&builder, "                timeout_ms = %d\n", schedule.TimeoutMs)
 		fmt.Fprintf(&builder, "                concurrency = %d\n", schedule.Concurrency)
 		fmt.Fprintf(&builder, "                import_policy = %s\n", psd1String(schedule.ImportPolicy))
+		builder.WriteString("            }\n")
+	}
+	builder.WriteString("        )\n")
+	builder.WriteString("    }\n")
+
+	builder.WriteString("\n    classification = @{\n")
+	builder.WriteString("        rules = @(\n")
+	for _, rule := range cfg.Classification.Rules {
+		builder.WriteString("            @{\n")
+		fmt.Fprintf(&builder, "                id = %s\n", psd1String(rule.ID))
+		fmt.Fprintf(&builder, "                enabled = %s\n", psd1Bool(rule.Enabled))
+		fmt.Fprintf(&builder, "                source = %s\n", psd1String(rule.Source))
+		fmt.Fprintf(&builder, "                pattern = %s\n", psd1String(rule.Pattern))
+		builder.WriteString("                assignments = @{\n")
+		for _, key := range []string{"group", "entitytype", "device", "vendor"} {
+			if value, ok := rule.Assignments[key]; ok {
+				fmt.Fprintf(&builder, "                    %s = %s\n", key, psd1String(value))
+			}
+		}
+		builder.WriteString("                }\n")
+		fmt.Fprintf(&builder, "                overwrite = %s\n", psd1Bool(rule.Overwrite))
+		fmt.Fprintf(&builder, "                stop_on_match = %s\n", psd1Bool(rule.StopOnMatch))
 		builder.WriteString("            }\n")
 	}
 	builder.WriteString("        )\n")

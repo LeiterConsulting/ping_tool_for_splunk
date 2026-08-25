@@ -13,6 +13,8 @@ const state = {
   configDirty: false,
   config: null,
   configSecrets: {},
+  classificationRules: [],
+  discoverySubnets: [],
   runtimeRefreshPending: false,
   runtimeRestartBusy: false,
   advisor: null,
@@ -46,6 +48,8 @@ const state = {
     generatedAt: '',
     selectedIndices: new Set(),
     mergeMode: 'skip_existing',
+    reviewFilter: 'needs_review',
+    reviewBusy: false,
     abortController: null,
     history: {
       loading: false,
@@ -119,12 +123,17 @@ const elements = {
   addEndpointButton: document.getElementById('add-endpoint-button'),
   selectAllEndpointsButton: document.getElementById('select-all-endpoints-button'),
   deselectAllEndpointsButton: document.getElementById('deselect-all-endpoints-button'),
-  markSelectedDevButton: document.getElementById('mark-selected-dev-button'),
+  markSelectedMaintenanceButton: document.getElementById('mark-selected-maintenance-button'),
   markSelectedProductionButton: document.getElementById('mark-selected-production-button'),
+  disableSelectedAlertingButton: document.getElementById('disable-selected-alerting-button'),
+  enableSelectedAlertingButton: document.getElementById('enable-selected-alerting-button'),
   pauseSelectedButton: document.getElementById('pause-selected-button'),
   resumeSelectedButton: document.getElementById('resume-selected-button'),
   deleteEndpointButton: document.getElementById('delete-endpoint-button'),
   deleteCurrentEndpointButton: document.getElementById('delete-current-endpoint-button'),
+  previewEndpointClassificationButton: document.getElementById('preview-endpoint-classification-button'),
+  applyEndpointClassificationButton: document.getElementById('apply-endpoint-classification-button'),
+  endpointClassificationPreview: document.getElementById('endpoint-classification-preview'),
   resetEndpointsButton: document.getElementById('reset-endpoints-button'),
   saveEndpointsButton: document.getElementById('save-endpoints-button'),
   endpointPageSize: document.getElementById('endpoint-page-size'),
@@ -140,8 +149,13 @@ const elements = {
     entitytype: document.getElementById('endpoint-entitytype'),
     device: document.getElementById('endpoint-device'),
     vendor: document.getElementById('endpoint-vendor'),
+    asset_id: document.getElementById('endpoint-asset-id'),
+    device_mode: document.getElementById('endpoint-device-mode'),
     additional_notes: document.getElementById('endpoint-notes'),
-    dev: document.getElementById('endpoint-dev'),
+    alerting_enabled: document.getElementById('endpoint-alerting-enabled'),
+    alerting_reason: document.getElementById('endpoint-alerting-reason'),
+    dynamic_address: document.getElementById('endpoint-dynamic-address'),
+    classification_source: document.getElementById('endpoint-classification-source'),
     monitoring_enabled: document.getElementById('endpoint-monitoring-enabled'),
     maintenance_until: document.getElementById('endpoint-maintenance-until'),
     maintenance_reason: document.getElementById('endpoint-maintenance-reason'),
@@ -160,8 +174,27 @@ const elements = {
   discoveryPreflight: document.getElementById('discovery-preflight'),
   selectAllDiscoveryButton: document.getElementById('select-all-discovery-button'),
   deselectAllDiscoveryButton: document.getElementById('deselect-all-discovery-button'),
-  markDiscoveryDevButton: document.getElementById('mark-discovery-dev-button'),
+  markDiscoveryMaintenanceButton: document.getElementById('mark-discovery-maintenance-button'),
   markDiscoveryProductionButton: document.getElementById('mark-discovery-production-button'),
+  disableDiscoveryAlertingButton: document.getElementById('disable-discovery-alerting-button'),
+  enableDiscoveryAlertingButton: document.getElementById('enable-discovery-alerting-button'),
+  markDiscoveryDynamicButton: document.getElementById('mark-discovery-dynamic-button'),
+  markDiscoveryStaticButton: document.getElementById('mark-discovery-static-button'),
+  deferDiscoverySelectedButton: document.getElementById('defer-discovery-selected-button'),
+  ignoreDiscoverySelectedButton: document.getElementById('ignore-discovery-selected-button'),
+  resetDiscoveryReviewButton: document.getElementById('reset-discovery-review-button'),
+  discoveryReviewNote: document.getElementById('discovery-review-note'),
+  discoveryReviewFilterButtons: Array.from(document.querySelectorAll('[data-discovery-review-filter]')),
+  discoveryBulkFields: {
+    group: document.getElementById('discovery-bulk-group'),
+    entitytype: document.getElementById('discovery-bulk-entitytype'),
+    device: document.getElementById('discovery-bulk-device'),
+    vendor: document.getElementById('discovery-bulk-vendor'),
+  },
+  applyDiscoveryBulkFieldsButton: document.getElementById('apply-discovery-bulk-fields-button'),
+  previewDiscoveryClassificationButton: document.getElementById('preview-discovery-classification-button'),
+  applyDiscoveryClassificationButton: document.getElementById('apply-discovery-classification-button'),
+  discoveryClassificationPreview: document.getElementById('discovery-classification-preview'),
   exportDiscoveryAllButton: document.getElementById('export-discovery-all-button'),
   exportDiscoverySelectedButton: document.getElementById('export-discovery-selected-button'),
   addDiscoverySelectedButton: document.getElementById('add-discovery-selected-button'),
@@ -193,6 +226,14 @@ const elements = {
   reloadConfigButton: document.getElementById('reload-config-button'),
   resetConfigButton: document.getElementById('reset-config-button'),
   saveConfigButton: document.getElementById('save-config-button'),
+  addDiscoverySubnetButton: document.getElementById('add-discovery-subnet-button'),
+  discoverySubnetRows: document.getElementById('discovery-subnet-rows'),
+  addClassificationRuleButton: document.getElementById('add-classification-rule-button'),
+  classificationRuleRows: document.getElementById('classification-rule-rows'),
+  classificationPreviewHostname: document.getElementById('classification-preview-hostname'),
+  classificationPreviewFQDN: document.getElementById('classification-preview-fqdn'),
+  previewClassificationSampleButton: document.getElementById('preview-classification-sample-button'),
+  classificationPreviewResult: document.getElementById('classification-preview-result'),
   settingsFields: {
     pingsPerCycle: document.getElementById('cfg-pings-per-cycle'),
     cycleInterval: document.getElementById('cfg-cycle-interval'),
@@ -299,6 +340,25 @@ const settingsPanelHelp = {
       'A scheduled result is discovery evidence, not a declaration that an asset should be monitored or removed.',
       'Missed occurrences are eligible for catch-up after collector startup. Schedule status and errors appear in Discovery Operations.',
       'Use retention controls to keep long-running discovery history bounded.',
+    ],
+  ),
+  'Discovery Subnet Catalog': panelHelp(
+    'Discovery Subnet Catalog',
+    'Pairs a CIDR with operator-owned subnet metadata and the address-allocation model used for discovery identity decisions.',
+    [
+      'ID is a stable internal label; CIDR controls matching. Name, VLAN, location, and routing domain are carried into discovery evidence.',
+      'Static addresses use IP as the default identity. DHCP/dynamic addresses require Asset ID or forward-confirmed FQDN before they count as a durable new or missing asset.',
+      'When catalogs overlap, the most-specific CIDR wins.',
+    ],
+  ),
+  'Naming Convention Rules': panelHelp(
+    'Naming Convention Rules',
+    'Evaluates ordered regular-expression match/assignment pairs against hostname, FQDN, or either name and proposes structured CMDB fields.',
+    [
+      'Each pair contains a stable rule ID, name source, RE2 pattern, and optional Group, Entity Type, Device, and Vendor assignments.',
+      'Named captures such as (?P<site>...) can be reused in assignment templates as ${site}.',
+      'Fill blanks is the safe default. Overwrite must be enabled explicitly. Stop on match prevents later rules from running after a match.',
+      'Use Test Rule Pairs before saving. Discovery uses only the saved configuration; the preview also supports unsaved draft rules.',
     ],
   ),
   Diagnostics: panelHelp(
@@ -782,8 +842,9 @@ const interfacePanelHelp = {
     'Endpoint Editor',
     'Edits the monitored inventory and its explicit monitoring policy. Saving creates a backup and requests an in-process inventory reload.',
     [
-      'Dev is classification only. It changes event routing and production rollups but does not stop probes.',
-      'Pause Monitoring and active maintenance windows suppress probes and emit monitoring_control evidence instead of synthetic packet loss.',
+      'Maintenance mode suppresses probes and emits monitoring_control evidence instead of synthetic packet loss.',
+      'Legacy Dev/Test remains available only for backward compatibility and continues to probe.',
+      'Alerting Disabled keeps measurement active while marking the signal ineligible for supported alert searches.',
       'Discovery provenance remains attached when reviewed results are added to the endpoint inventory.',
     ],
   ),
@@ -800,8 +861,20 @@ const interfacePanelHelp = {
     'Shows the current manual scan or a retained historical result set before CSV export or reviewed import.',
     [
       'Selecting Add to Device List changes only the in-browser endpoint draft; Save Endpoints is still required.',
+      'Needs Review is the default for unknown observations. Approved is derived from the saved endpoint inventory; Deferred and Ignored decisions are retained separately from immutable scan evidence.',
+      'A newly observed device must be explicitly marked Production or Maintenance before it can be staged into the endpoint inventory.',
       'FQDN is reverse-DNS evidence with forward-confirmation status, not an authoritative asset identity.',
       'CSV exports contain the full discovery provenance schema, quote every field, and neutralize spreadsheet formula prefixes in discovery-controlled text.',
+    ],
+  ),
+  'Bulk Discovery Review': panelHelp(
+    'Bulk Discovery Review',
+    'Applies reviewed metadata and naming-rule results to selected discovery rows before they enter the endpoint draft.',
+    [
+      'Blank common fields are ignored, so one field can be updated without clearing the others.',
+      'Preview Naming Rules does not mutate results. Apply Naming Rules records the matching rule IDs as classification provenance.',
+      'Mark DHCP/Dynamic when an IP can move between devices. Such rows need Asset ID or forward-confirmed FQDN for durable discovery-delta identity.',
+      'Defer, Ignore, and Return to Needs Review write the selected metadata and decision to the durable discovery review registry.',
     ],
   ),
   'Discovery Operations': panelHelp(
@@ -886,11 +959,42 @@ const interfaceFieldHelp = {
     'Stores free-form operational context that travels with endpoint metadata.',
     'Optional text.',
   ),
-  'endpoint-dev': helpTopic(
-    'Dev Classification',
-    'Marks the endpoint as development/test for event type and production-rollup separation.',
+  'endpoint-asset-id': helpTopic(
+    'Stable Asset ID',
+    'Stores an operator- or CMDB-assigned identity that remains stable when an address changes.',
+    'Optional text without tabs or line breaks.',
+    ['For DHCP/dynamic devices this is the preferred discovery identity.'],
+  ),
+  'endpoint-device-mode': helpTopic(
+    'Device Mode',
+    'Controls the explicit operational role of the endpoint.',
+    'Production, Maintenance, or Legacy Dev/Test.',
+    [
+      'Maintenance sends no ICMP and reports a truthful suppressed state.',
+      'Legacy Dev/Test preserves existing dev=true behavior and continues to ping.',
+    ],
+  ),
+  'endpoint-alerting-enabled': helpTopic(
+    'Alerting Enabled',
+    'Marks measurements as eligible for supported Splunk alert searches without changing collection.',
     checkboxFormat,
-    ['Dev endpoints are still pinged. Use Monitoring Enabled or a maintenance window when probes must stop.'],
+    ['When disabled, pings continue and dashboards retain the evidence.'],
+  ),
+  'endpoint-alerting-reason': helpTopic(
+    'Alerting Disabled Reason',
+    'Records why supported alerts should ignore this endpoint while measurements continue.',
+    'Optional operator-entered text.',
+  ),
+  'endpoint-dynamic-address': helpTopic(
+    'Dynamic Address',
+    'Marks the IP as DHCP or otherwise movable so discovery does not mistake ordinary lease churn for a durable new asset.',
+    checkboxFormat,
+    ['Supply Stable Asset ID when possible. Forward-confirmed FQDN is the fallback identity; unresolved dynamic rows are kept as evidence but excluded from new/missing asset counts.'],
+  ),
+  'endpoint-classification-source': helpTopic(
+    'Classification Source',
+    'Shows provenance for fields populated by naming convention rules.',
+    'Read-only comma-separated rule identifiers.',
   ),
   'endpoint-monitoring-enabled': helpTopic(
     'Monitoring Enabled',
@@ -942,6 +1046,16 @@ const interfaceFieldHelp = {
       'Fill blanks adds missing identity fields while preserving operator-entered values.',
       'Overwrite replaces nonblank identity fields with reviewed discovery values; monitoring policy is not silently disabled.',
     ],
+  ),
+  'discovery-bulk-group': helpTopic('Bulk Group', 'Applies a reviewed Group value to selected discovery rows.', 'Optional text; blank is ignored.'),
+  'discovery-bulk-entitytype': helpTopic('Bulk Entity Type', 'Applies a reviewed Entity Type to selected discovery rows.', 'Optional text; blank is ignored.'),
+  'discovery-bulk-device': helpTopic('Bulk Device', 'Applies a reviewed Device classification to selected discovery rows.', 'Optional text; blank is ignored.'),
+  'discovery-bulk-vendor': helpTopic('Bulk Vendor', 'Applies a reviewed Vendor to selected discovery rows.', 'Optional text; blank is ignored.'),
+  'discovery-review-note': helpTopic(
+    'Review Note',
+    'Records why selected discovery results were deferred, ignored, or approved into inventory.',
+    'Optional single-line text, up to 2,000 characters.',
+    ['The note is persisted when a review-state action is used or when the staged endpoint inventory is saved.'],
   ),
 };
 
@@ -1002,18 +1116,41 @@ function emptyEndpoint() {
     entitytype: '',
     device: '',
     vendor: '',
+    asset_id: '',
     additional_notes: '',
     dev: false,
+    device_mode: 'production',
+    alerting_enabled: true,
+    alerting_reason: '',
+    dynamic_address: false,
+    classification_source: '',
     monitoring_enabled: true,
     maintenance_until: '',
     maintenance_reason: '',
   };
 }
 
+function effectiveDeviceMode(endpoint) {
+  const explicit = String(endpoint?.device_mode || '').trim().toLowerCase();
+  if (['production', 'maintenance', 'legacy_dev'].includes(explicit)) {
+    return explicit;
+  }
+  return endpoint?.dev ? 'legacy_dev' : 'production';
+}
+
+function effectiveDiscoveryReviewState(endpoint) {
+  return globalThis.PingMonitorDiscoveryReview.reviewState(endpoint);
+}
+
+function effectiveDiscoveryDeviceMode(endpoint) {
+  return globalThis.PingMonitorDiscoveryReview.deviceMode(endpoint);
+}
+
 function normalizeEndpoint(endpoint) {
+  const deviceMode = effectiveDeviceMode(endpoint);
   return {
     ...endpoint,
-	endpoint_id: String(endpoint.endpoint_id || '').trim(),
+    endpoint_id: String(endpoint.endpoint_id || '').trim(),
     ip: String(endpoint.ip || '').trim(),
     hostname: String(endpoint.hostname || '').trim(),
     fqdn: String(endpoint.fqdn || '').trim(),
@@ -1022,8 +1159,23 @@ function normalizeEndpoint(endpoint) {
     entitytype: String(endpoint.entitytype || '').trim(),
     device: String(endpoint.device || '').trim(),
     vendor: String(endpoint.vendor || '').trim(),
+    asset_id: String(endpoint.asset_id || '').trim(),
     additional_notes: String(endpoint.additional_notes || '').trim(),
-    dev: Boolean(endpoint.dev),
+    dev: deviceMode === 'legacy_dev',
+    device_mode: deviceMode,
+    alerting_enabled: endpoint.alerting_enabled !== false,
+    alerting_reason: String(endpoint.alerting_reason || '').trim(),
+    dynamic_address: Boolean(endpoint.dynamic_address),
+    subnet_id: String(endpoint.subnet_id || '').trim(),
+    subnet_name: String(endpoint.subnet_name || '').trim(),
+    subnet_vlan: String(endpoint.subnet_vlan || '').trim(),
+    subnet_location: String(endpoint.subnet_location || '').trim(),
+    addressing_mode: String(endpoint.addressing_mode || '').trim(),
+    routing_domain: String(endpoint.routing_domain || '').trim(),
+    classification_source: String(endpoint.classification_source || '').trim(),
+    discovery_review_state: String(endpoint.discovery_review_state || '').trim().toLowerCase(),
+    discovery_reviewed_at: String(endpoint.discovery_reviewed_at || '').trim(),
+    discovery_review_note: String(endpoint.discovery_review_note || '').trim(),
     monitoring_enabled: endpoint.monitoring_enabled !== false,
     maintenance_until: String(endpoint.maintenance_until || '').trim(),
     maintenance_reason: String(endpoint.maintenance_reason || '').trim(),
@@ -1032,6 +1184,19 @@ function normalizeEndpoint(endpoint) {
 
 function normalizeEndpoints(endpoints) {
   return endpoints.map((endpoint) => normalizeEndpoint(endpoint));
+}
+
+function normalizeDiscoveryEndpoint(endpoint) {
+  const explicitMode = String(endpoint?.device_mode || '').trim().toLowerCase();
+  const normalized = normalizeEndpoint(endpoint || {});
+  if (!explicitMode && !endpoint?.dev && effectiveDiscoveryReviewState(endpoint) !== 'approved') {
+    normalized.device_mode = '';
+  }
+  return normalized;
+}
+
+function normalizeDiscoveryEndpoints(endpoints) {
+  return endpoints.map((endpoint) => normalizeDiscoveryEndpoint(endpoint));
 }
 
 function isValidIPAddress(value) {
@@ -1052,6 +1217,7 @@ function isValidIPAddress(value) {
 
 function validateEndpointDraft() {
   const seen = new Map();
+  const seenAssetIDs = new Map();
   for (let index = 0; index < state.endpoints.length; index += 1) {
     const endpoint = state.endpoints[index];
     const ip = String(endpoint.ip || '').trim();
@@ -1074,6 +1240,19 @@ function validateEndpointDraft() {
     if (endpoint.maintenance_until && Number.isNaN(Date.parse(endpoint.maintenance_until))) {
       return { index, field: 'maintenance_until', message: `Endpoint ${index + 1} maintenance time must use RFC3339, for example 2026-07-28T04:00:00Z.` };
     }
+    if (!['production', 'maintenance', 'legacy_dev'].includes(effectiveDeviceMode(endpoint))) {
+      return { index, field: 'device_mode', message: `Endpoint ${index + 1} has an invalid device mode.` };
+    }
+    if (String(endpoint.asset_id || '').length > 253 || /[\r\n\t]/.test(String(endpoint.asset_id || ''))) {
+      return { index, field: 'asset_id', message: `Endpoint ${index + 1} has an invalid stable Asset ID.` };
+    }
+	const assetID = String(endpoint.asset_id || '').trim().toLowerCase();
+	if (assetID && seenAssetIDs.has(assetID)) {
+	  return { index, field: 'asset_id', message: `Endpoint ${index + 1} duplicates the stable Asset ID from endpoint ${seenAssetIDs.get(assetID) + 1}.` };
+	}
+	if (assetID) {
+	  seenAssetIDs.set(assetID, index);
+	}
   }
   return null;
 }
@@ -1472,10 +1651,17 @@ function filterEndpoints() {
   return state.endpoints
     .map((endpoint, index) => ({ endpoint, index }))
     .filter(({ endpoint }) => {
-      if (state.filter === 'dev' && !endpoint.dev) {
+      const mode = effectiveDeviceMode(endpoint);
+      if (state.filter === 'legacy_dev' && mode !== 'legacy_dev') {
         return false;
       }
-      if (state.filter === 'production' && endpoint.dev) {
+      if (state.filter === 'production' && mode !== 'production') {
+        return false;
+      }
+      if (state.filter === 'maintenance' && mode !== 'maintenance') {
+        return false;
+      }
+      if (state.filter === 'alerting_disabled' && endpoint.alerting_enabled !== false) {
         return false;
       }
       if (!search) {
@@ -1490,6 +1676,8 @@ function filterEndpoints() {
         endpoint.entitytype,
         endpoint.device,
         endpoint.vendor,
+        endpoint.asset_id,
+        endpoint.alerting_reason,
         endpoint.additional_notes,
       ].some((value) => String(value || '').toLowerCase().includes(search));
     });
@@ -1497,7 +1685,7 @@ function filterEndpoints() {
 
 function indexedDiscoveryItems() {
   syncDiscoverySelectionState();
-  return state.discovery.items.map((endpoint, index) => ({ endpoint, index }));
+  return globalThis.PingMonitorDiscoveryReview.indexedByReview(state.discovery.items, state.discovery.reviewFilter);
 }
 
 function getTableState(tableKind) {
@@ -1505,8 +1693,17 @@ function getTableState(tableKind) {
 }
 
 function getSortValue(endpoint, sortKey) {
-  if (sortKey === 'dev') {
-    return endpoint.dev ? 1 : 0;
+  if (sortKey === 'device_mode') {
+    return endpoint.discovery_review_state ? effectiveDiscoveryDeviceMode(endpoint) : effectiveDeviceMode(endpoint);
+  }
+  if (sortKey === 'discovery_review_state') {
+    return effectiveDiscoveryReviewState(endpoint);
+  }
+  if (sortKey === 'dynamic_address') {
+    return endpoint.dynamic_address ? 1 : 0;
+  }
+  if (sortKey === 'alerting_enabled' || sortKey === 'monitoring_enabled') {
+    return endpoint[sortKey] === false ? 0 : 1;
   }
   return String(endpoint[sortKey] || '').trim().toLowerCase();
 }
@@ -1766,17 +1963,24 @@ function loadEndpointForm(endpoint) {
   elements.endpointFields.entitytype.value = current.entitytype || '';
   elements.endpointFields.device.value = current.device || '';
   elements.endpointFields.vendor.value = current.vendor || '';
+  elements.endpointFields.asset_id.value = current.asset_id || '';
+  elements.endpointFields.device_mode.value = effectiveDeviceMode(current);
   elements.endpointFields.additional_notes.value = current.additional_notes || '';
-  elements.endpointFields.dev.checked = Boolean(current.dev);
+  elements.endpointFields.alerting_enabled.checked = current.alerting_enabled !== false;
+  elements.endpointFields.alerting_reason.value = current.alerting_reason || '';
+  elements.endpointFields.dynamic_address.checked = Boolean(current.dynamic_address);
+  elements.endpointFields.classification_source.value = current.classification_source || '';
   elements.endpointFields.monitoring_enabled.checked = current.monitoring_enabled !== false;
   elements.endpointFields.maintenance_until.value = current.maintenance_until || '';
   elements.endpointFields.maintenance_reason.value = current.maintenance_reason || '';
 }
 
 function readEndpointForm() {
-	const current = state.endpoints[state.selectedEndpointIndex] || {};
+  const current = state.endpoints[state.selectedEndpointIndex] || {};
+  const deviceMode = readTextValue(elements.endpointFields.device_mode) || 'production';
   return normalizeEndpoint({
-	endpoint_id: current.endpoint_id,
+    ...current,
+    endpoint_id: current.endpoint_id,
     ip: readTextValue(elements.endpointFields.ip),
     hostname: readTextValue(elements.endpointFields.hostname),
     fqdn: readTextValue(elements.endpointFields.fqdn),
@@ -1785,8 +1989,14 @@ function readEndpointForm() {
     entitytype: readTextValue(elements.endpointFields.entitytype),
     device: readTextValue(elements.endpointFields.device),
     vendor: readTextValue(elements.endpointFields.vendor),
+    asset_id: readTextValue(elements.endpointFields.asset_id),
     additional_notes: readTextValue(elements.endpointFields.additional_notes),
-    dev: elements.endpointFields.dev.checked,
+    device_mode: deviceMode,
+    dev: deviceMode === 'legacy_dev',
+    alerting_enabled: elements.endpointFields.alerting_enabled.checked,
+    alerting_reason: readTextValue(elements.endpointFields.alerting_reason),
+    dynamic_address: elements.endpointFields.dynamic_address.checked,
+    classification_source: readTextValue(elements.endpointFields.classification_source),
     monitoring_enabled: elements.endpointFields.monitoring_enabled.checked,
     maintenance_until: readTextValue(elements.endpointFields.maintenance_until),
     maintenance_reason: readTextValue(elements.endpointFields.maintenance_reason),
@@ -1898,10 +2108,11 @@ function renderStatus() {
 
 function renderSummary() {
   const groups = new Set(state.endpoints.map((endpoint) => (endpoint.group || 'default').trim() || 'default'));
-  const devCount = state.endpoints.filter((endpoint) => endpoint.dev).length;
+  const productionCount = state.endpoints.filter((endpoint) => effectiveDeviceMode(endpoint) === 'production').length;
+  const maintenanceCount = state.endpoints.filter((endpoint) => effectiveDeviceMode(endpoint) === 'maintenance').length;
   elements.summaryTotal.textContent = String(state.endpoints.length);
-  elements.summaryProduction.textContent = String(state.endpoints.length - devCount);
-  elements.summaryDev.textContent = String(devCount);
+  elements.summaryProduction.textContent = String(productionCount);
+  elements.summaryDev.textContent = String(maintenanceCount);
   elements.summaryGroups.textContent = String(groups.size);
 }
 
@@ -1922,11 +2133,13 @@ function renderEndpointTable() {
   elements.endpointSelectionStatus.textContent = `${selectedCount} selected from ${filtered.length} matching endpoint${filtered.length === 1 ? '' : 's'}`;
 
   if (view.totalItems === 0) {
-    elements.endpointRows.innerHTML = '<tr><td colspan="10" class="empty-cell">No endpoints match the current filter.</td></tr>';
+    elements.endpointRows.innerHTML = '<tr><td colspan="11" class="empty-cell">No endpoints match the current filter.</td></tr>';
     return;
   }
 
   elements.endpointRows.innerHTML = view.rows.map(({ endpoint, index }) => {
+    const mode = effectiveDeviceMode(endpoint);
+    const modeLabel = mode === 'legacy_dev' ? 'Legacy Dev' : titleCase(mode);
     const rowClasses = [
       index === state.selectedEndpointIndex ? 'selected-row' : '',
       state.selectedEndpointIndices.has(index) ? 'checked-row' : '',
@@ -1942,8 +2155,9 @@ function renderEndpointTable() {
         <td>${escapeHtml(endpoint.entitytype || '-')}</td>
         <td>${escapeHtml(endpoint.device || '-')}</td>
         <td>${escapeHtml(endpoint.vendor || '-')}</td>
-        <td><span class="mode-badge ${endpoint.dev ? 'dev' : 'production'}">${endpoint.dev ? 'Dev' : 'Production'}</span></td>
-        <td><span class="mode-badge ${endpoint.monitoring_enabled === false ? 'dev' : 'production'}">${endpoint.monitoring_enabled === false ? 'Paused' : (endpoint.maintenance_until && Date.parse(endpoint.maintenance_until) > Date.now() ? 'Maintenance' : 'Active')}</span></td>
+        <td><span class="mode-badge ${mode === 'production' ? 'production' : 'dev'}">${escapeHtml(modeLabel)}</span></td>
+        <td><span class="mode-badge ${endpoint.alerting_enabled === false ? 'dev' : 'production'}">${endpoint.alerting_enabled === false ? 'Disabled' : 'Enabled'}</span></td>
+        <td><span class="mode-badge ${endpoint.monitoring_enabled === false || mode === 'maintenance' ? 'dev' : 'production'}">${endpoint.monitoring_enabled === false ? 'Paused' : (mode === 'maintenance' || (endpoint.maintenance_until && Date.parse(endpoint.maintenance_until) > Date.now()) ? 'Maintenance' : 'Active')}</span></td>
       </tr>
     `;
   }).join('');
@@ -1963,12 +2177,16 @@ function renderEndpointButtons() {
   elements.resetEndpointsButton.disabled = !dirty;
   elements.selectAllEndpointsButton.disabled = filteredCount === 0;
   elements.deselectAllEndpointsButton.disabled = selectedCount === 0;
-  elements.markSelectedDevButton.disabled = actionIndices.length === 0;
+  elements.markSelectedMaintenanceButton.disabled = actionIndices.length === 0;
   elements.markSelectedProductionButton.disabled = actionIndices.length === 0;
+  elements.disableSelectedAlertingButton.disabled = actionIndices.length === 0;
+  elements.enableSelectedAlertingButton.disabled = actionIndices.length === 0;
   elements.pauseSelectedButton.disabled = actionIndices.length === 0;
   elements.resumeSelectedButton.disabled = actionIndices.length === 0;
   elements.deleteEndpointButton.disabled = actionIndices.length === 0;
   elements.deleteCurrentEndpointButton.disabled = !hasEditorSelection;
+  elements.previewEndpointClassificationButton.disabled = !hasEditorSelection;
+  elements.applyEndpointClassificationButton.disabled = !hasEditorSelection;
   Object.values(elements.endpointFields).forEach((field) => field.removeAttribute('aria-invalid'));
   if (validation) {
     setMessage(elements.endpointValidation, 'error', validation.message);
@@ -2011,9 +2229,14 @@ function buildDiscoverySummaryText() {
   }
   if (state.discovery.summary) {
     const delta = state.discovery.delta
-      ? ` New ${state.discovery.delta.new}, missing ${state.discovery.delta.missing}, unchanged ${state.discovery.delta.unchanged}.`
+      ? ` New ${state.discovery.delta.new}, missing ${state.discovery.delta.missing}, unchanged ${state.discovery.delta.unchanged}, unresolved dynamic ${state.discovery.delta.unresolved_dynamic || 0}.`
       : '';
-    return `${state.discovery.summary.total} endpoints found in ${state.discovery.durationMs} ms. Production ${state.discovery.summary.production}, dev ${state.discovery.summary.dev}, groups ${state.discovery.summary.groups}.${delta}`;
+    const production = state.discovery.items.filter((endpoint) => effectiveDiscoveryDeviceMode(endpoint) === 'production').length;
+    const maintenance = state.discovery.items.filter((endpoint) => effectiveDiscoveryDeviceMode(endpoint) === 'maintenance').length;
+    const legacyDev = state.discovery.items.filter((endpoint) => effectiveDiscoveryDeviceMode(endpoint) === 'legacy_dev').length;
+    const unassigned = state.discovery.items.filter((endpoint) => effectiveDiscoveryDeviceMode(endpoint) === 'unassigned').length;
+    const needsReview = state.discovery.items.filter((endpoint) => effectiveDiscoveryReviewState(endpoint) === 'needs_review').length;
+    return `${state.discovery.summary.total} endpoints found in ${state.discovery.durationMs} ms. Needs review ${needsReview}, unassigned mode ${unassigned}, production ${production}, maintenance ${maintenance}, legacy dev ${legacyDev}, groups ${state.discovery.summary.groups}.${delta}`;
   }
   return state.discovery.progressSummary || 'No discovery run yet.';
 }
@@ -2026,6 +2249,11 @@ function renderDiscovery() {
   const view = getPaginatedRows(sorted, 'discovery');
 
   updateSortButtons();
+  elements.discoveryReviewFilterButtons.forEach((button) => {
+    const active = button.dataset.discoveryReviewFilter === state.discovery.reviewFilter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', String(active));
+  });
   elements.discoveryMergeMode.value = state.discovery.mergeMode;
   elements.discoveryPageSize.value = String(state.tables.discovery.pageSize);
   elements.discoveryRunState.textContent = state.discovery.runState;
@@ -2036,7 +2264,7 @@ function renderDiscovery() {
     : 'Discovery logs will appear here after a run.');
   elements.discoverySelectionStatus.textContent = `${selectedCount} selected`;
   elements.discoveryTableStatus.textContent = hasResults
-    ? `Showing ${view.startItem}-${view.endItem} of ${view.totalItems} result${view.totalItems === 1 ? '' : 's'}`
+    ? `Showing ${view.startItem}-${view.endItem} of ${view.totalItems} ${titleCase(state.discovery.reviewFilter)} result${view.totalItems === 1 ? '' : 's'} · ${state.discovery.items.length} total`
     : (state.discovery.running ? 'Discovery is running. Results will populate when the staged file is written.' : '0 results');
   elements.discoveryPageStatus.textContent = formatPageStatus(view);
   elements.discoveryPrevPageButton.disabled = view.page <= 1 || state.discovery.running;
@@ -2044,10 +2272,20 @@ function renderDiscovery() {
   elements.runDiscoveryButton.disabled = !state.discovery.available || state.discovery.running;
   elements.runDiscoveryButton.textContent = state.discovery.running ? 'Running Discovery...' : 'Run Discovery';
   elements.cancelDiscoveryButton.disabled = !state.discovery.running;
-  elements.selectAllDiscoveryButton.disabled = !hasResults || state.discovery.running;
+  elements.selectAllDiscoveryButton.disabled = view.totalItems === 0 || state.discovery.running || state.discovery.reviewBusy;
   elements.deselectAllDiscoveryButton.disabled = selectedCount === 0 || state.discovery.running;
-  elements.markDiscoveryDevButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.markDiscoveryMaintenanceButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.markDiscoveryProductionButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.disableDiscoveryAlertingButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.enableDiscoveryAlertingButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.markDiscoveryDynamicButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.markDiscoveryStaticButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.deferDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running || state.discovery.reviewBusy;
+  elements.ignoreDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running || state.discovery.reviewBusy;
+  elements.resetDiscoveryReviewButton.disabled = selectedCount === 0 || state.discovery.running || state.discovery.reviewBusy;
+  elements.applyDiscoveryBulkFieldsButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.previewDiscoveryClassificationButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.applyDiscoveryClassificationButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.exportDiscoveryAllButton.disabled = !hasResults || state.discovery.running;
   elements.exportDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.addDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
@@ -2057,26 +2295,36 @@ function renderDiscovery() {
   if (view.totalItems === 0) {
     const emptyMessage = state.discovery.running
       ? 'Discovery is running. Results will appear here when the staged output file is ready.'
-      : (state.discovery.available
-        ? 'Discovery results will appear here after a run.'
-        : 'Discovery is unavailable because the companion workflow is not present in this deployment.');
-    elements.discoveryRows.innerHTML = `<tr><td colspan="11" class="empty-cell">${emptyMessage}</td></tr>`;
+      : (hasResults
+        ? `No discovery results are currently ${titleCase(state.discovery.reviewFilter)}.`
+        : (state.discovery.available
+          ? 'Discovery results will appear here after a run.'
+          : 'Discovery is unavailable because the companion workflow is not present in this deployment.'));
+    elements.discoveryRows.innerHTML = `<tr><td colspan="15" class="empty-cell">${emptyMessage}</td></tr>`;
     return;
   }
 
   elements.discoveryRows.innerHTML = view.rows.map(({ endpoint, index }) => {
     const label = endpoint.ip || endpoint.hostname || `discovered endpoint ${index + 1}`;
+    const mode = effectiveDiscoveryDeviceMode(endpoint);
+    const modeLabel = mode === 'legacy_dev' ? 'Legacy Dev' : titleCase(mode);
+    const reviewState = effectiveDiscoveryReviewState(endpoint);
+    const reviewClass = reviewState === 'approved' ? 'production' : (reviewState === 'needs_review' || reviewState === 'staged' ? 'warning' : 'dev');
     return `
       <tr class="${state.discovery.selectedIndices.has(index) ? 'checked-row' : ''}" data-index="${index}">
         <td class="table-select-col"><input class="table-row-checkbox" type="checkbox" data-index="${index}" ${state.discovery.selectedIndices.has(index) ? 'checked' : ''} aria-label="Select ${escapeHtml(label)}"></td>
         <td>${escapeHtml(endpoint.ip)}</td>
         <td>${escapeHtml(endpoint.hostname)}</td>
         <td>${escapeHtml(endpoint.fqdn || '-')}</td>
+        <td><input class="text-input text-input-compact discovery-asset-input" type="text" data-index="${index}" value="${escapeHtml(endpoint.asset_id || '')}" placeholder="Optional" ${reviewState === 'approved' ? 'disabled' : ''} aria-label="Asset ID for ${escapeHtml(label)}"></td>
+        <td><span class="mode-badge ${reviewClass}" title="${escapeHtml(endpoint.discovery_review_note || '')}">${escapeHtml(titleCase(reviewState))}</span></td>
         <td>${escapeHtml(endpoint.group || 'default')}</td>
         <td>${escapeHtml(endpoint.entitytype || '-')}</td>
         <td>${escapeHtml(endpoint.device || '-')}</td>
         <td>${escapeHtml(endpoint.vendor || '-')}</td>
-        <td><span class="mode-badge ${endpoint.dev ? 'dev' : 'production'}">${endpoint.dev ? 'Dev' : 'Production'}</span></td>
+        <td><span class="mode-badge ${mode === 'production' ? 'production' : 'dev'}">${escapeHtml(modeLabel)}</span></td>
+        <td><span class="mode-badge ${endpoint.alerting_enabled === false ? 'dev' : 'production'}">${endpoint.alerting_enabled === false ? 'Disabled' : 'Enabled'}</span></td>
+        <td>${endpoint.dynamic_address ? 'DHCP / Dynamic' : 'Static'}</td>
         <td>${escapeHtml(endpoint.dns_status || 'unresolved')}</td>
         <td>${endpoint.discovery_latency_ms == null ? '-' : `${escapeHtml(endpoint.discovery_latency_ms)} ms`}</td>
       </tr>
@@ -2217,7 +2465,7 @@ async function loadDiscoveryHistoryScan(scanID, mode) {
     const sourceItems = mode === 'new'
       ? (detail.new_items || [])
       : (mode === 'missing' ? (detail.missing_items || []) : (detail.items || []));
-    state.discovery.items = normalizeEndpoints(sourceItems);
+    state.discovery.items = normalizeDiscoveryEndpoints(sourceItems);
     state.discovery.summary = summarizeDiscoveryItems(state.discovery.items);
     state.discovery.delta = mode === 'all' ? (detail.delta || null) : null;
     state.discovery.logs = mode === 'missing'
@@ -2240,6 +2488,138 @@ async function loadDiscoveryHistoryScan(scanID, mode) {
   }
 }
 
+function selectOption(value, current, label) {
+  return `<option value="${escapeHtml(value)}" ${value === current ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+}
+
+function renderDiscoverySubnetEditor() {
+  if (!elements.discoverySubnetRows) {
+    return;
+  }
+  if (state.discoverySubnets.length === 0) {
+    elements.discoverySubnetRows.innerHTML = '<p class="empty-copy">No subnet metadata pairs configured. Scheduled targets remain valid without a catalog.</p>';
+    return;
+  }
+  elements.discoverySubnetRows.innerHTML = state.discoverySubnets.map((subnet, index) => `
+    <article class="repeatable-row discovery-subnet-row" data-index="${index}">
+      <div class="repeatable-row-header">
+        <strong>Subnet pair ${index + 1}</strong>
+        <button class="danger-button compact-action" type="button" data-remove-subnet="${index}">Remove</button>
+      </div>
+      <div class="field-grid">
+        <label class="field-group"><span>ID</span><input class="text-input" data-subnet-field="id" value="${escapeHtml(subnet.id || '')}" placeholder="nyc-users"></label>
+        <label class="field-group"><span>CIDR</span><input class="text-input" data-subnet-field="cidr" value="${escapeHtml(subnet.cidr || '')}" placeholder="10.20.30.0/24"></label>
+        <label class="field-group"><span>Subnet Name</span><input class="text-input" data-subnet-field="name" value="${escapeHtml(subnet.name || '')}" placeholder="NYC User LAN"></label>
+        <label class="field-group"><span>VLAN</span><input class="text-input" data-subnet-field="vlan" value="${escapeHtml(subnet.vlan || '')}" placeholder="230"></label>
+        <label class="field-group"><span>Location</span><input class="text-input" data-subnet-field="location" value="${escapeHtml(subnet.location || '')}" placeholder="New York HQ"></label>
+        <label class="field-group"><span>Routing Domain</span><input class="text-input" data-subnet-field="routing_domain" value="${escapeHtml(subnet.routing_domain || '')}" placeholder="corp"></label>
+        <label class="field-group"><span>Addressing</span><select class="text-input" data-subnet-field="addressing_mode">${selectOption('static', subnet.addressing_mode || 'static', 'Static')}${selectOption('dhcp', subnet.addressing_mode || 'static', 'DHCP / Dynamic')}</select></label>
+      </div>
+    </article>
+  `).join('');
+}
+
+function readDiscoverySubnetsFromEditor() {
+  return Array.from(elements.discoverySubnetRows?.querySelectorAll('.discovery-subnet-row') || []).map((row) => {
+    const value = (field) => readTextValue(row.querySelector(`[data-subnet-field="${field}"]`));
+    return {
+      id: value('id'),
+      cidr: value('cidr'),
+      name: value('name'),
+      vlan: value('vlan'),
+      location: value('location'),
+      routing_domain: value('routing_domain'),
+      addressing_mode: value('addressing_mode') || 'static',
+    };
+  });
+}
+
+function renderClassificationRuleEditor() {
+  if (!elements.classificationRuleRows) {
+    return;
+  }
+  if (state.classificationRules.length === 0) {
+    elements.classificationRuleRows.innerHTML = '<p class="empty-copy">No naming pairs configured. Existing endpoint fields and discovery behavior remain unchanged.</p>';
+    return;
+  }
+  elements.classificationRuleRows.innerHTML = state.classificationRules.map((rule, index) => {
+    const assignments = rule.assignments || {};
+    return `
+      <article class="repeatable-row classification-rule-row" data-index="${index}">
+        <div class="repeatable-row-header">
+          <strong>Pair ${index + 1}: ${escapeHtml(rule.id || 'unnamed')}</strong>
+          <div class="button-row compact-button-row">
+            <button class="secondary-button compact-action" type="button" data-move-rule="up" data-index="${index}" ${index === 0 ? 'disabled' : ''}>Move Up</button>
+            <button class="secondary-button compact-action" type="button" data-move-rule="down" data-index="${index}" ${index === state.classificationRules.length - 1 ? 'disabled' : ''}>Move Down</button>
+            <button class="danger-button compact-action" type="button" data-remove-rule="${index}">Remove</button>
+          </div>
+        </div>
+        <div class="field-grid">
+          <label class="field-group"><span>Rule ID</span><input class="text-input" data-rule-field="id" value="${escapeHtml(rule.id || '')}" placeholder="site-network-vendor"></label>
+          <label class="field-group"><span>Match Source</span><select class="text-input" data-rule-field="source">${selectOption('hostname', rule.source || 'either', 'Hostname')}${selectOption('fqdn', rule.source || 'either', 'FQDN')}${selectOption('either', rule.source || 'either', 'Hostname, then FQDN')}</select></label>
+          <label class="field-group field-span-2"><span>Expected Naming Regex</span><input class="text-input code-input" data-rule-field="pattern" value="${escapeHtml(rule.pattern || '')}" placeholder="^(?P&lt;site&gt;[a-z]{3})-(?P&lt;role&gt;sw|fw)-(?P&lt;vendor&gt;[a-z]+)-\\d+$"></label>
+          <label class="field-group"><span>Assign Group</span><input class="text-input code-input" data-assignment-field="group" value="${escapeHtml(assignments.group || '')}" placeholder="\${site}"></label>
+          <label class="field-group"><span>Assign Entity Type</span><input class="text-input code-input" data-assignment-field="entitytype" value="${escapeHtml(assignments.entitytype || '')}" placeholder="network"></label>
+          <label class="field-group"><span>Assign Device</span><input class="text-input code-input" data-assignment-field="device" value="${escapeHtml(assignments.device || '')}" placeholder="\${role}"></label>
+          <label class="field-group"><span>Assign Vendor</span><input class="text-input code-input" data-assignment-field="vendor" value="${escapeHtml(assignments.vendor || '')}" placeholder="\${vendor}"></label>
+        </div>
+        <div class="checkbox-grid">
+          <label class="checkbox-row"><input type="checkbox" data-rule-field="enabled" ${rule.enabled !== false ? 'checked' : ''}><span>Enabled</span></label>
+          <label class="checkbox-row"><input type="checkbox" data-rule-field="overwrite" ${rule.overwrite ? 'checked' : ''}><span>Overwrite existing values</span></label>
+          <label class="checkbox-row"><input type="checkbox" data-rule-field="stop_on_match" ${rule.stop_on_match ? 'checked' : ''}><span>Stop after this match</span></label>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function readClassificationRulesFromEditor() {
+  return Array.from(elements.classificationRuleRows?.querySelectorAll('.classification-rule-row') || []).map((row) => {
+    const value = (field) => readTextValue(row.querySelector(`[data-rule-field="${field}"]`));
+    const assignments = {};
+    row.querySelectorAll('[data-assignment-field]').forEach((field) => {
+      const assignment = readTextValue(field);
+      if (assignment) {
+        assignments[field.dataset.assignmentField] = assignment;
+      }
+    });
+    return {
+      id: value('id'),
+      enabled: row.querySelector('[data-rule-field="enabled"]').checked,
+      source: value('source') || 'either',
+      pattern: value('pattern'),
+      assignments,
+      overwrite: row.querySelector('[data-rule-field="overwrite"]').checked,
+      stop_on_match: row.querySelector('[data-rule-field="stop_on_match"]').checked,
+    };
+  });
+}
+
+async function previewClassificationSample() {
+  const hostname = readTextValue(elements.classificationPreviewHostname);
+  const fqdn = readTextValue(elements.classificationPreviewFQDN);
+  if (!hostname && !fqdn) {
+    elements.classificationPreviewResult.textContent = 'Enter a preview hostname or FQDN.';
+    return;
+  }
+  try {
+    const payload = await postJson('/api/classification/preview', {
+      rules: readClassificationRulesFromEditor(),
+      items: [{ hostname, fqdn, group: 'default' }],
+    });
+    const result = (payload.results || [])[0] || {};
+    const endpoint = result.endpoint || {};
+    elements.classificationPreviewResult.textContent = [
+      `Matched rules: ${(result.matched_rules || []).join(', ') || 'none'}`,
+      `Changes: ${Object.entries(result.changes || {}).map(([key, value]) => `${key}=${value}`).join(', ') || 'none'}`,
+      `Result: group=${endpoint.group || 'default'}, entitytype=${endpoint.entitytype || '-'}, device=${endpoint.device || '-'}, vendor=${endpoint.vendor || '-'}`,
+      `Provenance: ${endpoint.classification_source || 'none'}`,
+    ].join('\n');
+  } catch (error) {
+    elements.classificationPreviewResult.textContent = error instanceof Error ? error.message : 'Unable to evaluate naming rules.';
+  }
+}
+
 function loadConfigForm(cfg, secrets = {}) {
 	state.config = deepClone(cfg || {});
 	state.configSecrets = deepClone(secrets || {});
@@ -2252,6 +2632,10 @@ function loadConfigForm(cfg, secrets = {}) {
   const delivery = cfg.delivery || {};
   const discovery = cfg.discovery || {};
   const primarySchedule = (discovery.schedules || [])[0] || {};
+  state.discoverySubnets = deepClone(discovery.subnets || []);
+  state.classificationRules = deepClone(cfg.classification?.rules || []);
+  renderDiscoverySubnetEditor();
+  renderClassificationRuleEditor();
 
   elements.settingsFields.pingsPerCycle.value = cfg.pings_per_cycle ?? '';
   elements.settingsFields.cycleInterval.value = cfg.cycle_interval_seconds ?? '';
@@ -2416,6 +2800,7 @@ function readConfigForm() {
       history_path: readTextValue(elements.settingsFields.discoveryHistoryPath) || './data/discovery',
       retention_scans: readNumberValue(elements.settingsFields.discoveryRetentionScans, 0),
       retention_days: readNumberValue(elements.settingsFields.discoveryRetentionDays, 0),
+      subnets: readDiscoverySubnetsFromEditor(),
       schedules: [{
         ...((preserved.discovery?.schedules || [])[0] || {}),
         id: readTextValue(elements.settingsFields.discoveryID) || 'weekly-network-discovery',
@@ -2429,6 +2814,10 @@ function readConfigForm() {
         concurrency: readNumberValue(elements.settingsFields.discoveryConcurrency, 25),
         import_policy: 'review',
       }, ...((preserved.discovery?.schedules || []).slice(1))],
+    },
+    classification: {
+      ...(preserved.classification || {}),
+      rules: readClassificationRulesFromEditor(),
     },
   };
 }
@@ -2714,6 +3103,20 @@ async function saveEndpoints() {
     state.savedEndpoints = deepClone(state.endpoints);
     state.endpointsRevision = payload.revision || state.endpointsRevision;
     state.endpointsDirty = false;
+	const savedByIP = new Map(state.endpoints.map((endpoint) => [String(endpoint.ip || '').trim().toLowerCase(), endpoint]));
+	state.discovery.items.forEach((item) => {
+	  if (!item._review_staged) {
+		return;
+	  }
+	  const saved = savedByIP.get(String(item.ip || '').trim().toLowerCase());
+	  if (!saved) {
+		return;
+	  }
+	  item.discovery_review_state = 'approved';
+	  item.discovery_reviewed_at = saved.discovery_reviewed_at || new Date().toISOString();
+	  item.discovery_review_note = saved.discovery_review_note || '';
+	  delete item._review_staged;
+	});
     ensureSelectedEndpoint();
     renderAll();
     setMessage(elements.endpointBanner, payload.reload_pending ? 'warning' : 'success', payload.reload_pending
@@ -2728,6 +3131,9 @@ async function saveEndpoints() {
 
 function resetEndpointsDraft() {
   state.endpoints = deepClone(state.savedEndpoints);
+	state.discovery.items.forEach((item) => {
+	  delete item._review_staged;
+	});
   state.endpointsDirty = false;
   state.selectedEndpointIndices.clear();
   ensureSelectedEndpoint();
@@ -2869,14 +3275,18 @@ function deselectAllEndpoints() {
   renderEndpointButtons();
 }
 
-function setEndpointModeForSelection(isDev) {
+function setEndpointModeForSelection(mode) {
   const indexes = getEndpointActionIndices();
   if (indexes.length === 0) {
     return;
   }
+  if (mode === 'maintenance' && !window.confirm(`Put ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} into Maintenance Mode? The collector will stop sending ICMP probes and emit explicit suppression evidence.`)) {
+    return;
+  }
   indexes.forEach((index) => {
     if (state.endpoints[index]) {
-      state.endpoints[index].dev = isDev;
+      state.endpoints[index].device_mode = mode;
+      state.endpoints[index].dev = mode === 'legacy_dev';
     }
   });
   state.endpointsDirty = true;
@@ -2884,7 +3294,31 @@ function setEndpointModeForSelection(isDev) {
     loadEndpointForm(state.endpoints[state.selectedEndpointIndex]);
   }
   renderAll();
-  setMessage(elements.endpointBanner, 'success', `Marked ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} as ${isDev ? 'dev' : 'production'} in the working draft.`);
+  setMessage(elements.endpointBanner, mode === 'maintenance' ? 'warning' : 'success', `Marked ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} as ${mode === 'legacy_dev' ? 'legacy dev/test' : mode} in the working draft. Save endpoints to apply.`);
+}
+
+function setEndpointAlertingForSelection(enabled) {
+  const indexes = getEndpointActionIndices();
+  if (indexes.length === 0) {
+    return;
+  }
+  if (!enabled && !window.confirm(`Disable supported Splunk alerts for ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'}? Pings and measurements will continue.`)) {
+    return;
+  }
+  indexes.forEach((index) => {
+    if (state.endpoints[index]) {
+      state.endpoints[index].alerting_enabled = enabled;
+      if (enabled) {
+        state.endpoints[index].alerting_reason = '';
+      }
+    }
+  });
+  state.endpointsDirty = true;
+  if (indexes.includes(state.selectedEndpointIndex)) {
+    loadEndpointForm(state.endpoints[state.selectedEndpointIndex]);
+  }
+  renderAll();
+  setMessage(elements.endpointBanner, enabled ? 'success' : 'warning', `${enabled ? 'Enabled' : 'Disabled'} alerting for ${indexes.length} endpoint${indexes.length === 1 ? '' : 's'} in the working draft. Measurement remains active; save endpoints to apply.`);
 }
 
 function setEndpointMonitoringForSelection(enabled) {
@@ -2988,22 +3422,147 @@ function deselectAllDiscovery() {
   renderDiscovery();
 }
 
-function setDiscoveryModeForSelection(isDev) {
+function setDiscoveryModeForSelection(mode) {
   const indexes = getDiscoveryActionIndices();
   if (indexes.length === 0) {
     return;
   }
   indexes.forEach((index) => {
     if (state.discovery.items[index]) {
-      state.discovery.items[index].dev = isDev;
+      state.discovery.items[index].device_mode = mode;
+      state.discovery.items[index].dev = mode === 'legacy_dev';
     }
   });
   renderDiscovery();
 }
 
+function setDiscoveryAlertingForSelection(enabled) {
+  getDiscoveryActionIndices().forEach((index) => {
+    if (state.discovery.items[index]) {
+      state.discovery.items[index].alerting_enabled = enabled;
+      if (enabled) {
+        state.discovery.items[index].alerting_reason = '';
+      }
+    }
+  });
+  renderDiscovery();
+}
+
+function setDiscoveryAddressingForSelection(dynamicAddress) {
+  getDiscoveryActionIndices().forEach((index) => {
+    if (state.discovery.items[index]) {
+      state.discovery.items[index].dynamic_address = dynamicAddress;
+    }
+  });
+  renderDiscovery();
+  setMessage(elements.discoveryBanner, dynamicAddress ? 'warning' : 'success', dynamicAddress
+    ? 'Selected results are marked DHCP/dynamic. Add a stable Asset ID or retain forward-confirmed FQDN evidence before treating them as durable CMDB identities.'
+    : 'Selected results are marked static and will use IP as their default discovery identity.');
+}
+
+async function persistDiscoveryReviewState(reviewState) {
+  const indexes = getDiscoveryActionIndices();
+  if (indexes.length === 0 || state.discovery.reviewBusy) {
+    return;
+  }
+  if (reviewState === 'ignored' && !window.confirm(`Ignore ${indexes.length} selected discovery result${indexes.length === 1 ? '' : 's'}? The observations remain in immutable scan history, but they will leave the Needs Review queue.`)) {
+    return;
+  }
+  state.discovery.reviewBusy = true;
+  renderDiscovery();
+  try {
+    const payload = await postJson('/api/discovery/reviews', {
+      state: reviewState,
+      note: readTextValue(elements.discoveryReviewNote),
+      items: indexes.map((index) => state.discovery.items[index]),
+    });
+    (payload.items || []).forEach((item, offset) => {
+      const index = indexes[offset];
+      if (state.discovery.items[index]) {
+        state.discovery.items[index] = normalizeDiscoveryEndpoint(item);
+      }
+    });
+    state.discovery.selectedIndices.clear();
+    setTablePage('discovery', 1);
+    const stateLabel = reviewState === 'needs_review' ? 'returned to Needs Review' : `marked ${titleCase(reviewState)}`;
+    setMessage(elements.discoveryBanner, 'success', `${indexes.length} discovery result${indexes.length === 1 ? '' : 's'} ${stateLabel}. The decision is retained in the discovery review registry.`);
+  } catch (error) {
+    setMessage(elements.discoveryBanner, 'error', error instanceof Error ? error.message : 'Unable to persist discovery review state.');
+  } finally {
+    state.discovery.reviewBusy = false;
+    renderDiscovery();
+  }
+}
+
+function applyDiscoveryBulkFields() {
+  const indexes = getDiscoveryActionIndices();
+  const values = Object.fromEntries(Object.entries(elements.discoveryBulkFields)
+    .map(([key, field]) => [key, readTextValue(field)])
+    .filter(([, value]) => value));
+  if (indexes.length === 0 || Object.keys(values).length === 0) {
+    setMessage(elements.discoveryClassificationPreview, 'warning', 'Select discovery rows and enter at least one common field.');
+    return;
+  }
+  indexes.forEach((index) => Object.assign(state.discovery.items[index], values));
+  renderDiscovery();
+  setMessage(elements.discoveryClassificationPreview, 'success', `Applied ${Object.keys(values).join(', ')} to ${indexes.length} selected discovery result${indexes.length === 1 ? '' : 's'}.`);
+}
+
+async function classifyDiscoverySelection(applyChanges) {
+  const indexes = getDiscoveryActionIndices();
+  if (indexes.length === 0) {
+    return;
+  }
+  try {
+    const payload = await postJson('/api/classification/preview', {
+      rules: readClassificationRulesFromEditor(),
+      items: indexes.map((index) => state.discovery.items[index]),
+    });
+    const results = payload.results || [];
+    const matched = results.filter((result) => (result.matched_rules || []).length > 0).length;
+    const changed = results.filter((result) => Object.keys(result.changes || {}).length > 0).length;
+    if (applyChanges) {
+      results.forEach((result, offset) => {
+        state.discovery.items[indexes[offset]] = normalizeDiscoveryEndpoint(result.endpoint || state.discovery.items[indexes[offset]]);
+      });
+      renderDiscovery();
+    }
+    const changeSummary = applyChanges ? `${changed} rows updated` : `${changed} rows would change`;
+    setMessage(elements.discoveryClassificationPreview, changed > 0 ? 'success' : 'warning', `${applyChanges ? 'Applied' : 'Previewed'} naming rules for ${indexes.length} row${indexes.length === 1 ? '' : 's'}: ${matched} matched and ${changeSummary}.`);
+  } catch (error) {
+    setMessage(elements.discoveryClassificationPreview, 'error', error instanceof Error ? error.message : 'Unable to evaluate naming rules.');
+  }
+}
+
+async function classifyCurrentEndpoint(applyChanges) {
+  const index = state.selectedEndpointIndex;
+  if (index < 0 || index >= state.endpoints.length) {
+    return;
+  }
+  const candidate = readEndpointForm();
+  try {
+    const payload = await postJson('/api/classification/preview', {
+      rules: readClassificationRulesFromEditor(),
+      items: [candidate],
+    });
+    const result = (payload.results || [])[0] || {};
+    const changes = Object.entries(result.changes || {});
+    const ruleSummary = (result.matched_rules || []).join(', ') || 'none';
+    if (applyChanges && result.endpoint) {
+      state.endpoints[index] = normalizeEndpoint(result.endpoint);
+      state.endpointsDirty = true;
+      loadEndpointForm(state.endpoints[index]);
+      renderAll();
+    }
+    setMessage(elements.endpointClassificationPreview, changes.length > 0 ? 'success' : 'warning', `${applyChanges ? 'Applied' : 'Previewed'} naming rules. Matched: ${ruleSummary}. ${changes.length > 0 ? changes.map(([field, value]) => `${field}=${value}`).join(', ') : 'No structured fields would change.'}`);
+  } catch (error) {
+    setMessage(elements.endpointClassificationPreview, 'error', error instanceof Error ? error.message : 'Unable to evaluate naming rules.');
+  }
+}
+
 function mergeEndpointRecords(existingEndpoint, incomingEndpoint, mode) {
   const merged = deepClone(existingEndpoint);
-  ['hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor', 'additional_notes'].forEach((key) => {
+  ['hostname', 'fqdn', 'group', 'description', 'entitytype', 'device', 'vendor', 'asset_id', 'additional_notes', 'classification_source'].forEach((key) => {
     const incomingValue = String(incomingEndpoint[key] || '').trim();
     if (mode === 'overwrite') {
       if (!isBlankText(incomingValue)) {
@@ -3022,15 +3581,23 @@ function mergeEndpointRecords(existingEndpoint, incomingEndpoint, mode) {
     'discovery_scan_id',
     'discovery_source',
     'discovery_latency_ms',
+    'subnet_id',
+    'subnet_name',
+    'subnet_vlan',
+    'subnet_location',
+    'addressing_mode',
+    'routing_domain',
   ].forEach((key) => {
     if (incomingEndpoint[key] !== undefined && incomingEndpoint[key] !== null && incomingEndpoint[key] !== '') {
       merged[key] = incomingEndpoint[key];
     }
   });
   if (mode === 'overwrite') {
-    merged.dev = Boolean(incomingEndpoint.dev);
-  } else if (mode === 'fill_blanks' && incomingEndpoint.dev) {
-    merged.dev = true;
+    merged.device_mode = effectiveDeviceMode(incomingEndpoint);
+    merged.dev = merged.device_mode === 'legacy_dev';
+    merged.alerting_enabled = incomingEndpoint.alerting_enabled !== false;
+    merged.alerting_reason = incomingEndpoint.alerting_reason || '';
+    merged.dynamic_address = Boolean(incomingEndpoint.dynamic_address);
   }
   return normalizeEndpoint(merged);
 }
@@ -3040,13 +3607,22 @@ function addSelectedDiscoveryToEndpoints() {
   if (indexes.length === 0) {
     return;
   }
+	const unassigned = globalThis.PingMonitorDiscoveryReview.unassignedSelection(state.discovery.items, indexes);
+	if (unassigned.length > 0) {
+	  setMessage(elements.discoveryBanner, 'warning', `${unassigned.length} selected discovery result${unassigned.length === 1 ? ' has' : 's have'} no reviewed device mode. Mark every selected result Production or Maintenance before adding it to the device list.`);
+	  return;
+	}
   const knownByIP = new Map(state.endpoints.map((endpoint, index) => [String(endpoint.ip || '').trim().toLowerCase(), index]));
   let addedCount = 0;
   let updatedCount = 0;
   let skippedCount = 0;
 
+	const reviewedAt = new Date().toISOString();
+
   indexes.forEach((index) => {
-    const candidate = normalizeEndpoint(state.discovery.items[index]);
+    const candidate = normalizeEndpoint(globalThis.PingMonitorDiscoveryReview.markStaged(
+	  state.discovery.items[index], reviewedAt, readTextValue(elements.discoveryReviewNote),
+	));
     const key = String(candidate.ip || '').trim().toLowerCase();
     if (!key) {
       skippedCount += 1;
@@ -3056,6 +3632,7 @@ function addSelectedDiscoveryToEndpoints() {
       state.endpoints.push(candidate);
       knownByIP.set(key, state.endpoints.length - 1);
       addedCount += 1;
+	  state.discovery.items[index]._review_staged = true;
       return;
     }
     if (state.discovery.mergeMode === 'skip_existing') {
@@ -3064,7 +3641,11 @@ function addSelectedDiscoveryToEndpoints() {
     }
     const existingIndex = knownByIP.get(key);
     state.endpoints[existingIndex] = mergeEndpointRecords(state.endpoints[existingIndex], candidate, state.discovery.mergeMode);
+	state.endpoints[existingIndex].discovery_review_state = 'approved';
+	state.endpoints[existingIndex].discovery_reviewed_at = reviewedAt;
+	state.endpoints[existingIndex].discovery_review_note = candidate.discovery_review_note;
     updatedCount += 1;
+	state.discovery.items[index]._review_staged = true;
   });
 
   state.discovery.selectedIndices.clear();
@@ -3331,12 +3912,16 @@ elements.endpointForm.addEventListener('change', () => updateCurrentEndpointFrom
 elements.addEndpointButton.addEventListener('click', addEndpoint);
 elements.selectAllEndpointsButton.addEventListener('click', selectAllVisibleEndpoints);
 elements.deselectAllEndpointsButton.addEventListener('click', deselectAllEndpoints);
-elements.markSelectedDevButton.addEventListener('click', () => setEndpointModeForSelection(true));
-elements.markSelectedProductionButton.addEventListener('click', () => setEndpointModeForSelection(false));
+elements.markSelectedMaintenanceButton.addEventListener('click', () => setEndpointModeForSelection('maintenance'));
+elements.markSelectedProductionButton.addEventListener('click', () => setEndpointModeForSelection('production'));
+elements.disableSelectedAlertingButton.addEventListener('click', () => setEndpointAlertingForSelection(false));
+elements.enableSelectedAlertingButton.addEventListener('click', () => setEndpointAlertingForSelection(true));
 elements.pauseSelectedButton.addEventListener('click', () => setEndpointMonitoringForSelection(false));
 elements.resumeSelectedButton.addEventListener('click', () => setEndpointMonitoringForSelection(true));
 elements.deleteEndpointButton.addEventListener('click', deleteSelectedEndpoint);
 elements.deleteCurrentEndpointButton.addEventListener('click', deleteCurrentEndpoint);
+elements.previewEndpointClassificationButton.addEventListener('click', () => classifyCurrentEndpoint(false));
+elements.applyEndpointClassificationButton.addEventListener('click', () => classifyCurrentEndpoint(true));
 elements.endpointPageSize.addEventListener('change', (event) => {
   setTablePageSize('endpoint', event.target.value);
   renderEndpointTable();
@@ -3368,8 +3953,18 @@ Object.values(elements.discoveryInputs).forEach((input) => {
 });
 elements.selectAllDiscoveryButton.addEventListener('click', selectAllVisibleDiscovery);
 elements.deselectAllDiscoveryButton.addEventListener('click', deselectAllDiscovery);
-elements.markDiscoveryDevButton.addEventListener('click', () => setDiscoveryModeForSelection(true));
-elements.markDiscoveryProductionButton.addEventListener('click', () => setDiscoveryModeForSelection(false));
+elements.markDiscoveryMaintenanceButton.addEventListener('click', () => setDiscoveryModeForSelection('maintenance'));
+elements.markDiscoveryProductionButton.addEventListener('click', () => setDiscoveryModeForSelection('production'));
+elements.disableDiscoveryAlertingButton.addEventListener('click', () => setDiscoveryAlertingForSelection(false));
+elements.enableDiscoveryAlertingButton.addEventListener('click', () => setDiscoveryAlertingForSelection(true));
+elements.markDiscoveryDynamicButton.addEventListener('click', () => setDiscoveryAddressingForSelection(true));
+elements.markDiscoveryStaticButton.addEventListener('click', () => setDiscoveryAddressingForSelection(false));
+elements.deferDiscoverySelectedButton.addEventListener('click', () => persistDiscoveryReviewState('deferred'));
+elements.ignoreDiscoverySelectedButton.addEventListener('click', () => persistDiscoveryReviewState('ignored'));
+elements.resetDiscoveryReviewButton.addEventListener('click', () => persistDiscoveryReviewState('needs_review'));
+elements.applyDiscoveryBulkFieldsButton.addEventListener('click', applyDiscoveryBulkFields);
+elements.previewDiscoveryClassificationButton.addEventListener('click', () => classifyDiscoverySelection(false));
+elements.applyDiscoveryClassificationButton.addEventListener('click', () => classifyDiscoverySelection(true));
 elements.exportDiscoveryAllButton.addEventListener('click', () => exportDiscoveryCsv(false));
 elements.exportDiscoverySelectedButton.addEventListener('click', () => exportDiscoveryCsv(true));
 elements.addDiscoverySelectedButton.addEventListener('click', addSelectedDiscoveryToEndpoints);
@@ -3390,6 +3985,15 @@ elements.discoveryNextPageButton.addEventListener('click', () => {
   renderDiscovery();
 });
 elements.discoveryRows.addEventListener('change', (event) => {
+  const assetInput = event.target.closest('.discovery-asset-input');
+  if (assetInput) {
+    const index = Number(assetInput.dataset.index);
+    if (state.discovery.items[index]) {
+      state.discovery.items[index].asset_id = String(assetInput.value || '').trim();
+      setMessage(elements.discoveryBanner, 'warning', 'Asset ID updated in the review draft. Defer, ignore, or add and save the device to persist this identity.');
+    }
+    return;
+  }
   const checkbox = event.target.closest('.table-row-checkbox');
   if (!checkbox) {
     return;
@@ -3413,6 +4017,82 @@ elements.tableSortButtons.forEach((button) => {
 
 initializeSettingsHelp();
 initializeAdvancedSettings();
+
+elements.addDiscoverySubnetButton.addEventListener('click', () => {
+  state.discoverySubnets = readDiscoverySubnetsFromEditor();
+  state.discoverySubnets.push({
+    id: `subnet-${state.discoverySubnets.length + 1}`,
+    cidr: '',
+    name: '',
+    vlan: '',
+    location: '',
+    routing_domain: '',
+    addressing_mode: 'static',
+  });
+  renderDiscoverySubnetEditor();
+  state.configDirty = true;
+  renderConfigButtons();
+  renderStatus();
+});
+
+elements.discoveryReviewFilterButtons.forEach((button) => {
+  button.addEventListener('click', () => {
+    state.discovery.reviewFilter = button.dataset.discoveryReviewFilter || 'needs_review';
+    state.discovery.selectedIndices.clear();
+    setTablePage('discovery', 1);
+    renderDiscovery();
+  });
+});
+elements.discoverySubnetRows.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-remove-subnet]');
+  if (!button) {
+    return;
+  }
+  state.discoverySubnets = readDiscoverySubnetsFromEditor();
+  state.discoverySubnets.splice(Number(button.dataset.removeSubnet), 1);
+  renderDiscoverySubnetEditor();
+  state.configDirty = true;
+  renderConfigButtons();
+  renderStatus();
+});
+elements.addClassificationRuleButton.addEventListener('click', () => {
+  state.classificationRules = readClassificationRulesFromEditor();
+  state.classificationRules.push({
+    id: `naming-rule-${state.classificationRules.length + 1}`,
+    enabled: true,
+    source: 'either',
+    pattern: '',
+    assignments: {},
+    overwrite: false,
+    stop_on_match: false,
+  });
+  renderClassificationRuleEditor();
+  state.configDirty = true;
+  renderConfigButtons();
+  renderStatus();
+});
+elements.classificationRuleRows.addEventListener('click', (event) => {
+  const removeButton = event.target.closest('[data-remove-rule]');
+  const moveButton = event.target.closest('[data-move-rule]');
+  if (!removeButton && !moveButton) {
+    return;
+  }
+  state.classificationRules = readClassificationRulesFromEditor();
+  if (removeButton) {
+    state.classificationRules.splice(Number(removeButton.dataset.removeRule), 1);
+  } else {
+    const index = Number(moveButton.dataset.index);
+    const nextIndex = moveButton.dataset.moveRule === 'up' ? index - 1 : index + 1;
+    if (nextIndex >= 0 && nextIndex < state.classificationRules.length) {
+      [state.classificationRules[index], state.classificationRules[nextIndex]] = [state.classificationRules[nextIndex], state.classificationRules[index]];
+    }
+  }
+  renderClassificationRuleEditor();
+  state.configDirty = true;
+  renderConfigButtons();
+  renderStatus();
+});
+elements.previewClassificationSampleButton.addEventListener('click', previewClassificationSample);
 
 elements.settingsForm.addEventListener('input', () => {
   state.configDirty = true;

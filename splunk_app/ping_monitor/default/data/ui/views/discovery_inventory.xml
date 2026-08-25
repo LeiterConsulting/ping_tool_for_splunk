@@ -54,6 +54,16 @@
       <choice value="Not observed in latest applicable scan">Not Observed</choice>
       <default>*</default>
     </input>
+    <input type="dropdown" token="review_filter" searchWhenChanged="true">
+      <label>Review State</label>
+      <choice value="*">All Review States</choice>
+      <choice value="needs_review">Needs Review</choice>
+      <choice value="approved">Approved</choice>
+      <choice value="deferred">Deferred</choice>
+      <choice value="ignored">Ignored</choice>
+      <choice value="legacy_untracked">Legacy / Untracked</choice>
+      <default>*</default>
+    </input>
     <input type="text" token="discovery_search" searchWhenChanged="true">
       <label>Asset Search</label>
       <default></default>
@@ -134,10 +144,11 @@
           <query>`ping_discovery_inventory($pm_index$, $pm_sourcetype$)`
 | search (target_network="$target_filter$" OR "$target_filter$"="*")
 | search (evidence_status="$evidence_filter$" OR "$evidence_filter$"="*")
+| search (discovery_review_state="$review_filter$" OR "$review_filter$"="*")
 | search endpoint_key="*$discovery_search$*" OR hostname="*$discovery_search$*" OR fqdn="*$discovery_search$*" OR target_ip="*$discovery_search$*" OR vendor="*$discovery_search$*" OR device="*$discovery_search$*"
-| eval fqdn=coalesce(fqdn, "Not resolved"), hostname=coalesce(hostname, "Unknown"), group=coalesce(group, "Unassigned"), dns_status=coalesce(dns_status, "unknown")
-| table endpoint_key, target_ip, hostname, fqdn, evidence_status, discovery_delta_status, dns_evidence, dns_status, discovery_latency_ms, target_network, group, entitytype, device, vendor, dev, monitoring_enabled, first_observed_human, last_observed_human, last_evidence_human, last_scan_id
-| rename endpoint_key AS "Endpoint ID", target_ip AS "IP Address", hostname AS "Hostname", fqdn AS "FQDN", evidence_status AS "Discovery Evidence", discovery_delta_status AS "Change", dns_evidence AS "DNS Evidence", dns_status AS "DNS Status", discovery_latency_ms AS "Discovery Latency (ms)", target_network AS "Scan Target", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", dev AS "Dev", monitoring_enabled AS "Monitoring Enabled", first_observed_human AS "First Observed", last_observed_human AS "Last Observed", last_evidence_human AS "Last Evidence", last_scan_id AS "Last Scan ID"
+| eval fqdn=coalesce(fqdn, "Not resolved"), hostname=coalesce(hostname, "Unknown"), group=coalesce(group, "Unassigned"), dns_status=coalesce(dns_status, "unknown"), asset_id=coalesce(asset_id, ""), classification_source=coalesce(classification_source, "manual/legacy")
+| table endpoint_key, asset_id, target_ip, hostname, fqdn, discovery_review_state, discovery_reviewed_at, discovery_review_note, evidence_status, discovery_delta_status, dns_evidence, dns_status, discovery_latency_ms, target_network, subnet_name, subnet_vlan, subnet_location, routing_domain, dynamic_address, group, entitytype, device, vendor, device_mode, alerting_enabled, classification_source, first_observed_human, last_observed_human, last_evidence_human, last_scan_id
+| rename endpoint_key AS "Endpoint ID", asset_id AS "Asset ID", target_ip AS "IP Address", hostname AS "Hostname", fqdn AS "FQDN", discovery_review_state AS "Review State", discovery_reviewed_at AS "Reviewed At", discovery_review_note AS "Review Note", evidence_status AS "Discovery Evidence", discovery_delta_status AS "Change", dns_evidence AS "DNS Evidence", dns_status AS "DNS Status", discovery_latency_ms AS "Discovery Latency (ms)", target_network AS "Scan Target", subnet_name AS "Subnet Name", subnet_vlan AS "VLAN", subnet_location AS "Subnet Location", routing_domain AS "Routing Domain", dynamic_address AS "Dynamic Address", group AS "Group", entitytype AS "Entity Type", device AS "Device", vendor AS "Vendor", device_mode AS "Mode", alerting_enabled AS "Alerting Enabled", classification_source AS "Classification Source", first_observed_human AS "First Observed", last_observed_human AS "Last Observed", last_evidence_human AS "Last Evidence", last_scan_id AS "Last Scan ID"
 | sort "Discovery Evidence", "IP Address"</query>
           <earliest>$discovery_time.earliest$</earliest>
           <latest>$discovery_time.latest$</latest>

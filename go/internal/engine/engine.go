@@ -351,6 +351,9 @@ func partitionEndpoints(endpoints []models.Endpoint, now time.Time) ([]models.En
 }
 
 func endpointSuppression(endpoint models.Endpoint, now time.Time) (string, bool) {
+	if endpoint.EffectiveDeviceMode() == models.DeviceModeMaintenance {
+		return "maintenance_mode", true
+	}
 	if !endpoint.IsMonitoringEnabled() {
 		return "monitoring_disabled", true
 	}
@@ -366,7 +369,7 @@ func endpointSuppression(endpoint models.Endpoint, now time.Time) (string, bool)
 func runSuppressedEndpoint(cfg config.Config, collectorHost string, collectorID string, cycleID string, endpoint models.Endpoint, observedAt time.Time) pingResult {
 	reason, _ := endpointSuppression(endpoint, observedAt)
 	stateName := "disabled"
-	if reason == "scheduled_maintenance" {
+	if reason == "scheduled_maintenance" || reason == "maintenance_mode" {
 		stateName = "maintenance"
 	}
 	timestamp := util.FormatDotNetO(observedAt)
@@ -486,7 +489,12 @@ func runEndpoint(ctx context.Context, cfg config.Config, collectorHost string, c
 			EventID:       id, CollectorID: collectorID, EndpointID: endpointID, CycleID: cycleID,
 			Timestamp: ts, SentAt: util.FormatDotNetO(sentAt),
 			TargetIP: ep.IP, Hostname: ep.Hostname, FQDN: ep.FQDN, Dev: ep.Dev,
-			MonitoringEnabled: ep.IsMonitoringEnabled(), Group: ep.Group,
+			DeviceMode: ep.EffectiveDeviceMode(), MonitoringEnabled: ep.IsMonitoringEnabled(),
+			AlertingEnabled: ep.IsAlertingEnabled(), AlertingReason: ep.AlertingReason,
+			AssetID: ep.AssetID, DynamicAddress: ep.DynamicAddress,
+			SubnetID: ep.SubnetID, SubnetName: ep.SubnetName, SubnetVLAN: ep.SubnetVLAN,
+			SubnetLocation: ep.SubnetLocation, AddressingMode: ep.AddressingMode, RoutingDomain: ep.RoutingDomain,
+			ClassificationSource: ep.ClassificationSource, Group: ep.Group,
 			Description: ep.Description, EntityType: ep.EntityType, Device: ep.Device, Vendor: ep.Vendor,
 			Notes: ep.AdditionalNotes, MeasurementValid: attemptValid, ProbeBackend: pr.Backend,
 			PingNumber: sequence, PingsInCycle: count, RecordType: recordTypePing,
@@ -645,7 +653,12 @@ func buildSummary(ep models.Endpoint, identity summaryIdentity) models.SummaryEv
 		EventID:       identity.EventID, CollectorID: identity.CollectorID, EndpointID: identity.EndpointID,
 		CycleID: identity.CycleID, Timestamp: identity.Timestamp, ProbeBackend: identity.ProbeBackend,
 		TargetIP: ep.IP, Hostname: ep.Hostname, FQDN: ep.FQDN, Dev: ep.Dev,
-		MonitoringEnabled: ep.IsMonitoringEnabled(), MaintenanceUntil: ep.MaintenanceUntil,
+		DeviceMode: ep.EffectiveDeviceMode(), MonitoringEnabled: ep.IsMonitoringEnabled(),
+		AlertingEnabled: ep.IsAlertingEnabled(), AlertingReason: ep.AlertingReason,
+		AssetID: ep.AssetID, DynamicAddress: ep.DynamicAddress,
+		SubnetID: ep.SubnetID, SubnetName: ep.SubnetName, SubnetVLAN: ep.SubnetVLAN,
+		SubnetLocation: ep.SubnetLocation, AddressingMode: ep.AddressingMode, RoutingDomain: ep.RoutingDomain,
+		ClassificationSource: ep.ClassificationSource, MaintenanceUntil: ep.MaintenanceUntil,
 		MaintenanceReason: ep.MaintenanceReason, Group: ep.Group,
 		Description: ep.Description, EntityType: ep.EntityType, Device: ep.Device, Vendor: ep.Vendor,
 		Notes: ep.AdditionalNotes, RecordType: identity.RecordType,

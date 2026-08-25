@@ -4,17 +4,21 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Current Release
 
-- Go runtime: `v5.10.0`
-- Splunk app: `3.1.0` build `43`
-- Current runtime release notes: [RELEASE_NOTES_v5.10.0.md](RELEASE_NOTES_v5.10.0.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.1.0.md](RELEASE_NOTES_splunk_app_3.1.0.md)
+- Go runtime: `v5.11.0`
+- Splunk app: `3.2.0` build `44`
+- Current runtime release notes: [RELEASE_NOTES_v5.11.0.md](RELEASE_NOTES_v5.11.0.md)
+- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.2.0.md](RELEASE_NOTES_splunk_app_3.2.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
+
+## v5.11.0 Release Highlights
+
+Version 5.11.0 adds explicit Production/Maintenance/Legacy Dev modes, independent Alerting Enabled policy, stable Asset IDs and DHCP-aware discovery identity, a durable Needs Review/Deferred/Ignored discovery registry, a discovery subnet catalog, and ordered regex naming-convention pairs with test/preview controls. Existing config files and minimal endpoint CSV files remain valid; legacy `dev=true` continues to ping until an operator explicitly migrates it to Maintenance.
 
 ## Current Runtime Options
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.10.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
+| Go v5.11.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -71,7 +75,7 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 
 ### Configuration Advisor
 
-Version 5.10 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, monitoring-policy errors, invalid maintenance timestamps, discovery-schedule errors, unbounded log retention, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
+Version 5.11 uses the same deterministic schedule planner for startup admission, service preflight, CLI analysis, and the web UI. It reports all detectable issues in one pass, including duplicate targets or IDs, missing octets, invalid addresses and booleans, monitoring-policy errors, invalid maintenance timestamps, discovery-schedule errors, unbounded log retention, incomplete output settings, signal-quality risks, and queue-free worst-case capacity.
 
 ```powershell
 # Read-only analysis; exits nonzero when blockers exist
@@ -113,6 +117,10 @@ Preview a side-by-side migration without changing the active file:
 
 Use `--apply` when ready. The runtime writes and reload-verifies the target but never switches the service automatically; update the service's `--config` argument after validation. The legacy sample remains available in [config.psd1](config.psd1).
 
+Optional `discovery.subnets` entries pair an IPv4 CIDR with a stable subnet ID, name, VLAN, location, `static` or `dhcp` addressing mode, and routing domain. Existing schedule target arrays remain CIDR strings; the most-specific catalog entry that contains a scan target enriches its discovery and CMDB evidence.
+
+Optional `classification.rules` entries are evaluated in order against Hostname, FQDN, or either. Go RE2 named captures such as `(?P<site>...)` can be referenced in Group, Entity Type, Device, and Vendor assignments as `${site}`. Fill-blank behavior is the default, overwrite is explicit, and the UI can preview exact matches, changes, and rule provenance before applying a draft.
+
 ### Unix Shell Configuration
 
 The alternate shell runtime uses [config.conf](config.conf) and [ping_monitor.sh](ping_monitor.sh). The Go runtime does not load `config.conf`.
@@ -127,25 +135,27 @@ ip,hostname,dev
 10.0.0.50,app-server,false
 ```
 
-Extended inventory format:
+Extended inventory formats may add the following optional policy, identity, subnet, and discovery-evidence columns to the legacy fields:
 
 ```csv
-ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason,dns_status,dns_forward_confirmed,discovered_at,discovery_scan_id,discovery_source,discovery_latency_ms
-192.168.1.1,router,router.example.com,network,Core Router,infrastructure,router,Cisco,Primary site,,false,true,,,forward_confirmed,true,2026-07-27T12:00:00Z,scan-example,icmp_subnet_scan,1.25
-10.0.0.50,app-server,app-server.example.com,servers,Production App,server,vm,VMware,Critical,,false,true,,,,false,,,,
+ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,asset_id,device_mode,dev,monitoring_enabled,alerting_enabled,alerting_reason,maintenance_until,maintenance_reason,dynamic_address,classification_source,discovery_review_state,discovery_reviewed_at,discovery_review_note,subnet_id,subnet_name,subnet_vlan,subnet_location,addressing_mode,routing_domain,dns_status,dns_forward_confirmed,discovered_at,discovery_scan_id,discovery_source,discovery_latency_ms
+192.168.1.1,router,router.example.com,network,Edge router,infrastructure,router,Cisco,Core gateway,,CMDB-1001,production,false,true,true,,,,false,rule:network,approved,2026-08-25T12:00:00Z,Approved after discovery review,core,Core Network,100,Headquarters,static,corp,forward_confirmed,true,2026-07-27T12:00:00Z,scan-example,icmp_subnet_scan,1.25
 ```
 
 Endpoint file rules:
 
 - Legacy two-column files (`ip,hostname`) are still accepted.
 - `ip` and `hostname` headers are required; column order is otherwise flexible.
-- The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, and duplicate endpoint IDs are rejected.
+- The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, duplicate endpoint IDs, and duplicate nonblank Asset IDs are rejected.
 - `endpoint_id` is optional; the runtime derives a stable target-based ID when it is blank.
-- `fqdn`, monitoring-policy fields, and discovery-evidence fields are optional.
+- `fqdn`, operational-policy, CMDB identity, subnet metadata, and discovery-evidence fields are optional.
 - Reviewed discovery evidence (`dns_status`, forward confirmation, discovery time, scan ID, source, and latency) survives UI import and endpoint save/load.
-- Missing `monitoring_enabled` means `true`, so old endpoint files keep being monitored.
-- `monitoring_enabled=false` pauses probing. A future RFC 3339 `maintenance_until` pauses probing until expiry; `dev` alone never pauses probing.
-- `dev=true` endpoints emit `record_type=summary_dev` and, when enabled, `record_type=ping_dev`.
+- Missing `monitoring_enabled` or `alerting_enabled` means `true`, so old endpoint files keep being monitored and remain eligible for packaged alerts.
+- `device_mode=maintenance`, `monitoring_enabled=false`, or a future RFC 3339 `maintenance_until` suppresses probing without fabricating packet loss. Maintenance evidence uses `record_type=monitoring_control` and `measurement_valid=false`.
+- `alerting_enabled=false` does not suppress probing, health evaluation, dashboards, or reports. It marks the signal ineligible for packaged Down, packet-loss, and latency alerts.
+- Existing `dev=true` rows resolve to `device_mode=legacy_dev` and continue to emit the legacy dev record types. This preserves old behavior until explicit migration.
+- `dynamic_address=true` tells discovery delta logic not to treat IP as durable asset identity. Asset ID is preferred, forward-confirmed FQDN is the fallback, and unresolved dynamic observations are retained but excluded from New/Missing asset counts.
+- `discovery_review_state`, `discovery_reviewed_at`, and `discovery_review_note` are optional. Old endpoint files remain valid; an endpoint present in the saved monitored inventory is treated as approved discovery identity even when these columns are absent.
 - Production rollups stay on `record_type=summary`, so dev/test systems do not skew customer-facing availability.
 
 ## Hot Loading And The Local Admin UI
@@ -168,8 +178,11 @@ The UI supports:
 
 - advisor analysis, current-versus-proposed schedule evidence, safe fixes, confirmed profile application, and a bounded local benchmark
 - full endpoint CRUD
-- explicitly selected bulk dev/prod and delete actions, with destructive confirmations
-- cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, CSV export, durable scan deltas, and merge or overwrite workflows
+- explicitly selected bulk Production/Maintenance, alert eligibility, pause/resume, and delete actions, with confirmations for signal-affecting changes
+- cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, complete CSV export, DHCP-safe scan deltas, and merge or overwrite workflows
+- durable Needs Review, Deferred, and Ignored discovery queues, explicit Production/Maintenance assignment before staging, per-result Asset ID entry, and bulk review for CMDB fields, address-allocation policy, alert policy, and previewed naming-rule application
+- an ordered regex match/assignment builder with named captures, fill-blank/overwrite policy, reordering, sample tests, exact change previews, and classification provenance
+- a discovery subnet catalog for subnet name, VLAN, location, routing domain, and static/DHCP behavior
 - a Discovery Operations view for schedule health, retained history, and explicit All/New/Missing review
 - weekly, timezone-aware discovery schedules with review-only import policy and bounded count/age history retention
 - explicit pause/resume monitoring controls and timed maintenance
@@ -212,7 +225,9 @@ Default/current sample values live in [config.psd1](config.psd1).
 - Discovery records addresses that replied during a bounded scan. It does not prove ownership, device lifecycle, or a durable asset identity.
 - `new` means an address was observed in the selected scan but not in the prior retained scan for the same target.
 - `missing` means an address was observed previously but not in the selected scan. It is not proof of downtime, removal, or decommissioning.
-- Scheduled results remain review-only. Loading All, New, or Missing places evidence in the discovery review table; only an explicit merge followed by **Save Endpoints** changes monitored inventory.
+- Scheduled results remain review-only. Unknown observations enter the durable **Needs Review** queue without being silently classified as Production. Loading All, New, or Missing places evidence in the discovery review table; only an explicit mode assignment, merge, and **Save Endpoints** changes monitored inventory and makes the review state Approved.
+- Deferred, Ignored, and Needs Review decisions are retained in `reviews.json` under the configured discovery history path. They are applied to later scans without rewriting the immutable scan snapshots.
+- Discovery reconciles observations against both the review registry and `endpoints.csv`. A unique Asset ID is the preferred canonical identity; a forward-confirmed FQDN can correlate a DHCP device after its IP changes. A dynamic observation with neither remains **Unresolved Dynamic** and is excluded from New/Missing asset counts rather than being falsely declared a new device.
 - Completed scans emit `discovery_scan_summary` and `discovery_observation` records through the configured event pipeline. The Splunk **Discovery Inventory** dashboard presents that evidence separately from monitored health.
 - Metrics-only mode has no discovery-event equivalent. Local scan history remains available, and the advisor warns operators to select `metrics.mode=dual` when Splunk discovery evidence is required.
 - FQDN and DNS-forward confirmation are correlation evidence. DNS can be absent, stale, or reassigned and must not be treated as an authoritative CMDB key.
@@ -241,7 +256,7 @@ Enable `use_ack` only after [indexer acknowledgment is enabled on the correspond
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_3.1.0_build43_20260727.tar.gz`, then:
+Install the current packaged app from `splunk_app/dist/ping_monitor_3.2.0_build44_20260825.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.

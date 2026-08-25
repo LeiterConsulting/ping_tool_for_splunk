@@ -113,34 +113,67 @@ type DiscoverySchedule struct {
 	ImportPolicy string   `json:"import_policy" yaml:"import_policy"`
 }
 
+// DiscoverySubnet attaches operator-owned context to a CIDR without changing
+// the existing schedule target format. Existing schedules that contain only
+// CIDR strings continue to work and receive metadata when a normalized CIDR
+// matches an entry in this catalog.
+type DiscoverySubnet struct {
+	ID             string `json:"id,omitempty" yaml:"id,omitempty"`
+	CIDR           string `json:"cidr" yaml:"cidr"`
+	Name           string `json:"name,omitempty" yaml:"name,omitempty"`
+	VLAN           string `json:"vlan,omitempty" yaml:"vlan,omitempty"`
+	Location       string `json:"location,omitempty" yaml:"location,omitempty"`
+	AddressingMode string `json:"addressing_mode,omitempty" yaml:"addressing_mode,omitempty"`
+	RoutingDomain  string `json:"routing_domain,omitempty" yaml:"routing_domain,omitempty"`
+}
+
 type Discovery struct {
 	HistoryPath    string              `json:"history_path" yaml:"history_path"`
 	RetentionScans int                 `json:"retention_scans" yaml:"retention_scans"`
 	RetentionDays  int                 `json:"retention_days" yaml:"retention_days"`
+	Subnets        []DiscoverySubnet   `json:"subnets,omitempty" yaml:"subnets,omitempty"`
 	Schedules      []DiscoverySchedule `json:"schedules" yaml:"schedules"`
 }
 
+// ClassificationRule pairs a regular-expression match with field assignment
+// templates. Assignment values may reference regex captures such as ${site}.
+// Rule order is significant and overwrite defaults to false.
+type ClassificationRule struct {
+	ID          string            `json:"id" yaml:"id"`
+	Enabled     bool              `json:"enabled" yaml:"enabled"`
+	Source      string            `json:"source" yaml:"source"`
+	Pattern     string            `json:"pattern" yaml:"pattern"`
+	Assignments map[string]string `json:"assignments" yaml:"assignments"`
+	Overwrite   bool              `json:"overwrite" yaml:"overwrite"`
+	StopOnMatch bool              `json:"stop_on_match" yaml:"stop_on_match"`
+}
+
+type Classification struct {
+	Rules []ClassificationRule `json:"rules,omitempty" yaml:"rules,omitempty"`
+}
+
 type Config struct {
-	ConfigSchemaVersion  int         `json:"config_schema_version,omitempty" yaml:"config_schema_version,omitempty"`
-	PingsPerCycle        int         `json:"pings_per_cycle" yaml:"pings_per_cycle"`
-	CycleIntervalSeconds int         `json:"cycle_interval_seconds" yaml:"cycle_interval_seconds"`
-	TimeoutMs            int         `json:"timeout_ms" yaml:"timeout_ms"`
-	ParallelThreads      int         `json:"parallel_threads" yaml:"parallel_threads"`
-	OutputMode           string      `json:"output_mode" yaml:"output_mode"`
-	LogPath              string      `json:"log_path" yaml:"log_path"`
-	LogRotationSizeMB    int         `json:"log_rotation_size_mb" yaml:"log_rotation_size_mb"`
-	LogRetentionFiles    int         `json:"log_retention_files" yaml:"log_retention_files"`
-	LogRetentionDays     int         `json:"log_retention_days" yaml:"log_retention_days"`
-	LogCompressRotated   bool        `json:"log_compress_rotated" yaml:"log_compress_rotated"`
-	EmitIndividualPings  bool        `json:"emit_individual_pings" yaml:"emit_individual_pings"`
-	Ping                 Ping        `json:"ping" yaml:"ping"`
-	Health               Health      `json:"health" yaml:"health"`
-	Diagnostics          Diagnostics `json:"diagnostics" yaml:"diagnostics"`
-	Debug                Debug       `json:"debug" yaml:"debug"`
-	HEC                  HEC         `json:"hec" yaml:"hec"`
-	Metrics              Metrics     `json:"metrics" yaml:"metrics"`
-	Delivery             Delivery    `json:"delivery" yaml:"delivery"`
-	Discovery            Discovery   `json:"discovery" yaml:"discovery"`
+	ConfigSchemaVersion  int            `json:"config_schema_version,omitempty" yaml:"config_schema_version,omitempty"`
+	PingsPerCycle        int            `json:"pings_per_cycle" yaml:"pings_per_cycle"`
+	CycleIntervalSeconds int            `json:"cycle_interval_seconds" yaml:"cycle_interval_seconds"`
+	TimeoutMs            int            `json:"timeout_ms" yaml:"timeout_ms"`
+	ParallelThreads      int            `json:"parallel_threads" yaml:"parallel_threads"`
+	OutputMode           string         `json:"output_mode" yaml:"output_mode"`
+	LogPath              string         `json:"log_path" yaml:"log_path"`
+	LogRotationSizeMB    int            `json:"log_rotation_size_mb" yaml:"log_rotation_size_mb"`
+	LogRetentionFiles    int            `json:"log_retention_files" yaml:"log_retention_files"`
+	LogRetentionDays     int            `json:"log_retention_days" yaml:"log_retention_days"`
+	LogCompressRotated   bool           `json:"log_compress_rotated" yaml:"log_compress_rotated"`
+	EmitIndividualPings  bool           `json:"emit_individual_pings" yaml:"emit_individual_pings"`
+	Ping                 Ping           `json:"ping" yaml:"ping"`
+	Health               Health         `json:"health" yaml:"health"`
+	Diagnostics          Diagnostics    `json:"diagnostics" yaml:"diagnostics"`
+	Debug                Debug          `json:"debug" yaml:"debug"`
+	HEC                  HEC            `json:"hec" yaml:"hec"`
+	Metrics              Metrics        `json:"metrics" yaml:"metrics"`
+	Delivery             Delivery       `json:"delivery" yaml:"delivery"`
+	Discovery            Discovery      `json:"discovery" yaml:"discovery"`
+	Classification       Classification `json:"classification,omitempty" yaml:"classification,omitempty"`
 }
 
 func Defaults(root string) Config {
@@ -293,6 +326,9 @@ func loadConfigPath(ctx context.Context, path string, root string) (Config, stri
 		return Config{}, "", fmt.Errorf("unsupported config format: %s", filepath.Ext(path))
 	}
 	if err != nil {
+		return Config{}, "", fmt.Errorf("load %s: %w", path, err)
+	}
+	if err := ValidateStructuredEnrichment(cfg); err != nil {
 		return Config{}, "", fmt.Errorf("load %s: %w", path, err)
 	}
 	return resolvePaths(cfg, filepath.Dir(path), root), source, nil
@@ -503,7 +539,11 @@ func applyPSD1Map(cfg *Config, raw map[string]interface{}) {
 		cfg.Discovery.HistoryPath = getString(m, "history_path", cfg.Discovery.HistoryPath)
 		cfg.Discovery.RetentionScans = getInt(m, "retention_scans", cfg.Discovery.RetentionScans)
 		cfg.Discovery.RetentionDays = getInt(m, "retention_days", cfg.Discovery.RetentionDays)
+		cfg.Discovery.Subnets = getDiscoverySubnets(m, "subnets")
 		cfg.Discovery.Schedules = getDiscoverySchedules(m, "schedules")
+	}
+	if m, ok := getMap(raw, "classification"); ok {
+		cfg.Classification.Rules = getClassificationRules(m, "rules")
 	}
 }
 
@@ -583,8 +623,14 @@ func normalize(cfg Config) Config {
 	if cfg.Discovery.RetentionDays < 0 {
 		cfg.Discovery.RetentionDays = 0
 	}
+	for i := range cfg.Discovery.Subnets {
+		normalizeDiscoverySubnet(&cfg.Discovery.Subnets[i])
+	}
 	for i := range cfg.Discovery.Schedules {
 		normalizeDiscoverySchedule(&cfg.Discovery.Schedules[i])
+	}
+	for i := range cfg.Classification.Rules {
+		normalizeClassificationRule(&cfg.Classification.Rules[i])
 	}
 	return cfg
 }
@@ -692,6 +738,75 @@ func getDiscoverySchedules(m map[string]interface{}, key string) []DiscoverySche
 	return schedules
 }
 
+func getDiscoverySubnets(m map[string]interface{}, key string) []DiscoverySubnet {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return nil
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	subnets := make([]DiscoverySubnet, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		subnet := DiscoverySubnet{
+			ID:             getString(raw, "id", ""),
+			CIDR:           getString(raw, "cidr", ""),
+			Name:           getString(raw, "name", ""),
+			VLAN:           getString(raw, "vlan", ""),
+			Location:       getString(raw, "location", ""),
+			AddressingMode: getString(raw, "addressing_mode", ""),
+			RoutingDomain:  getString(raw, "routing_domain", ""),
+		}
+		normalizeDiscoverySubnet(&subnet)
+		subnets = append(subnets, subnet)
+	}
+	return subnets
+}
+
+func getClassificationRules(m map[string]interface{}, key string) []ClassificationRule {
+	value, ok := m[key]
+	if !ok || value == nil {
+		return nil
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	rules := make([]ClassificationRule, 0, len(items))
+	for _, item := range items {
+		raw, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		assignments := make(map[string]string)
+		if assignmentMap, ok := getMap(raw, "assignments"); ok {
+			for key, value := range assignmentMap {
+				assignments[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(fmt.Sprint(value))
+			}
+		}
+		rule := ClassificationRule{
+			ID: getString(raw, "id", ""), Enabled: getBool(raw, "enabled", false),
+			Source: getString(raw, "source", ""), Pattern: getString(raw, "pattern", ""),
+			Assignments: assignments, Overwrite: getBool(raw, "overwrite", false),
+			StopOnMatch: getBool(raw, "stop_on_match", false),
+		}
+		normalizeClassificationRule(&rule)
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
 func getStringSlice(m map[string]interface{}, key string) []string {
 	value, ok := m[key]
 	if !ok || value == nil {
@@ -747,6 +862,36 @@ func normalizeDiscoverySchedule(schedule *DiscoverySchedule) {
 	for i := range schedule.Targets {
 		schedule.Targets[i] = strings.TrimSpace(schedule.Targets[i])
 	}
+}
+
+func normalizeDiscoverySubnet(subnet *DiscoverySubnet) {
+	subnet.ID = strings.TrimSpace(subnet.ID)
+	subnet.CIDR = strings.TrimSpace(subnet.CIDR)
+	subnet.Name = strings.TrimSpace(subnet.Name)
+	subnet.VLAN = strings.TrimSpace(subnet.VLAN)
+	subnet.Location = strings.TrimSpace(subnet.Location)
+	subnet.AddressingMode = strings.ToLower(strings.TrimSpace(subnet.AddressingMode))
+	if subnet.AddressingMode == "" {
+		subnet.AddressingMode = "static"
+	}
+	subnet.RoutingDomain = strings.TrimSpace(subnet.RoutingDomain)
+}
+
+func normalizeClassificationRule(rule *ClassificationRule) {
+	rule.ID = strings.TrimSpace(rule.ID)
+	rule.Source = strings.ToLower(strings.TrimSpace(rule.Source))
+	if rule.Source == "" {
+		rule.Source = "either"
+	}
+	rule.Pattern = strings.TrimSpace(rule.Pattern)
+	if rule.Assignments == nil {
+		rule.Assignments = make(map[string]string)
+	}
+	clean := make(map[string]string, len(rule.Assignments))
+	for key, value := range rule.Assignments {
+		clean[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+	}
+	rule.Assignments = clean
 }
 
 func LoadEndpoints(path string) ([]models.Endpoint, error) {
@@ -822,6 +967,14 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 		if err != nil {
 			return nil, fmt.Errorf("endpoints CSV record %d: invalid monitoring_enabled value: %w", record, err)
 		}
+		alertingEnabled, err := parseCSVBoolDefault(get(row, "alerting_enabled"), true)
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: invalid alerting_enabled value: %w", record, err)
+		}
+		dynamicAddress, err := parseCSVBoolDefault(get(row, "dynamic_address"), false)
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: invalid dynamic_address value: %w", record, err)
+		}
 		dnsForwardConfirmed, err := parseCSVBoolDefault(get(row, "dns_forward_confirmed"), false)
 		if err != nil {
 			return nil, fmt.Errorf("endpoints CSV record %d: invalid dns_forward_confirmed value: %w", record, err)
@@ -835,26 +988,41 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 			discoveryLatency = &parsed
 		}
 		ep := models.Endpoint{
-			EndpointID:          models.StableEndpointID(get(row, "endpoint_id"), ip),
-			IP:                  ip,
-			Hostname:            hn,
-			FQDN:                get(row, "fqdn"),
-			Dev:                 dev,
-			MonitoringEnabled:   models.Bool(monitoringEnabled),
-			MaintenanceUntil:    get(row, "maintenance_until"),
-			MaintenanceReason:   get(row, "maintenance_reason"),
-			DNSStatus:           get(row, "dns_status"),
-			DNSForwardConfirmed: dnsForwardConfirmed,
-			DiscoveredAt:        get(row, "discovered_at"),
-			DiscoveryScanID:     get(row, "discovery_scan_id"),
-			DiscoverySource:     get(row, "discovery_source"),
-			DiscoveryLatencyMs:  discoveryLatency,
-			Group:               firstNonEmpty(get(row, "group"), "default"),
-			Description:         get(row, "description"),
-			EntityType:          get(row, "entitytype"),
-			Device:              get(row, "device"),
-			Vendor:              get(row, "vendor"),
-			AdditionalNotes:     get(row, "additional_notes"),
+			EndpointID:           models.StableEndpointID(get(row, "endpoint_id"), ip),
+			AssetID:              get(row, "asset_id"),
+			IP:                   ip,
+			Hostname:             hn,
+			FQDN:                 get(row, "fqdn"),
+			Dev:                  dev,
+			DeviceMode:           strings.ToLower(get(row, "device_mode")),
+			MonitoringEnabled:    models.Bool(monitoringEnabled),
+			AlertingEnabled:      models.Bool(alertingEnabled),
+			AlertingReason:       get(row, "alerting_reason"),
+			MaintenanceUntil:     get(row, "maintenance_until"),
+			MaintenanceReason:    get(row, "maintenance_reason"),
+			DynamicAddress:       dynamicAddress,
+			SubnetID:             get(row, "subnet_id"),
+			SubnetName:           get(row, "subnet_name"),
+			SubnetVLAN:           get(row, "subnet_vlan"),
+			SubnetLocation:       get(row, "subnet_location"),
+			AddressingMode:       strings.ToLower(get(row, "addressing_mode")),
+			RoutingDomain:        get(row, "routing_domain"),
+			ClassificationSource: get(row, "classification_source"),
+			DiscoveryReviewState: get(row, "discovery_review_state"),
+			DiscoveryReviewedAt:  get(row, "discovery_reviewed_at"),
+			DiscoveryReviewNote:  get(row, "discovery_review_note"),
+			DNSStatus:            get(row, "dns_status"),
+			DNSForwardConfirmed:  dnsForwardConfirmed,
+			DiscoveredAt:         get(row, "discovered_at"),
+			DiscoveryScanID:      get(row, "discovery_scan_id"),
+			DiscoverySource:      get(row, "discovery_source"),
+			DiscoveryLatencyMs:   discoveryLatency,
+			Group:                firstNonEmpty(get(row, "group"), "default"),
+			Description:          get(row, "description"),
+			EntityType:           get(row, "entitytype"),
+			Device:               get(row, "device"),
+			Vendor:               get(row, "vendor"),
+			AdditionalNotes:      get(row, "additional_notes"),
 		}
 		eps = append(eps, ep)
 	}
@@ -871,8 +1039,8 @@ func writeEndpointsTemplate(path string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	content := "ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,dev,monitoring_enabled,maintenance_until,maintenance_reason\n" +
-		"127.0.0.1,localhost,,default,loopback,,,,,,false,true,,\n"
+	content := "ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,asset_id,device_mode,dev,monitoring_enabled,alerting_enabled,alerting_reason,maintenance_until,maintenance_reason,dynamic_address,classification_source,discovery_review_state,discovery_reviewed_at,discovery_review_note,subnet_id,subnet_name,subnet_vlan,subnet_location,addressing_mode,routing_domain\n" +
+		"127.0.0.1,localhost,,default,loopback,,,,,,,production,false,true,true,,,,false,,,,,,,,,,\n"
 	return os.WriteFile(path, []byte(content), 0o644)
 }
 

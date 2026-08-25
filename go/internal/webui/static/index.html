@@ -89,12 +89,12 @@
             <article class="summary-card accent-teal">
               <p class="summary-label">Production</p>
               <p class="summary-value" id="summary-production">--</p>
-              <p class="summary-note">Endpoints included in production summary stats</p>
+              <p class="summary-note">Endpoints in explicit production mode</p>
             </article>
             <article class="summary-card accent-amber">
-              <p class="summary-label">Dev Devices</p>
+              <p class="summary-label">Maintenance</p>
               <p class="summary-value" id="summary-dev">--</p>
-              <p class="summary-note">Endpoints marked with the trailing dev flag</p>
+              <p class="summary-note">Explicitly suppressed maintenance endpoints</p>
             </article>
             <article class="summary-card accent-slate">
               <p class="summary-label">Groups</p>
@@ -246,7 +246,9 @@
                 <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
                   <button class="segment active" type="button" role="tab" aria-selected="true" data-filter="all">All</button>
                   <button class="segment" type="button" role="tab" aria-selected="false" data-filter="production">Production</button>
-                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="dev">Dev</button>
+                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="maintenance">Maintenance</button>
+                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="legacy_dev">Legacy Dev</button>
+                  <button class="segment" type="button" role="tab" aria-selected="false" data-filter="alerting_disabled">Alerting Disabled</button>
                 </div>
               </div>
 
@@ -254,8 +256,10 @@
                 <button class="secondary-button" id="add-endpoint-button" type="button">Add Endpoint</button>
                 <button class="secondary-button" id="select-all-endpoints-button" type="button">Select All</button>
                 <button class="secondary-button" id="deselect-all-endpoints-button" type="button">Deselect All</button>
-                <button class="secondary-button" id="mark-selected-dev-button" type="button">Mark Selected Dev</button>
+                <button class="secondary-button" id="mark-selected-maintenance-button" type="button">Mark Maintenance</button>
                 <button class="secondary-button" id="mark-selected-production-button" type="button">Mark Selected Prod</button>
+                <button class="secondary-button" id="disable-selected-alerting-button" type="button">Disable Alerting</button>
+                <button class="secondary-button" id="enable-selected-alerting-button" type="button">Enable Alerting</button>
                 <button class="secondary-button" id="pause-selected-button" type="button">Pause Monitoring</button>
                 <button class="secondary-button" id="resume-selected-button" type="button">Resume Monitoring</button>
                 <button class="danger-button" id="delete-endpoint-button" type="button">Delete Selected</button>
@@ -291,13 +295,14 @@
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="entitytype">Type</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="device">Device</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="vendor">Vendor</button></th>
-                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="dev">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="device_mode">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="alerting_enabled">Alerting</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="endpoint" data-sort-key="monitoring_enabled">Monitoring</button></th>
                     </tr>
                   </thead>
                   <tbody id="endpoint-rows">
                     <tr>
-                      <td colspan="10" class="empty-cell">Loading endpoints...</td>
+                      <td colspan="11" class="empty-cell">Loading endpoints...</td>
                     </tr>
                   </tbody>
                 </table>
@@ -344,6 +349,18 @@
                     <span>Vendor</span>
                     <input id="endpoint-vendor" class="text-input" type="text" placeholder="Cisco">
                   </label>
+                  <label class="field-group">
+                    <span>Stable Asset ID</span>
+                    <input id="endpoint-asset-id" class="text-input" type="text" placeholder="CMDB-001234">
+                  </label>
+                  <label class="field-group">
+                    <span>Device Mode</span>
+                    <select id="endpoint-device-mode" class="text-input">
+                      <option value="production">Production — probe normally</option>
+                      <option value="maintenance">Maintenance — do not probe</option>
+                      <option value="legacy_dev">Legacy Dev/Test — still probe</option>
+                    </select>
+                  </label>
                   <label class="field-group field-span-2">
                     <span>Description</span>
                     <input id="endpoint-description" class="text-input" type="text" placeholder="Primary core switch">
@@ -360,17 +377,34 @@
                     <span>Maintenance Reason</span>
                     <input id="endpoint-maintenance-reason" class="text-input" type="text" placeholder="Approved change window">
                   </label>
+                  <label class="field-group field-span-2">
+                    <span>Alerting Disabled Reason</span>
+                    <input id="endpoint-alerting-reason" class="text-input" type="text" placeholder="Covered by another alerting system">
+                  </label>
+                  <label class="field-group field-span-2">
+                    <span>Classification Source</span>
+                    <input id="endpoint-classification-source" class="text-input" type="text" readonly placeholder="Manual or rule provenance appears here">
+                  </label>
                 </div>
 
                 <label class="checkbox-row">
-                  <input id="endpoint-dev" type="checkbox">
-                  <span>Treat this endpoint as development or test and exclude it from production summary rollups.</span>
+                  <input id="endpoint-alerting-enabled" type="checkbox">
+                  <span>Allow this endpoint's measurements to participate in alert searches.</span>
+                </label>
+                <label class="checkbox-row">
+                  <input id="endpoint-dynamic-address" type="checkbox">
+                  <span>This address is dynamically assigned. Use a stable Asset ID or confirmed FQDN for asset-change tracking.</span>
                 </label>
                 <label class="checkbox-row">
                   <input id="endpoint-monitoring-enabled" type="checkbox">
                   <span>Probe this endpoint. Clear this independently of dev/prod classification to suppress monitoring.</span>
                 </label>
               </form>
+              <div class="button-row">
+                <button class="secondary-button" id="preview-endpoint-classification-button" type="button">Preview Naming Rules</button>
+                <button class="secondary-button" id="apply-endpoint-classification-button" type="button">Apply Naming Rules</button>
+              </div>
+              <div id="endpoint-classification-preview" class="message-banner hidden" role="status" aria-live="polite"></div>
             </article>
           </div>
 
@@ -423,14 +457,43 @@
                 <button class="danger-button" id="cancel-discovery-button" type="button" disabled>Cancel Discovery</button>
                 <button class="secondary-button" id="select-all-discovery-button" type="button">Select All</button>
                 <button class="secondary-button" id="deselect-all-discovery-button" type="button">Deselect All</button>
-                <button class="secondary-button" id="mark-discovery-dev-button" type="button">Mark Selected Dev</button>
+                <button class="secondary-button" id="mark-discovery-maintenance-button" type="button">Mark Maintenance</button>
                 <button class="secondary-button" id="mark-discovery-production-button" type="button">Mark Selected Prod</button>
+                <button class="secondary-button" id="disable-discovery-alerting-button" type="button">Disable Alerting</button>
+                <button class="secondary-button" id="enable-discovery-alerting-button" type="button">Enable Alerting</button>
+                <button class="secondary-button" id="mark-discovery-dynamic-button" type="button">Mark DHCP/Dynamic</button>
+                <button class="secondary-button" id="mark-discovery-static-button" type="button">Mark Static</button>
+                <button class="secondary-button" id="defer-discovery-selected-button" type="button">Defer Review</button>
+                <button class="secondary-button" id="ignore-discovery-selected-button" type="button">Ignore Selected</button>
+                <button class="secondary-button" id="reset-discovery-review-button" type="button">Return to Needs Review</button>
                 <button class="secondary-button" id="export-discovery-all-button" type="button">Export All CSV</button>
                 <button class="secondary-button" id="export-discovery-selected-button" type="button">Export Selected CSV</button>
                 <button class="secondary-button" id="add-discovery-selected-button" type="button">Add Selected to Device List</button>
               </div>
 
               <p class="message-banner discovery-preflight" id="discovery-preflight" role="status">A /24 scan checks up to 254 host addresses.</p>
+
+              <article class="panel section-stack bulk-review-panel">
+                <div class="panel-header compact-panel-header">
+                  <div>
+                    <h3 class="panel-title">Bulk Discovery Review</h3>
+                    <p class="summary-note">Fill one or more values, then apply them only to selected discovery rows.</p>
+                  </div>
+                </div>
+                <div class="field-grid">
+                  <label class="field-group"><span>Group</span><input id="discovery-bulk-group" class="text-input" type="text"></label>
+                  <label class="field-group"><span>Entity Type</span><input id="discovery-bulk-entitytype" class="text-input" type="text"></label>
+                  <label class="field-group"><span>Device</span><input id="discovery-bulk-device" class="text-input" type="text"></label>
+                  <label class="field-group"><span>Vendor</span><input id="discovery-bulk-vendor" class="text-input" type="text"></label>
+                  <label class="field-group"><span>Review Note</span><input id="discovery-review-note" class="text-input" type="text" maxlength="2000" placeholder="Optional reason for deferring or ignoring"></label>
+                </div>
+                <div class="button-row">
+                  <button class="secondary-button" id="apply-discovery-bulk-fields-button" type="button">Apply Common Fields</button>
+                  <button class="secondary-button" id="preview-discovery-classification-button" type="button">Preview Naming Rules</button>
+                  <button class="secondary-button" id="apply-discovery-classification-button" type="button">Apply Naming Rules</button>
+                </div>
+                <div id="discovery-classification-preview" class="message-banner hidden" role="status" aria-live="polite"></div>
+              </article>
 
               <div class="table-meta-row">
                 <span class="table-status" id="discovery-selection-status">0 selected</span>
@@ -461,6 +524,15 @@
                 </div>
               </div>
 
+              <div class="segmented-control" role="tablist" aria-label="Discovery review filter">
+                <button class="segment active" type="button" role="tab" aria-selected="true" data-discovery-review-filter="needs_review">Needs Review</button>
+                <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="staged">Staged</button>
+                <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="approved">Approved</button>
+                <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="deferred">Deferred</button>
+                <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="ignored">Ignored</button>
+                <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="all">All</button>
+              </div>
+
               <div class="table-meta-row">
                 <span class="table-status" id="discovery-table-status">0 results</span>
                 <label class="inline-field">
@@ -487,18 +559,22 @@
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="ip">IP</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="hostname">Hostname</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="fqdn">FQDN</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="asset_id">Asset ID</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="discovery_review_state">Review</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="group">Group</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="entitytype">Type</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="device">Device</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="vendor">Vendor</button></th>
-                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dev">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="device_mode">Mode</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="alerting_enabled">Alerting</button></th>
+                      <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dynamic_address">Addressing</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="dns_status">DNS Evidence</button></th>
                       <th><button class="table-sort" type="button" data-table-kind="discovery" data-sort-key="discovery_latency_ms">Discovery RTT</button></th>
                     </tr>
                   </thead>
                   <tbody id="discovery-rows">
                     <tr>
-                      <td colspan="11" class="empty-cell">Discovery results will appear here after a run.</td>
+                      <td colspan="15" class="empty-cell">Discovery results will appear here after a run.</td>
                     </tr>
                   </tbody>
                 </table>
@@ -716,6 +792,44 @@
                       <input id="cfg-discovery-concurrency" class="text-input" type="number" min="1" value="25">
                     </label>
                   </div>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Discovery Subnet Catalog</h3>
+                      <p class="summary-note">Attach CMDB context and static/DHCP identity behavior to scheduled and manual scan networks.</p>
+                    </div>
+                    <button class="secondary-button" id="add-discovery-subnet-button" type="button">Add Subnet</button>
+                  </div>
+                  <div id="discovery-subnet-rows" class="repeatable-editor"></div>
+                  <p class="field-help">The most-specific matching CIDR supplies subnet name, VLAN, location, routing domain, and addressing mode.</p>
+                </article>
+
+                <article class="panel settings-card section-stack">
+                  <div class="panel-header compact-panel-header">
+                    <div>
+                      <h3 class="panel-title">Naming Convention Rules</h3>
+                      <p class="summary-note">Build ordered regular-expression match/assignment pairs for Group, Entity Type, Device, and Vendor.</p>
+                    </div>
+                    <button class="secondary-button" id="add-classification-rule-button" type="button">Add Rule Pair</button>
+                  </div>
+                  <div id="classification-rule-rows" class="repeatable-editor"></div>
+                  <div class="field-grid">
+                    <label class="field-group">
+                      <span>Preview Hostname</span>
+                      <input id="classification-preview-hostname" class="text-input" type="text" placeholder="nyc-sw-cisco-01">
+                    </label>
+                    <label class="field-group">
+                      <span>Preview FQDN</span>
+                      <input id="classification-preview-fqdn" class="text-input" type="text" placeholder="nyc-sw-cisco-01.example.com">
+                    </label>
+                  </div>
+                  <div class="button-row">
+                    <button class="secondary-button" id="preview-classification-sample-button" type="button">Test Rule Pairs</button>
+                  </div>
+                  <div id="classification-preview-result" class="log-surface">Enter a sample name to see which rules match and exactly which fields would change.</div>
+                  <p class="field-help">Go uses RE2 regular expressions: execution is bounded and backreferences/lookaround are intentionally unsupported. Named captures such as <code>(?P&lt;site&gt;...)</code> can be used in assignments as <code>${site}</code>.</p>
                 </article>
 
                 <article class="panel settings-card section-stack">
@@ -969,6 +1083,7 @@
   </div>
 
   <script src="/discovery_csv.js?v={{ASSET_VERSION}}"></script>
+  <script src="/review_workflow.js?v={{ASSET_VERSION}}"></script>
   <script src="/app.js?v={{ASSET_VERSION}}"></script>
 </body>
 </html>

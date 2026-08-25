@@ -77,6 +77,7 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 		"metric_name:ping.pings_sent":          sum.PingsSent,
 		"metric_name:ping.pings_successful":    sum.PingsSuccessful,
 		"metric_name:ping.measurement_valid":   boolMetric(sum.MeasurementValid),
+		"metric_name:ping.alerting_enabled":    boolMetric(sum.AlertingEnabled),
 		"metric_name:ping.schema_version":      sum.SchemaVersion,
 		"metric_name:ping.state_code":          stateMetric(sum.State),
 		"metric_name:ping.observation_code":    observationMetric(sum.ObservationStatus),
@@ -86,11 +87,15 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 		"collector_id": sum.CollectorID, "endpoint_id": sum.EndpointID,
 		"state": sum.State, "observation_status": sum.ObservationStatus,
 		"state_reason": sum.StateReason, "probe_backend": sum.ProbeBackend, "record_type": sum.RecordType,
-		"dev": sum.Dev, "group": sum.Group, "description": sum.Description,
+		"dev": sum.Dev, "device_mode": sum.DeviceMode, "group": sum.Group, "description": sum.Description,
 		"entitytype": sum.EntityType, "device": sum.Device, "vendor": sum.Vendor,
 		"additional_notes": sum.Notes, "fqdn": sum.FQDN,
-		"monitoring_enabled": sum.MonitoringEnabled, "maintenance_until": sum.MaintenanceUntil,
-		"maintenance_reason": sum.MaintenanceReason,
+		"monitoring_enabled": sum.MonitoringEnabled, "alerting_enabled": sum.AlertingEnabled,
+		"alerting_reason": sum.AlertingReason, "asset_id": sum.AssetID, "dynamic_address": sum.DynamicAddress,
+		"subnet_id": sum.SubnetID, "subnet_name": sum.SubnetName, "subnet_vlan": sum.SubnetVLAN,
+		"subnet_location": sum.SubnetLocation, "addressing_mode": sum.AddressingMode, "routing_domain": sum.RoutingDomain,
+		"classification_source": sum.ClassificationSource,
+		"maintenance_until":     sum.MaintenanceUntil, "maintenance_reason": sum.MaintenanceReason,
 	}
 	if sum.PacketLossPct != nil {
 		fields["metric_name:ping.packet_loss_pct"] = *sum.PacketLossPct

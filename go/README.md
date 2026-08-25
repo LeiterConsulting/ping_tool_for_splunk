@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.10.0 is the current Go runtime. It adds bounded local logging, discovery history and scheduling, durable Splunk discovery evidence, FQDN inventory evidence, explicit monitoring policy, and an opt-in versioned configuration upgrade path.
+Ping Monitor v5.11.0 is the current Go runtime. It adds durable discovery review, DHCP-safe asset reconciliation, bounded local logging, discovery history and scheduling, durable Splunk evidence, explicit monitoring and alert policy, and an opt-in versioned configuration upgrade path.
 
 ## Current Go Release
 
-- Version: `v5.10.0`
+- Version: `v5.11.0`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.10.0.md](../RELEASE_NOTES_v5.10.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.11.0.md](../RELEASE_NOTES_v5.11.0.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -124,7 +124,8 @@ It provides:
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
 - live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status
 - config editing against the active config file
-- cancellable discovery with host-count preflight, FQDN evidence, CSV export, indexed scan history/deltas, and staged import workflows
+- cancellable discovery with host-count preflight, FQDN evidence, CSV export, indexed scan history/deltas, a durable Needs Review/Deferred/Ignored registry, and explicitly staged import workflows
+- DHCP-safe identity reconciliation against saved endpoints and review records; unique Asset ID is preferred, verified FQDN can correlate an address change, and unidentified dynamic observations remain unresolved instead of being counted as new assets
 - Discovery Operations with schedule due/error state and explicit All/New/Missing historical review
 - timezone-aware weekly discovery schedules that remain review-only
 - monitoring pause/resume and timed maintenance controls
@@ -144,6 +145,7 @@ The UI serves these key routes:
 - `POST /api/runtime/restart`
 - `POST /api/discovery/run`
 - `GET /api/discovery/history` and `GET /api/discovery/history?scan_id=<id>`
+- `POST /api/discovery/reviews`
 - `POST /api/output/test`
 
 Operational notes:
@@ -192,7 +194,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.10.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.0`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

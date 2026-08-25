@@ -45,10 +45,19 @@ func TestCurrentJSONRoundTripPreservesEffectiveConfiguration(t *testing.T) {
 	cfg.LogPath = "./logs/current.log"
 	cfg.Discovery.RetentionScans = 250
 	cfg.Discovery.RetentionDays = 180
+	cfg.Discovery.Subnets = []DiscoverySubnet{{
+		ID: "hq-users", CIDR: "10.20.30.0/24", Name: "HQ Users", VLAN: "230",
+		Location: "Main Office", AddressingMode: "dhcp", RoutingDomain: "corp",
+	}}
 	cfg.Discovery.Schedules = []DiscoverySchedule{{
 		ID: "weekly-core", Enabled: true, Targets: []string{"10.10.0.0/16"},
 		Frequency: "weekly", Day: "sunday", Time: "02:00", Timezone: "UTC",
 		TimeoutMs: 750, Concurrency: 20, ImportPolicy: "review",
+	}}
+	cfg.Classification.Rules = []ClassificationRule{{
+		ID: "server-name", Enabled: true, Source: "hostname", Pattern: `^(?P<site>[a-z]{3})-srv-`,
+		Assignments: map[string]string{"group": "${site} servers", "entitytype": "server"},
+		StopOnMatch: true,
 	}}
 	if _, err := SaveConfig(context.Background(), path, root, cfg); err != nil {
 		t.Fatal(err)
@@ -80,10 +89,17 @@ func TestPSD1RoundTripPreservesDiscoverySchedulesAndRotationPolicy(t *testing.T)
 	cfg.LogCompressRotated = true
 	cfg.Discovery.RetentionScans = 100
 	cfg.Discovery.RetentionDays = 90
+	cfg.Discovery.Subnets = []DiscoverySubnet{{
+		ID: "lab", CIDR: "10.0.0.0/24", Name: "Lab", VLAN: "100", Location: "Test Lab", AddressingMode: "static",
+	}}
 	cfg.Discovery.Schedules = []DiscoverySchedule{{
 		ID: "weekly-lab", Enabled: true, Targets: []string{"10.0.0.0/24", "10.0.1.0/24"},
 		Frequency: "weekly", Day: "monday", Time: "03:15", Timezone: "UTC",
 		TimeoutMs: 500, Concurrency: 15, ImportPolicy: "review",
+	}}
+	cfg.Classification.Rules = []ClassificationRule{{
+		ID: "router", Enabled: true, Source: "either", Pattern: `(?i)^rtr-`,
+		Assignments: map[string]string{"entitytype": "network", "device": "router", "vendor": "Cisco"},
 	}}
 	if _, err := SaveConfig(context.Background(), path, root, cfg); err != nil {
 		t.Fatal(err)

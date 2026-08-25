@@ -74,19 +74,24 @@ func LoadEditable(ctx context.Context, preferredPath string, root string) (Confi
 		return Config{}, SourceInfo{}, err
 	}
 
+	var cfg Config
 	switch info.Format {
 	case "psd1":
-		cfg, err := loadFromPSD1(ctx, info.Path, root)
-		return cfg, info, err
+		cfg, err = loadFromPSD1(ctx, info.Path, root)
 	case "yaml", "yml":
-		cfg, err := loadFromYAML(info.Path, root)
-		return cfg, info, err
+		cfg, err = loadFromYAML(info.Path, root)
 	case "json":
-		cfg, err := loadFromJSON(info.Path, root)
-		return cfg, info, err
+		cfg, err = loadFromJSON(info.Path, root)
 	default:
 		return Config{}, SourceInfo{}, fmt.Errorf("unsupported config format: %s", info.Format)
 	}
+	if err != nil {
+		return Config{}, SourceInfo{}, err
+	}
+	if err := ValidateStructuredEnrichment(cfg); err != nil {
+		return Config{}, SourceInfo{}, err
+	}
+	return cfg, info, nil
 }
 
 func SaveConfig(ctx context.Context, preferredPath string, root string, cfg Config) (SourceInfo, error) {
@@ -105,6 +110,9 @@ func SaveConfig(ctx context.Context, preferredPath string, root string, cfg Conf
 	}
 
 	cfg = normalize(cfg)
+	if err := ValidateStructuredEnrichment(cfg); err != nil {
+		return SourceInfo{}, err
+	}
 	var writeErr error
 	switch info.Format {
 	case "psd1":
@@ -131,7 +139,10 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 	writer := csv.NewWriter(&buf)
 	if err := writer.Write([]string{
 		"ip", "hostname", "fqdn", "group", "description", "entitytype", "device", "vendor",
-		"additional_notes", "endpoint_id", "dev", "monitoring_enabled", "maintenance_until", "maintenance_reason",
+		"additional_notes", "endpoint_id", "asset_id", "device_mode", "dev", "monitoring_enabled",
+		"alerting_enabled", "alerting_reason", "maintenance_until", "maintenance_reason", "dynamic_address", "classification_source",
+		"discovery_review_state", "discovery_reviewed_at", "discovery_review_note",
+		"subnet_id", "subnet_name", "subnet_vlan", "subnet_location", "addressing_mode", "routing_domain",
 		"dns_status", "dns_forward_confirmed", "discovered_at", "discovery_scan_id", "discovery_source", "discovery_latency_ms",
 	}); err != nil {
 		return err
@@ -152,10 +163,25 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 			strings.TrimSpace(endpoint.Vendor),
 			strings.TrimSpace(endpoint.AdditionalNotes),
 			models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
+			strings.TrimSpace(endpoint.AssetID),
+			strings.ToLower(strings.TrimSpace(endpoint.DeviceMode)),
 			strconv.FormatBool(endpoint.Dev),
 			strconv.FormatBool(endpoint.IsMonitoringEnabled()),
+			strconv.FormatBool(endpoint.IsAlertingEnabled()),
+			strings.TrimSpace(endpoint.AlertingReason),
 			strings.TrimSpace(endpoint.MaintenanceUntil),
 			strings.TrimSpace(endpoint.MaintenanceReason),
+			strconv.FormatBool(endpoint.DynamicAddress),
+			strings.TrimSpace(endpoint.ClassificationSource),
+			strings.TrimSpace(endpoint.DiscoveryReviewState),
+			strings.TrimSpace(endpoint.DiscoveryReviewedAt),
+			strings.TrimSpace(endpoint.DiscoveryReviewNote),
+			strings.TrimSpace(endpoint.SubnetID),
+			strings.TrimSpace(endpoint.SubnetName),
+			strings.TrimSpace(endpoint.SubnetVLAN),
+			strings.TrimSpace(endpoint.SubnetLocation),
+			strings.TrimSpace(endpoint.AddressingMode),
+			strings.TrimSpace(endpoint.RoutingDomain),
 			strings.TrimSpace(endpoint.DNSStatus),
 			strconv.FormatBool(endpoint.DNSForwardConfirmed),
 			strings.TrimSpace(endpoint.DiscoveredAt),
@@ -184,6 +210,7 @@ func formatOptionalFloat(value *float64) string {
 func ValidateEndpoints(endpoints []models.Endpoint) error {
 	seenTargets := make(map[string]int, len(endpoints))
 	seenIDs := make(map[string]int, len(endpoints))
+	seenAssetIDs := make(map[string]int, len(endpoints))
 	for index, endpoint := range endpoints {
 		target := strings.TrimSpace(endpoint.IP)
 		if target == "" {
@@ -213,6 +240,34 @@ func ValidateEndpoints(endpoints []models.Endpoint) error {
 		if maintenanceUntil := strings.TrimSpace(endpoint.MaintenanceUntil); maintenanceUntil != "" {
 			if _, err := time.Parse(time.RFC3339, maintenanceUntil); err != nil {
 				return fmt.Errorf("endpoint %d has invalid maintenance_until %q; use RFC3339 such as 2026-07-27T22:00:00Z", index+1, maintenanceUntil)
+			}
+		}
+		mode := strings.ToLower(strings.TrimSpace(endpoint.DeviceMode))
+		switch mode {
+		case "", models.DeviceModeProduction, models.DeviceModeMaintenance, models.DeviceModeLegacyDev:
+		default:
+			return fmt.Errorf("endpoint %d has invalid device_mode %q; use production, maintenance, or legacy_dev", index+1, endpoint.DeviceMode)
+		}
+		assetID := strings.TrimSpace(endpoint.AssetID)
+		if len(assetID) > 256 || strings.ContainsAny(assetID, "\r\n\t") {
+			return fmt.Errorf("endpoint %d has invalid asset_id %q", index+1, endpoint.AssetID)
+		}
+		if assetID != "" {
+			assetKey := strings.ToLower(assetID)
+			if first, exists := seenAssetIDs[assetKey]; exists {
+				return fmt.Errorf("endpoint %d duplicates asset_id %q from endpoint %d; stable asset identities must be unique", index+1, assetID, first)
+			}
+			seenAssetIDs[assetKey] = index + 1
+		}
+		reviewState := strings.ToLower(strings.TrimSpace(endpoint.DiscoveryReviewState))
+		switch reviewState {
+		case "", models.DiscoveryReviewNeedsReview, models.DiscoveryReviewApproved, models.DiscoveryReviewDeferred, models.DiscoveryReviewIgnored:
+		default:
+			return fmt.Errorf("endpoint %d has invalid discovery_review_state %q", index+1, endpoint.DiscoveryReviewState)
+		}
+		if reviewedAt := strings.TrimSpace(endpoint.DiscoveryReviewedAt); reviewedAt != "" {
+			if _, err := time.Parse(time.RFC3339, reviewedAt); err != nil {
+				return fmt.Errorf("endpoint %d has invalid discovery_reviewed_at %q; use RFC3339", index+1, reviewedAt)
 			}
 		}
 

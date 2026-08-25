@@ -2,11 +2,17 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
-## Version 3.1.0
+## Version 3.2.0
+
+### What's New in v3.2.0
+
+- Packaged Down, packet-loss, and latency alerts now require the collector's `ping.alerting_enabled` metric. Historical series where the metric is absent remain eligible through an explicit compatibility default.
+- CMDB and Discovery Inventory normalization carries Production/Maintenance/Legacy Dev mode, alert eligibility and reason, Asset ID, DHCP/dynamic identity, durable discovery review state/note/time, naming-rule provenance, and subnet name/VLAN/location/routing-domain fields.
+- Unresolved DHCP observations remain visible evidence but are not presented as durable New or Missing assets.
 
 ### What's New in v3.1.0
 
-- **Discovery Inventory**: Adds a CMDB-oriented view of v5.10 subnet-discovery evidence with first/last observed times, latest applicable evidence, target network, DNS/FQDN confidence, discovery latency, and scan provenance.
+- **Discovery Inventory**: Adds a CMDB-oriented view of subnet-discovery evidence with first/last observed times, latest applicable evidence, review-state filtering, target network, DNS/FQDN confidence, discovery latency, and scan provenance. Historical events without review fields are labeled `legacy_untracked` rather than being silently treated as approved.
 - **Truthful absence semantics**: A missing address is labeled “Not observed in latest applicable scan,” never Down, removed, or decommissioned.
 - **Auditable scans**: Scan-summary records expose target, schedule, duration, observed/new/missing/unchanged counts, and baseline availability even when no endpoints answer.
 - **Backward-compatible searches**: Existing monitoring macros and dashboards retain their original record-type filters. Discovery uses dedicated record types and macros, with no historical reindex required.
@@ -68,13 +74,13 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_3.1.0_build43_20260727.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_3.2.0_build44_20260825.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
 ## Paired Go Runtime
 
-This Splunk app is intended to pair with the current Go runtime release, `v5.10.0`.
+This Splunk app is intended to pair with the current Go runtime release, `v5.11.0`.
 
 - Drop `pingmonitor.exe` into an existing deployment folder and it will pick up the co-located `config.psd1` and `endpoints.csv` on startup.
 - If the embedded admin UI is enabled, those active files are loaded into the UI immediately so the existing deployment can be managed without rebuilding configuration by hand.
@@ -88,7 +94,7 @@ This Splunk app is intended to pair with the current Go runtime release, `v5.10.
 - **Health Correlation**: Enrich your data with ping health status from a KV Store-backed lookup
 - **CMDB Inventory**: Review current identity, monitoring policy, maintenance, signal quality, and FQDN coverage
 - **Discovery Inventory**: Review CMDB-oriented subnet-scan evidence without converting absence into health state
-- **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency
+- **Built-in Alerts**: Pre-configured alerts for down endpoints, packet loss, and high latency that honor per-endpoint alert eligibility
 - **Splunk Cloud-Ready Package**: AppInspect-clean packaging and app metadata for Cloud deployment
 
 ## Dashboards

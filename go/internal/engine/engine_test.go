@@ -207,6 +207,18 @@ func TestEndpointSuppressionIsIndependentFromDevClassification(t *testing.T) {
 		result.Summary.ObservationStatus != "suppressed" || result.Summary.MeasurementValid {
 		t.Fatalf("suppression summary = %#v", result.Summary)
 	}
+	indefinite := models.Endpoint{IP: "192.0.2.2", Hostname: "maintenance", DeviceMode: models.DeviceModeMaintenance}
+	if reason, suppressed := endpointSuppression(indefinite, now); !suppressed || reason != "maintenance_mode" {
+		t.Fatalf("indefinite maintenance reason/suppressed = %q/%t", reason, suppressed)
+	}
+	alertingDisabled := models.Endpoint{IP: "192.0.2.3", Hostname: "quiet", AlertingEnabled: models.Bool(false)}
+	if reason, suppressed := endpointSuppression(alertingDisabled, now); suppressed {
+		t.Fatalf("alerting-disabled endpoint was suppressed with reason %q", reason)
+	}
+	quietSummary := buildSummary(alertingDisabled, summaryIdentity{})
+	if quietSummary.AlertingEnabled || quietSummary.DeviceMode != models.DeviceModeProduction {
+		t.Fatalf("alerting policy was not propagated: %#v", quietSummary)
+	}
 }
 
 func failedResults(count int, reason string) []pingpkg.PingResult {

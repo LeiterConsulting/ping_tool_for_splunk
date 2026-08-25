@@ -1,5 +1,5 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.10.0)
+# Splunk Ping Monitor Configuration (Go v5.11.0)
 # ============================================
 # Legacy-compatible configuration example. New deployments use config.json.
 # Relative paths are resolved from the directory containing this file.
@@ -151,6 +151,18 @@
         # 0 disables the scan-count limit. The age limit keeps history bounded.
         retention_scans = 0
         retention_days = 365
+        # Optional subnet catalog. Existing CIDR-only schedules remain valid.
+        subnets = @(
+            # @{
+            #     id = "headquarters-users"
+            #     cidr = "10.20.30.0/24"
+            #     name = "Headquarters User LAN"
+            #     vlan = "230"
+            #     location = "Main Office"
+            #     addressing_mode = "dhcp"  # static | dhcp
+            #     routing_domain = "corp"
+            # }
+        )
         # Weekly schedules remain review-only: scan results are never
         # silently added to the monitored inventory.
         schedules = @(
@@ -165,6 +177,30 @@
             #     timeout_ms = 500
             #     concurrency = 50
             #     import_policy = "review"
+            # }
+        )
+    }
+
+    # ----------------------------------------
+    # NAMING CONVENTION CLASSIFICATION
+    # ----------------------------------------
+    # Ordered RE2 regex match/assignment pairs. Named captures such as
+    # (?P<site>...) can be referenced in assignments as ${site}.
+    classification = @{
+        rules = @(
+            # @{
+            #     id = "site-network-device"
+            #     enabled = $true
+            #     source = "hostname"  # hostname | fqdn | either
+            #     pattern = '^(?P<site>[a-z]{3})-(?P<role>sw|fw)-(?P<vendor>[a-z]+)-\d+$'
+            #     assignments = @{
+            #         group = '${site}'
+            #         entitytype = "network"
+            #         device = '${role}'
+            #         vendor = '${vendor}'
+            #     }
+            #     overwrite = $false
+            #     stop_on_match = $false
             # }
         )
     }

@@ -85,7 +85,36 @@
     "history_path": "./data/discovery",
     "retention_scans": 0,
     "retention_days": 365,
+    "subnets": [
+      {
+        "id": "headquarters-users",
+        "cidr": "10.20.30.0/24",
+        "name": "Headquarters User LAN",
+        "vlan": "230",
+        "location": "Main Office",
+        "addressing_mode": "dhcp",
+        "routing_domain": "corp"
+      }
+    ],
     "schedules": []
+  },
+  "classification": {
+    "rules": [
+      {
+        "id": "site-network-device",
+        "enabled": true,
+        "source": "hostname",
+        "pattern": "^(?P<site>[a-z]{3})-(?P<role>sw|fw)-(?P<vendor>[a-z]+)-\\d+$",
+        "assignments": {
+          "group": "${site}",
+          "entitytype": "network",
+          "device": "${role}",
+          "vendor": "${vendor}"
+        },
+        "overwrite": false,
+        "stop_on_match": false
+      }
+    ]
   },
   "diagnostics": {
     "enabled": false,
