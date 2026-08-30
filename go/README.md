@@ -120,8 +120,11 @@ The optional local admin UI runs from the same Go binary and works against the s
 
 It provides:
 
-- URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages, with separate Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics settings subpages
+- URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages, with separate Appearance, Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics settings subpages
+- the shared SNMP/Ping semantic theme contract implemented with distinct Ping palettes, plus comfortable/compact density and system/reduced motion preferences
+- revision-protected appearance persistence in deployment-local `ui_preferences.json`; existing collector configs are unchanged, missing/corrupt preference files fail safely to built-in defaults, and appearance changes require no restart
 - responsive full navigation and compact icon-rail layouts without losing the configured `0.0.0.0:8080` listener behavior
+- a full-width endpoint inventory followed by a collapsible editor, with a distinct row highlight for the editor target and checkboxes reserved for multi-endpoint actions
 - collapsible Discovery Controls followed by a full-width Discovery Results table for high-volume review
 - endpoint CRUD with consolidated bulk Production/Maintenance, alerting, monitoring, and deletion actions
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
@@ -140,12 +143,13 @@ It provides:
 The browser UI serves these page routes:
 
 - `GET /`, `/advisor`, `/endpoints`, and `/discovery`
-- `GET /settings`, `/settings/discovery`, `/settings/splunk`, and `/settings/diagnostics`
+- `GET /settings`, `/settings/appearance`, `/settings/discovery`, `/settings/splunk`, and `/settings/diagnostics`
 
 The UI serves these key API routes:
 
 - `GET /healthz`
 - `GET /api/status`
+- `GET` and `PUT /api/ui-preferences`
 - `GET` and `PUT /api/endpoints`
 - `GET` and `PUT /api/config`
 - `GET /api/advisor` and `GET /api/advisor/profiles`

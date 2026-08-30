@@ -162,8 +162,9 @@ Endpoint file rules:
 
 The current Go runtime separates endpoint hot reload from engine configuration loading:
 
-- The admin UI is divided into URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages instead of one anchor-scrolled document. Settings has dedicated Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages.
+- The admin UI is divided into URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages instead of one anchor-scrolled document. Settings has dedicated Appearance, Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages.
 - Primary actions remain visible while selection, export, reset, test, reorder, and destructive actions use contextual dropdowns or overflow menus. Draft endpoint/config state remains in memory while moving between pages.
+- The Endpoints page gives the inventory table the full workspace width and places a collapsible editor below it. A row highlight identifies the single editor target, while independent checkboxes build a multi-device bulk selection; the current editor target and an Open Editor shortcut remain visible above the table.
 - Discovery Controls can be collapsed from its visible caret, and Discovery Results uses the full workspace width below it so large review tables are not constrained by a side-by-side layout.
 - The navigation collapses to an icon rail on narrower displays, action groups wrap without overflowing, and settings subpage links remain horizontally scrollable at phone widths.
 - `endpoints.csv` is checked between cycles and reloaded automatically when the file changes.
@@ -173,6 +174,8 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 - Live status polling uses the startup-effective configuration and does not repeatedly invoke PowerShell to parse `config.psd1`.
 - Endpoint edits made in the UI are written back to the live endpoint file that the runtime hot reloads.
 - Config and endpoint saves carry a file revision. A stale browser draft receives `409 Conflict` instead of silently overwriting a newer disk edit.
+- Appearance uses the same semantic `data-color-scheme` theme contract as SNMP for Splunk with Ping-specific Signal Blue, Orbit Violet, Radar Coral, Daylight, and High Visibility palettes. Display density and reduced-motion preferences use the same root-level contract.
+- Saved appearance preferences live in `ui_preferences.json` beside the deployment. The file is independent of PSD1/JSON/YAML collector configuration, is written with revision protection, takes effect immediately, and never requires a collector restart. If the file is missing or invalid, the UI remains usable with built-in defaults and reports the fallback on the Appearance page.
 - Config edits made in the UI are saved directly to the active config file, but engine-level settings are loaded at process start. Restart the runtime or service after config changes that should affect monitoring behavior.
 - When a saved config revision is not active, monitor mode exposes a confirmation-gated **Restart Collector** action. It performs a controlled in-process engine restart, revalidates revisions, and resumes the last known-good configuration if activation fails.
 - HEC tokens are write-only in the API. A blank token field preserves the stored token; the UI receives only a configured/not-configured flag.
@@ -181,7 +184,7 @@ The current Go runtime separates endpoint hot reload from engine configuration l
 The UI supports:
 
 - advisor analysis, current-versus-proposed schedule evidence, safe fixes, confirmed profile application, and a bounded local benchmark
-- full endpoint CRUD
+- full endpoint CRUD through a full-width inventory and compact four-column desktop editor, with explicit single-device and multi-device selection cues
 - explicitly selected bulk Production/Maintenance, alert eligibility, pause/resume, and delete actions, with confirmations for signal-affecting changes
 - cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, complete CSV export, DHCP-safe scan deltas, and merge or overwrite workflows
 - durable Needs Review, Deferred, and Ignored discovery queues, explicit Production/Maintenance assignment before staging, per-result Asset ID entry, and bulk review for CMDB fields, address-allocation policy, alert policy, and previewed naming-rule application
@@ -192,6 +195,7 @@ The UI supports:
 - explicit pause/resume monitoring controls and timed maintenance
 - HEC event and metrics endpoint test actions
 - contextual information modals for every configuration field plus endpoint, discovery, advisor, and signal-semantics controls
+- a card-based Appearance page with curated accessible palettes, full-page live preview, compact/comfortable density, motion preferences, explicit save/discard actions, and contextual help
 
 If you only want to edit files without running the monitor:
 

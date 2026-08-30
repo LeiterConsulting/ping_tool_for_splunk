@@ -1,3 +1,14 @@
+const themeSystem = window.PingMonitorTheme;
+let uiPreferenceStorage = null;
+try {
+  uiPreferenceStorage = window.localStorage;
+} catch (_error) {
+  // Server persistence still works when browser-local cache is unavailable.
+}
+const initialUIPreferences = themeSystem
+  ? themeSystem.readCached(uiPreferenceStorage)
+  : { schema_version: 1, color_scheme: 'signal-blue', density: 'comfortable', motion: 'system' };
+
 const state = {
   status: null,
   endpoints: [],
@@ -13,6 +24,13 @@ const state = {
   configDirty: false,
   config: null,
   configSecrets: {},
+  uiPreferences: { ...initialUIPreferences },
+  savedUIPreferences: { ...initialUIPreferences },
+  uiPreferencesRevision: '',
+  uiPreferencesPath: '',
+  uiPreferencesSource: 'cached preview',
+  uiPreferencesLoaded: false,
+  uiPreferencesBusy: false,
   activeRoute: '/',
   settingsTab: 'runtime',
   classificationRules: [],
@@ -126,6 +144,9 @@ const elements = {
   endpointForm: document.getElementById('endpoint-form'),
   endpointValidation: document.getElementById('endpoint-validation'),
   endpointSelectionLabel: document.getElementById('endpoint-selection-label'),
+  endpointEditorPanel: document.getElementById('endpoint-editor-panel'),
+  endpointEditorChip: document.getElementById('endpoint-editor-chip'),
+  endpointOpenEditorButton: document.getElementById('endpoint-open-editor-button'),
   addEndpointButton: document.getElementById('add-endpoint-button'),
   selectAllEndpointsButton: document.getElementById('select-all-endpoints-button'),
   deselectAllEndpointsButton: document.getElementById('deselect-all-endpoints-button'),
@@ -232,6 +253,15 @@ const elements = {
   },
   tableSortButtons: Array.from(document.querySelectorAll('.table-sort')),
   settingsBanner: document.getElementById('settings-banner'),
+  appearanceBanner: document.getElementById('appearance-banner'),
+  appearanceSourceChip: document.getElementById('appearance-source-chip'),
+  appearanceSaveState: document.getElementById('appearance-save-state'),
+  appearanceSaveButton: document.getElementById('appearance-save-button'),
+  appearanceResetButton: document.getElementById('appearance-reset-button'),
+  appearanceDefaultButton: document.getElementById('appearance-default-button'),
+  appearanceMotion: document.getElementById('appearance-motion'),
+  themeChoices: Array.from(document.querySelectorAll('[data-theme-choice]')),
+  densityChoices: Array.from(document.querySelectorAll('[data-density-choice]')),
   outputTestDetails: document.getElementById('output-test-details'),
   settingsSourceChip: document.getElementById('settings-source-chip'),
   settingsForm: document.getElementById('settings-form'),
@@ -242,6 +272,7 @@ const elements = {
   reloadConfigButton: document.getElementById('reload-config-button'),
   resetConfigButton: document.getElementById('reset-config-button'),
   saveConfigButton: document.getElementById('save-config-button'),
+  configActionsMenu: document.getElementById('config-actions-menu'),
   addDiscoverySubnetButton: document.getElementById('add-discovery-subnet-button'),
   discoverySubnetRows: document.getElementById('discovery-subnet-rows'),
   addClassificationRuleButton: document.getElementById('add-classification-rule-button'),
@@ -354,6 +385,13 @@ const pageRoutes = {
     eyebrow: 'Configuration',
     title: 'Runtime Settings',
     description: 'Tune probe timing, concurrency, execution mode, and local result retention.',
+  },
+  '/settings/appearance': {
+    section: 'settings',
+    settingsTab: 'appearance',
+    eyebrow: 'Interface Preferences',
+    title: 'Appearance',
+    description: 'Choose a distinct Ping Monitor palette, information density, and motion preference using the shared platform theme contract.',
   },
   '/settings/discovery': {
     section: 'settings',
@@ -915,6 +953,40 @@ const settingsFieldHelp = {
 };
 
 const interfacePanelHelp = {
+  'Interface Theme': panelHelp(
+    'Interface Theme',
+    'Applies a curated Ping Monitor palette through the same semantic theme contract used by the SNMP interface.',
+    [
+      'Each palette controls navigation, panels, forms, tables, badges, focus indicators, and selection states together so contrast is not left to arbitrary custom colors.',
+      'Theme identifiers are product-specific. This keeps Ping Monitor visually distinct today while preserving a compatible foundation for a future unified platform shell.',
+      'Selection is an immediate preview. Save Appearance writes ui_preferences.json without changing collector configuration or requiring a restart.',
+    ],
+  ),
+  'Display Density': panelHelp(
+    'Display Density',
+    'Changes spacing in panels, controls, and tables without hiding data or altering monitoring behavior.',
+    [
+      'Comfortable is the default for general administration.',
+      'Compact preserves the same fields and actions while fitting more rows and controls on larger operational displays.',
+    ],
+  ),
+  'Interface Motion': panelHelp(
+    'Interface Motion',
+    'Controls nonessential transitions and smooth scrolling used by the administration interface.',
+    [
+      'Follow operating system honors the browser and OS reduced-motion preference.',
+      'Reduce motion explicitly minimizes transitions for this deployment preference.',
+    ],
+  ),
+  'Endpoint Inventory': panelHelp(
+    'Endpoint Inventory',
+    'Provides the searchable, sortable monitored-device list and keeps single-device editing separate from bulk selection.',
+    [
+      'Click a row to choose the one endpoint loaded into the editor below. The blue row highlight identifies that editor target.',
+      'Use row checkboxes for bulk mode, alerting, monitoring, or deletion actions. Checkbox selection does not change which endpoint is loaded into the editor.',
+      'Search, filters, sorting, and pagination change only the current view; they do not alter endpoint data.',
+    ],
+  ),
   'Endpoint Editor': panelHelp(
     'Endpoint Editor',
     'Edits the monitored inventory and its explicit monitoring policy. Saving creates a backup and requests an in-process inventory reload.',
@@ -987,6 +1059,12 @@ const interfacePanelHelp = {
 };
 
 const interfaceFieldHelp = {
+  'appearance-motion': helpTopic(
+    'Motion Preference',
+    'Chooses whether interface motion follows the operating system accessibility preference or is always minimized.',
+    'One of: system, reduced.',
+    ['This changes only interface transitions and scrolling; collector timing and ping execution are unaffected.'],
+  ),
   'endpoint-ip': helpTopic(
     'Endpoint IP',
     'Defines the literal IPv4 or IPv6 address the collector probes.',
@@ -1368,8 +1446,24 @@ function configIsDirty() {
   return state.configDirty;
 }
 
+function comparableUIPreferences(preferences) {
+  const normalized = themeSystem
+    ? themeSystem.normalize(preferences)
+    : preferences;
+  return {
+    schema_version: 1,
+    color_scheme: normalized.color_scheme,
+    density: normalized.density,
+    motion: normalized.motion,
+  };
+}
+
+function uiPreferencesAreDirty() {
+  return JSON.stringify(comparableUIPreferences(state.uiPreferences)) !== JSON.stringify(comparableUIPreferences(state.savedUIPreferences));
+}
+
 function hasUnsavedChanges() {
-  return endpointsAreDirty() || configIsDirty();
+  return endpointsAreDirty() || configIsDirty() || uiPreferencesAreDirty();
 }
 
 function confirmDiscardChanges(message = 'Discard unsaved changes and reload from disk?') {
@@ -2011,6 +2105,10 @@ function setActiveNav(route) {
 
 function renderSettingsTab(tab) {
   state.settingsTab = tab || 'runtime';
+  const appearanceActive = state.settingsTab === 'appearance';
+  elements.saveConfigButton.hidden = appearanceActive;
+  elements.configActionsMenu.hidden = appearanceActive;
+  elements.settingsSourceChip.hidden = appearanceActive;
   elements.settingsTabs.forEach((button) => {
     const active = button.dataset.settingsTab === state.settingsTab;
     button.classList.toggle('active', active);
@@ -2023,6 +2121,9 @@ function renderSettingsTab(tab) {
   elements.settingsPanels.forEach((panel) => {
     panel.hidden = panel.dataset.settingsPanel !== state.settingsTab;
   });
+  if (appearanceActive) {
+    renderAppearance();
+  }
 }
 
 function renderRoute(pathname, historyMode = '') {
@@ -2275,6 +2376,10 @@ function renderEndpointButtons() {
   const actionIndices = getEndpointActionIndices();
   const selectedCount = state.selectedEndpointIndices.size;
   const filteredCount = filterEndpoints().length;
+  const selectedEndpoint = hasEditorSelection ? state.endpoints[state.selectedEndpointIndex] : null;
+  const selectedEndpointLabel = selectedEndpoint
+    ? (selectedEndpoint.ip || selectedEndpoint.hostname || `Endpoint ${state.selectedEndpointIndex + 1}`)
+    : 'No endpoint selected';
 
   elements.endpointDirtyPill.textContent = dirty ? 'Unsaved changes' : 'In sync';
   elements.endpointDirtyPill.classList.toggle('is-dirty', dirty);
@@ -2291,6 +2396,8 @@ function renderEndpointButtons() {
   elements.deleteEndpointButton.disabled = actionIndices.length === 0;
   elements.endpointBulkAction.disabled = actionIndices.length === 0;
   elements.applyEndpointBulkActionButton.disabled = actionIndices.length === 0 || !elements.endpointBulkAction.value;
+  elements.endpointEditorChip.textContent = selectedEndpointLabel;
+  elements.endpointOpenEditorButton.disabled = !hasEditorSelection;
   elements.deleteCurrentEndpointButton.disabled = !hasEditorSelection;
   elements.previewEndpointClassificationButton.disabled = !hasEditorSelection;
   elements.applyEndpointClassificationButton.disabled = !hasEditorSelection;
@@ -2325,6 +2432,18 @@ function renderEndpointEditor() {
   const selected = state.selectedEndpointIndex >= 0 ? state.endpoints[state.selectedEndpointIndex] : null;
   loadEndpointForm(selected);
   renderEndpointButtons();
+}
+
+function openEndpointEditor(scrollIntoView = true) {
+  if (state.selectedEndpointIndex < 0 || !elements.endpointEditorPanel) {
+    return;
+  }
+  elements.endpointEditorPanel.open = true;
+  if (!scrollIntoView) {
+    return;
+  }
+  const behavior = document.documentElement.dataset.motion === 'reduced' ? 'auto' : 'smooth';
+  elements.endpointEditorPanel.scrollIntoView({ behavior, block: 'start' });
 }
 
 function buildDiscoverySummaryText() {
@@ -2945,6 +3064,122 @@ function renderConfigButtons() {
   elements.resetConfigButton.disabled = !dirty;
 }
 
+function applyAppearancePreferences(preferences, cacheSaved = false) {
+  const normalized = themeSystem
+    ? themeSystem.apply(document, preferences)
+    : comparableUIPreferences(preferences);
+  state.uiPreferences = { ...normalized };
+  if (cacheSaved && themeSystem) {
+    themeSystem.cache(uiPreferenceStorage, normalized);
+  }
+  renderAppearance();
+}
+
+function renderAppearance() {
+  if (!elements.appearanceSaveButton) {
+    return;
+  }
+  const preferences = comparableUIPreferences(state.uiPreferences);
+  const dirty = uiPreferencesAreDirty();
+  elements.themeChoices.forEach((choice) => {
+    choice.setAttribute('aria-pressed', String(choice.dataset.themeChoice === preferences.color_scheme));
+  });
+  elements.densityChoices.forEach((choice) => {
+    choice.setAttribute('aria-pressed', String(choice.dataset.densityChoice === preferences.density));
+  });
+  elements.appearanceMotion.value = preferences.motion;
+  elements.appearanceSaveButton.disabled = !dirty || state.uiPreferencesBusy || !state.uiPreferencesLoaded;
+  elements.appearanceResetButton.disabled = !dirty || state.uiPreferencesBusy;
+  elements.appearanceDefaultButton.disabled = state.uiPreferencesBusy;
+  elements.appearanceSaveButton.textContent = state.uiPreferencesBusy ? 'Saving Appearance...' : 'Save Appearance';
+  elements.appearanceSaveState.textContent = state.uiPreferencesBusy
+    ? 'Writing the deployment appearance preference...'
+    : dirty
+      ? 'Preview active. Save Appearance to make these choices the deployment preference.'
+      : 'Appearance matches the saved deployment preference.';
+  const source = state.uiPreferencesSource || 'built-in defaults';
+  elements.appearanceSourceChip.textContent = state.uiPreferencesLoaded
+    ? `Source: ${source}`
+    : 'Source: local fallback';
+  elements.appearanceSourceChip.title = state.uiPreferencesPath || 'Appearance preferences have not been loaded from the collector.';
+}
+
+async function loadUIPreferences(showSuccess = false) {
+  state.uiPreferencesBusy = true;
+  renderAppearance();
+  try {
+    const payload = await fetchJson('/api/ui-preferences');
+    const preferences = themeSystem
+      ? themeSystem.normalize(payload.preferences || {})
+      : comparableUIPreferences(payload.preferences || {});
+    state.savedUIPreferences = { ...preferences };
+    state.uiPreferencesRevision = payload.revision || '';
+    state.uiPreferencesPath = payload.path || '';
+    state.uiPreferencesSource = payload.source || 'built-in defaults';
+    state.uiPreferencesLoaded = true;
+    applyAppearancePreferences(preferences, true);
+    if (payload.warning) {
+      setMessage(elements.appearanceBanner, 'warning', payload.warning);
+    } else if (showSuccess) {
+      setMessage(elements.appearanceBanner, 'success', 'Appearance preferences reloaded from the deployment.');
+    } else {
+      setMessage(elements.appearanceBanner, '', '');
+    }
+  } catch (error) {
+    state.uiPreferencesLoaded = false;
+    state.uiPreferencesSource = 'local fallback';
+    setMessage(elements.appearanceBanner, 'error', `${error instanceof Error ? error.message : 'Unable to load appearance preferences.'} The cached or built-in theme remains active.`);
+  } finally {
+    state.uiPreferencesBusy = false;
+    renderAppearance();
+  }
+}
+
+async function saveAppearance() {
+  if (state.uiPreferencesBusy || !uiPreferencesAreDirty() || !state.uiPreferencesLoaded) {
+    return;
+  }
+  state.uiPreferencesBusy = true;
+  renderAppearance();
+  try {
+    const payload = await putJson('/api/ui-preferences', {
+      preferences: comparableUIPreferences(state.uiPreferences),
+      revision: state.uiPreferencesRevision,
+    });
+    const preferences = themeSystem
+      ? themeSystem.normalize(payload.preferences || {})
+      : comparableUIPreferences(payload.preferences || {});
+    state.savedUIPreferences = { ...preferences };
+    state.uiPreferencesRevision = payload.revision || '';
+    state.uiPreferencesPath = payload.path || state.uiPreferencesPath;
+    state.uiPreferencesSource = payload.source || 'deployment file';
+    state.uiPreferencesLoaded = true;
+    applyAppearancePreferences(preferences, true);
+    setMessage(elements.appearanceBanner, 'success', 'Appearance saved for this deployment. No collector restart is required.');
+  } catch (error) {
+    const message = error?.status === 409
+      ? 'Appearance preferences changed after this page was loaded. Reload all data before saving this preview.'
+      : (error instanceof Error ? error.message : 'Unable to save appearance preferences.');
+    setMessage(elements.appearanceBanner, 'error', message);
+  } finally {
+    state.uiPreferencesBusy = false;
+    renderAppearance();
+  }
+}
+
+function resetAppearancePreview() {
+  applyAppearancePreferences(state.savedUIPreferences, false);
+  setMessage(elements.appearanceBanner, '', '');
+}
+
+function useDefaultAppearance() {
+  const defaults = themeSystem
+    ? themeSystem.defaults
+    : { schema_version: 1, color_scheme: 'signal-blue', density: 'comfortable', motion: 'system' };
+  applyAppearancePreferences(defaults, false);
+  setMessage(elements.appearanceBanner, 'warning', 'Previewing Ping Monitor defaults. Save Appearance to persist them for this deployment.');
+}
+
 function renderOutputTestDetails(result) {
   if (!result) {
     elements.outputTestDetails.textContent = '';
@@ -3142,9 +3377,10 @@ async function runAdvisorBenchmark() {
   }
 }
 
-async function reloadAllData(showSuccess = false) {
+async function reloadAllData(showSuccess = false, reloadAppearance = false) {
   elements.refreshButton.disabled = true;
   elements.refreshButton.textContent = 'Reloading...';
+  const appearanceReload = reloadAppearance ? loadUIPreferences(showSuccess) : Promise.resolve();
   try {
     const [status, endpointsPayload, configPayload] = await Promise.all([
       fetchJson('/api/status'),
@@ -3181,6 +3417,7 @@ async function reloadAllData(showSuccess = false) {
     setMessage(elements.settingsBanner, 'error', message);
     setMessage(elements.discoveryBanner, 'error', message);
   } finally {
+    await appearanceReload;
     try {
       await loadAdvisorProfiles();
       await loadAdvisor(false);
@@ -3201,6 +3438,7 @@ function renderAll() {
   renderDiscovery();
   renderDiscoveryOperations();
   renderConfigButtons();
+  renderAppearance();
   renderAdvisor();
 }
 
@@ -3262,6 +3500,7 @@ function addEndpoint() {
   state.selectedEndpointIndices.clear();
   state.tables.endpoint.page = Math.max(1, Math.ceil(state.endpoints.length / state.tables.endpoint.pageSize));
   renderAll();
+  openEndpointEditor(true);
   setMessage(elements.endpointBanner, 'success', 'Added a new endpoint to the working draft.');
 }
 
@@ -4037,7 +4276,7 @@ elements.searchInput.addEventListener('input', (event) => {
 
 elements.refreshButton.addEventListener('click', () => {
   if (confirmDiscardChanges()) {
-    reloadAllData(true);
+    reloadAllData(true, true);
   }
 });
 elements.restartCollectorButton.addEventListener('click', restartCollector);
@@ -4065,6 +4304,37 @@ elements.settingsTabs.forEach((link) => {
     renderRoute(link.dataset.settingsRoute || '/settings', 'push');
   });
 });
+
+elements.themeChoices.forEach((choice) => {
+  choice.addEventListener('click', () => {
+    applyAppearancePreferences({
+      ...state.uiPreferences,
+      color_scheme: choice.dataset.themeChoice,
+    }, false);
+    setMessage(elements.appearanceBanner, '', '');
+  });
+});
+
+elements.densityChoices.forEach((choice) => {
+  choice.addEventListener('click', () => {
+    applyAppearancePreferences({
+      ...state.uiPreferences,
+      density: choice.dataset.densityChoice,
+    }, false);
+    setMessage(elements.appearanceBanner, '', '');
+  });
+});
+
+elements.appearanceMotion.addEventListener('change', (event) => {
+  applyAppearancePreferences({
+    ...state.uiPreferences,
+    motion: event.target.value,
+  }, false);
+  setMessage(elements.appearanceBanner, '', '');
+});
+elements.appearanceSaveButton.addEventListener('click', saveAppearance);
+elements.appearanceResetButton.addEventListener('click', resetAppearancePreview);
+elements.appearanceDefaultButton.addEventListener('click', useDefaultAppearance);
 
 document.querySelectorAll('details.action-menu').forEach((menu) => {
   menu.addEventListener('toggle', () => {
@@ -4126,6 +4396,7 @@ elements.endpointRows.addEventListener('click', (event) => {
   state.selectedEndpointIndex = Number(row.dataset.index);
   renderEndpointEditor();
   renderEndpointTable();
+  openEndpointEditor(false);
 });
 elements.endpointRows.addEventListener('keydown', (event) => {
   if (event.key !== 'Enter' && event.key !== ' ') {
@@ -4139,12 +4410,14 @@ elements.endpointRows.addEventListener('keydown', (event) => {
   state.selectedEndpointIndex = Number(row.dataset.index);
   renderEndpointEditor();
   renderEndpointTable();
+  openEndpointEditor(true);
 });
 
 elements.endpointForm.addEventListener('input', () => updateCurrentEndpointFromForm(false));
 elements.endpointForm.addEventListener('change', () => updateCurrentEndpointFromForm(true));
 
 elements.addEndpointButton.addEventListener('click', addEndpoint);
+elements.endpointOpenEditorButton.addEventListener('click', () => openEndpointEditor(true));
 elements.selectAllEndpointsButton.addEventListener('click', selectAllVisibleEndpoints);
 elements.deselectAllEndpointsButton.addEventListener('click', deselectAllEndpoints);
 elements.endpointBulkAction.addEventListener('change', renderEndpointButtons);
@@ -4384,5 +4657,5 @@ window.addEventListener('beforeunload', (event) => {
 });
 
 initializeRouting();
-reloadAllData();
+reloadAllData(false, true);
 window.setInterval(refreshRuntimeStatus, 5000);

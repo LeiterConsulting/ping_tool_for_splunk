@@ -42,6 +42,7 @@ documentation/
 # Runtime identity, lock, and health-state checkpoints
 *.collector_id
 *.state.json
+ui_preferences.json
 *.psd1.lock
 *.yaml.lock
 *.yml.lock

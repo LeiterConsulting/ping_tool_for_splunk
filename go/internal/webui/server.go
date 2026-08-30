@@ -402,6 +402,7 @@ func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/api/status", server.handleStatus)
+	mux.HandleFunc("/api/ui-preferences", server.handleUIPreferences)
 	mux.HandleFunc("/api/endpoints", server.handleEndpoints)
 	mux.HandleFunc("/api/config", server.handleConfig)
 	mux.HandleFunc("/api/classification/preview", server.handleClassificationPreview)

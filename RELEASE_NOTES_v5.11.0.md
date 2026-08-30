@@ -1,6 +1,6 @@
 # Ping Monitor v5.11.0 Release Notes
 
-Release date: August 25, 2026
+Release date: August 30, 2026
 
 ## Discovery Review And CMDB Workflow
 
@@ -29,11 +29,20 @@ Release date: August 25, 2026
 ## Multi-Page Admin UI
 
 - Replaces the single anchor-scrolled administration document with URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages.
-- Splits Settings into Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages while retaining unsaved draft state during in-app navigation.
+- Splits Settings into Appearance, Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages while retaining unsaved draft state during in-app navigation.
 - Consolidates endpoint and discovery bulk actions into contextual selectors and moves reset, export, test, reorder, and destructive commands into overflow menus.
+- Gives Endpoint Inventory the full workspace width, moves Endpoint Editor into a collapsible panel below it, and distinguishes the single editor target from checkbox-based bulk selection.
 - Makes Discovery Controls collapsible with a visible caret and moves Discovery Results to a full-width row beneath it for large result sets.
+- Aligns peer cards to a shared row height on Overview, Advisor, Settings, and Appearance instead of allowing later siblings to inherit vertical offsets.
 - Adds a responsive navigation rail and wrapping action layouts for narrower screens.
 - Keeps naming-rule construction full width, moves per-rule reorder/remove commands into an overflow menu, and prevents preview-only sample text from marking configuration dirty.
+
+## Shared Theme Foundation
+
+- Uses the same semantic root theme contract as SNMP for Splunk while assigning Ping Monitor its own Signal Blue, Orbit Violet, Radar Coral, Daylight, and High Visibility product palettes.
+- Adds curated palette cards with contrast guidance, immediate full-interface preview, comfortable/compact density, and system/reduced motion controls.
+- Persists appearance independently in revision-protected `ui_preferences.json`; existing PSD1, JSON, and YAML collector configurations remain unchanged and no collector restart is required.
+- Fails safely to a usable built-in theme when the preference file is absent, corrupt, or unsupported, while exposing the fallback reason in the interface.
 
 ## Splunk Pairing
 
@@ -52,7 +61,7 @@ Release date: August 25, 2026
 ## Release Validation
 
 - Full Go test suite and full race-enabled Go test suite.
-- Deterministic browser-workflow tests for review gating, filters, approval metadata, and immutable scan evidence.
+- Deterministic browser-workflow tests for review gating, filters, approval metadata, immutable scan evidence, theme normalization, root theme attributes, and fail-safe cache behavior.
 - Interactive naming-builder validation for valid and invalid RE2 rules, hostname and FQDN sources, pair ordering/removal, contextual help, and non-persistent reset behavior.
 - API, persistence, restart, DHCP address-change, endpoint CSV round-trip, validation, and discovery-delta tests.
 - JavaScript syntax checks, Splunk XML parsing, Configuration Advisor validation, and Windows service-definition validation.
@@ -62,4 +71,6 @@ Release date: August 25, 2026
 ## Environment-Dependent Checks
 
 - The multi-page shell, settings subpages, contextual action enablement, browser back/forward behavior, endpoint selection preservation, non-persistent naming-rule preview, and deployed v5.11.0 runtime status were interactively verified at `http://127.0.0.1:8080`.
+- Endpoint Inventory and its collapsible editor were verified at desktop and narrow widths, including single-row editor selection, independent checkbox bulk selection, full-width table containment, and contextual help.
+- All five Ping palettes, true light-mode rendering, theme/density/motion preview, deployment-file save and reload, default restoration, contextual help, and no-restart appearance activation were interactively verified against the deployed Windows binary.
 - Creating, starting, stopping, and deleting a real Windows Service still requires an elevated clean-host validation pass. Installer definition and preflight validation are automated and pass.

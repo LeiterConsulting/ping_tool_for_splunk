@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Ping Monitor</title>
+  <script src="/theme.js?v={{ASSET_VERSION}}"></script>
   <link rel="stylesheet" href="/app.css?v={{ASSET_VERSION}}">
 </head>
 <body>
@@ -252,8 +253,19 @@
 
           <div id="endpoint-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
 
-          <div class="editor-grid">
+          <div class="endpoint-workspace">
             <article class="panel section-stack endpoint-table-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Endpoint Inventory</h3>
+                  <p class="summary-note">Click a row to choose one endpoint for the editor below. Use the checkboxes to build a separate bulk selection.</p>
+                </div>
+                <div class="endpoint-editor-shortcut">
+                  <span class="meta-chip" id="endpoint-editor-chip">No endpoint selected</span>
+                  <button class="secondary-button" id="endpoint-open-editor-button" type="button">Open Editor</button>
+                </div>
+              </div>
+
               <div class="toolbar-row">
                 <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor" aria-label="Search endpoints">
                 <label class="inline-field compact-select-field">
@@ -354,23 +366,29 @@
               </div>
             </article>
 
-            <article class="panel section-stack endpoint-editor-panel">
-              <div class="panel-header">
+            <details class="panel endpoint-editor-panel" id="endpoint-editor-panel" open>
+              <summary class="collapsible-panel-summary">
                 <div>
                   <h3 class="panel-title">Endpoint Editor</h3>
                   <p class="summary-note" id="endpoint-selection-label">Select an endpoint to edit its live CSV fields.</p>
                 </div>
-                <details class="action-menu">
-                  <summary class="icon-button" aria-label="Open endpoint editor actions" title="Endpoint editor actions">•••</summary>
-                  <div class="action-menu-popover action-menu-popover-right">
-                    <button class="menu-action menu-action-danger" id="delete-current-endpoint-button" type="button">Delete this endpoint</button>
-                  </div>
-                </details>
-              </div>
+                <svg class="panel-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </summary>
 
-              <form id="endpoint-form" class="form-stack" autocomplete="off">
-                <div id="endpoint-validation" class="message-banner hidden" role="alert"></div>
-                <div class="field-grid">
+              <div class="endpoint-editor-content section-stack">
+                <div class="endpoint-editor-action-row">
+                  <p class="field-help">Edits stay in the browser draft until Save Endpoints is selected.</p>
+                  <details class="action-menu">
+                    <summary class="icon-button" aria-label="Open endpoint editor actions" title="Endpoint editor actions">•••</summary>
+                    <div class="action-menu-popover action-menu-popover-right">
+                      <button class="menu-action menu-action-danger" id="delete-current-endpoint-button" type="button">Delete this endpoint</button>
+                    </div>
+                  </details>
+                </div>
+
+                <form id="endpoint-form" class="form-stack" autocomplete="off">
+                  <div id="endpoint-validation" class="message-banner hidden" role="alert"></div>
+                  <div class="field-grid endpoint-field-grid">
                   <label class="field-group">
                     <span>IP Address</span>
                     <input id="endpoint-ip" class="text-input" type="text" placeholder="10.0.0.10">
@@ -435,27 +453,30 @@
                     <span>Classification Source</span>
                     <input id="endpoint-classification-source" class="text-input" type="text" readonly placeholder="Manual or rule provenance appears here">
                   </label>
-                </div>
+                  </div>
 
-                <label class="checkbox-row">
-                  <input id="endpoint-alerting-enabled" type="checkbox">
-                  <span>Allow this endpoint's measurements to participate in alert searches.</span>
-                </label>
-                <label class="checkbox-row">
-                  <input id="endpoint-dynamic-address" type="checkbox">
-                  <span>This address is dynamically assigned. Use a stable Asset ID or confirmed FQDN for asset-change tracking.</span>
-                </label>
-                <label class="checkbox-row">
-                  <input id="endpoint-monitoring-enabled" type="checkbox">
-                  <span>Probe this endpoint. Clear this independently of dev/prod classification to suppress monitoring.</span>
-                </label>
-              </form>
-              <div class="button-row">
-                <button class="secondary-button" id="preview-endpoint-classification-button" type="button">Preview Naming Rules</button>
-                <button class="secondary-button" id="apply-endpoint-classification-button" type="button">Apply Naming Rules</button>
+                  <div class="endpoint-policy-grid">
+                    <label class="checkbox-row">
+                      <input id="endpoint-alerting-enabled" type="checkbox">
+                      <span>Allow this endpoint's measurements to participate in alert searches.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="endpoint-dynamic-address" type="checkbox">
+                      <span>This address is dynamically assigned. Use a stable Asset ID or confirmed FQDN for asset-change tracking.</span>
+                    </label>
+                    <label class="checkbox-row">
+                      <input id="endpoint-monitoring-enabled" type="checkbox">
+                      <span>Probe this endpoint. Clear this independently of dev/prod classification to suppress monitoring.</span>
+                    </label>
+                  </div>
+                </form>
+                <div class="button-row">
+                  <button class="secondary-button" id="preview-endpoint-classification-button" type="button">Preview Naming Rules</button>
+                  <button class="secondary-button" id="apply-endpoint-classification-button" type="button">Apply Naming Rules</button>
+                </div>
+                <div id="endpoint-classification-preview" class="message-banner hidden" role="status" aria-live="polite"></div>
               </div>
-              <div id="endpoint-classification-preview" class="message-banner hidden" role="status" aria-live="polite"></div>
-            </article>
+            </details>
           </div>
 
         </section>
@@ -739,7 +760,7 @@
             <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
             <div class="section-actions">
               <button class="primary-button" id="save-config-button" type="button">Save Config</button>
-              <details class="action-menu">
+              <details class="action-menu" id="config-actions-menu">
                 <summary class="icon-button" aria-label="Open configuration actions" title="Configuration actions">•••</summary>
                 <div class="action-menu-popover action-menu-popover-right">
                   <button class="menu-action" id="test-hec-button" type="button">Test Event HEC</button>
@@ -752,6 +773,7 @@
           </div>
 
           <nav class="settings-tabs" aria-label="Configuration sections">
+            <a class="settings-tab" href="/settings/appearance" data-settings-route="/settings/appearance" data-settings-tab="appearance">Appearance</a>
             <a class="settings-tab active" href="/settings" aria-current="page" data-settings-route="/settings" data-settings-tab="runtime">Runtime</a>
             <a class="settings-tab" href="/settings/discovery" data-settings-route="/settings/discovery" data-settings-tab="discovery">Discovery &amp; CMDB</a>
             <a class="settings-tab" href="/settings/splunk" data-settings-route="/settings/splunk" data-settings-tab="splunk">Splunk Delivery</a>
@@ -760,6 +782,109 @@
 
           <div id="settings-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
           <div id="output-test-details" class="log-surface hidden"></div>
+
+          <div class="appearance-settings-stack" data-settings-panel="appearance" hidden>
+            <div id="appearance-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
+
+            <article class="panel appearance-intro-panel">
+              <div class="appearance-intro-copy">
+                <div class="appearance-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 0 18h1.2a1.8 1.8 0 0 0 0-3.6h-1a1.6 1.6 0 0 1 0-3.2H15A6 6 0 0 0 15 3h-3Z"/><circle cx="7.5" cy="10" r="1"/><circle cx="10" cy="6.8" r="1"/><circle cx="6.8" cy="14" r="1"/></svg>
+                </div>
+                <div>
+                  <p class="eyebrow">Shared Interface Foundation</p>
+                  <h2>Appearance</h2>
+                  <p>Ping Monitor now uses the same semantic theme contract as SNMP for Splunk while retaining a distinct signal-blue product identity. Curated choices protect contrast across navigation, forms, tables, state badges, and focus indicators.</p>
+                </div>
+              </div>
+              <span class="meta-chip" id="appearance-source-chip">Loading appearance source...</span>
+            </article>
+
+            <article class="panel section-stack appearance-theme-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Interface Theme</h3>
+                  <p class="summary-note">Select a Ping-specific palette. The page previews it immediately; Save Appearance persists it for this deployment.</p>
+                </div>
+              </div>
+              <div class="theme-choice-grid" id="theme-choice-grid" aria-label="Interface themes">
+                <button class="theme-choice" type="button" data-theme-choice="signal-blue" aria-pressed="false">
+                  <span class="theme-choice-heading"><strong>Signal Blue</strong><span class="theme-choice-check" aria-hidden="true">✓</span></span>
+                  <span class="theme-swatches" aria-hidden="true"><span class="theme-swatch swatch-signal-1"></span><span class="theme-swatch swatch-signal-2"></span><span class="theme-swatch swatch-signal-3"></span><span class="theme-swatch swatch-signal-4"></span></span>
+                  <span class="theme-choice-summary">Deep navy surfaces with electric blue and cyan cues for network-signal operations.</span>
+                  <span class="theme-choice-science">Cool accent separation makes selected navigation, latency context, and focus states easy to scan without borrowing SNMP’s green identity.</span>
+                </button>
+                <button class="theme-choice" type="button" data-theme-choice="orbit-violet" aria-pressed="false">
+                  <span class="theme-choice-heading"><strong>Orbit Violet</strong><span class="theme-choice-check" aria-hidden="true">✓</span></span>
+                  <span class="theme-swatches" aria-hidden="true"><span class="theme-swatch swatch-orbit-1"></span><span class="theme-swatch swatch-orbit-2"></span><span class="theme-swatch swatch-orbit-3"></span><span class="theme-swatch swatch-orbit-4"></span></span>
+                  <span class="theme-choice-summary">Low-glare indigo panels with violet and magenta interaction cues.</span>
+                  <span class="theme-choice-science">A restrained purple scale provides strong edge distinction during long sessions while semantic warning and error colors remain independent.</span>
+                </button>
+                <button class="theme-choice" type="button" data-theme-choice="radar-coral" aria-pressed="false">
+                  <span class="theme-choice-heading"><strong>Radar Coral</strong><span class="theme-choice-check" aria-hidden="true">✓</span></span>
+                  <span class="theme-swatches" aria-hidden="true"><span class="theme-swatch swatch-radar-1"></span><span class="theme-swatch swatch-radar-2"></span><span class="theme-swatch swatch-radar-3"></span><span class="theme-swatch swatch-radar-4"></span></span>
+                  <span class="theme-choice-summary">Warm charcoal surfaces with coral and ice-blue operational emphasis.</span>
+                  <span class="theme-choice-science">Warm primaries reduce dependence on blue-only interaction cues while keeping success, warning, and failure states distinguishable.</span>
+                </button>
+                <button class="theme-choice" type="button" data-theme-choice="daylight" aria-pressed="false">
+                  <span class="theme-choice-heading"><strong>Daylight</strong><span class="theme-choice-check" aria-hidden="true">✓</span></span>
+                  <span class="theme-swatches" aria-hidden="true"><span class="theme-swatch swatch-daylight-1"></span><span class="theme-swatch swatch-daylight-2"></span><span class="theme-swatch swatch-daylight-3"></span><span class="theme-swatch swatch-daylight-4"></span></span>
+                  <span class="theme-choice-summary">Bright cool-gray workspace with cobalt and ocean-blue controls.</span>
+                  <span class="theme-choice-science">Dark typography on separated light surfaces supports bright rooms and print-like readability without flattening table boundaries.</span>
+                </button>
+                <button class="theme-choice" type="button" data-theme-choice="high-visibility" aria-pressed="false">
+                  <span class="theme-choice-heading"><strong>High Visibility</strong><span class="theme-choice-check" aria-hidden="true">✓</span></span>
+                  <span class="theme-swatches" aria-hidden="true"><span class="theme-swatch swatch-visibility-1"></span><span class="theme-swatch swatch-visibility-2"></span><span class="theme-swatch swatch-visibility-3"></span><span class="theme-swatch swatch-visibility-4"></span></span>
+                  <span class="theme-choice-summary">Black surfaces, white text, and high-luminance yellow interaction cues.</span>
+                  <span class="theme-choice-science">Maximum luminance separation and explicit borders prioritize low-vision legibility and keyboard focus over decoration.</span>
+                </button>
+              </div>
+            </article>
+
+            <div class="appearance-control-grid">
+              <article class="panel section-stack">
+                <div class="panel-header compact-panel-header">
+                  <div>
+                    <h3 class="panel-title">Display Density</h3>
+                    <p class="summary-note">Choose comfortable spacing or fit more operational data on screen.</p>
+                  </div>
+                </div>
+                <div class="density-choice-row" role="group" aria-label="Display density">
+                  <button class="density-choice" type="button" data-density-choice="comfortable" aria-pressed="false">
+                    <strong>Comfortable</strong><span>More breathing room for daily administration.</span>
+                  </button>
+                  <button class="density-choice" type="button" data-density-choice="compact" aria-pressed="false">
+                    <strong>Compact</strong><span>Tighter panels, fields, and table rows.</span>
+                  </button>
+                </div>
+              </article>
+
+              <article class="panel section-stack">
+                <div class="panel-header compact-panel-header">
+                  <div>
+                    <h3 class="panel-title">Interface Motion</h3>
+                    <p class="summary-note">Honor the operating-system preference or explicitly minimize interface motion.</p>
+                  </div>
+                </div>
+                <label class="field-group">
+                  <span>Motion Preference</span>
+                  <select id="appearance-motion" class="text-input">
+                    <option value="system">Follow operating system</option>
+                    <option value="reduced">Reduce motion</option>
+                  </select>
+                </label>
+              </article>
+            </div>
+
+            <div class="appearance-action-bar">
+              <p id="appearance-save-state">Appearance matches the saved deployment preference.</p>
+              <div class="section-actions">
+                <button class="secondary-button" id="appearance-default-button" type="button">Use Ping Defaults</button>
+                <button class="secondary-button" id="appearance-reset-button" type="button">Discard Preview</button>
+                <button class="primary-button" id="appearance-save-button" type="button">Save Appearance</button>
+              </div>
+            </div>
+          </div>
 
           <form id="settings-form" class="settings-stack" autocomplete="off">
             <div class="settings-grid">

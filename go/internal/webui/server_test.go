@@ -51,7 +51,7 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	if indexResponse.Code != http.StatusOK {
 		t.Fatalf("index status = %d", indexResponse.Code)
 	}
-	for _, expected := range []string{"/app.css?v=v5.9.0", "/discovery_csv.js?v=v5.9.0", "/app.js?v=v5.9.0"} {
+	for _, expected := range []string{"/theme.js?v=v5.9.0", "/app.css?v=v5.9.0", "/discovery_csv.js?v=v5.9.0", "/app.js?v=v5.9.0"} {
 		if !strings.Contains(indexResponse.Body.String(), expected) {
 			t.Fatalf("index does not contain versioned asset %q", expected)
 		}
@@ -60,7 +60,7 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
 	}
 
-	for _, path := range []string{"/advisor", "/endpoints", "/discovery", "/settings/discovery", "/settings/splunk", "/settings/diagnostics"} {
+	for _, path := range []string{"/advisor", "/endpoints", "/discovery", "/settings/appearance", "/settings/discovery", "/settings/splunk", "/settings/diagnostics"} {
 		deepLinkResponse := httptest.NewRecorder()
 		handler.ServeHTTP(deepLinkResponse, httptest.NewRequest(http.MethodGet, path, nil))
 		if deepLinkResponse.Code != http.StatusOK {
@@ -107,17 +107,25 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`data-route="/endpoints"`,
 		`data-route="/discovery"`,
 		`data-route="/settings"`,
+		`data-settings-route="/settings/appearance"`,
 		`data-settings-route="/settings/discovery"`,
 		`data-settings-route="/settings/splunk"`,
 		`data-settings-route="/settings/diagnostics"`,
 		`href="/settings/discovery"`,
 		`id="endpoint-bulk-action"`,
+		`class="endpoint-workspace"`,
+		`id="endpoint-open-editor-button"`,
+		`id="endpoint-editor-panel" open`,
 		`id="discovery-bulk-action"`,
 		`id="discovery-review-action"`,
 		`class="discovery-workspace"`,
 		`id="discovery-controls-panel" open`,
 		`class="panel section-stack discovery-results-panel"`,
 		`class="panel-caret"`,
+		`id="theme-choice-grid"`,
+		`data-theme-choice="signal-blue"`,
+		`data-theme-choice="daylight"`,
+		`id="appearance-save-button"`,
 		`class="action-menu"`,
 		`class="panel settings-card section-stack naming-rules-card"`,
 	} {
@@ -135,6 +143,9 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`history.pushState(null, '', route)`,
 		`window.addEventListener('popstate'`,
 		`renderRoute('/endpoints', 'push')`,
+		`function openEndpointEditor(scrollIntoView = true)`,
+		`async function loadUIPreferences(showSuccess = false)`,
+		`putJson('/api/ui-preferences'`,
 		`aria-label="Open Pair ${pairNumber} actions"`,
 		`event.target === elements.classificationPreviewHostname`,
 	} {
@@ -153,6 +164,13 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`.naming-rules-card`,
 		`.discovery-workspace`,
 		`.discovery-controls-panel[open] .panel-caret`,
+		`.endpoint-editor-panel[open] .panel-caret`,
+		`.endpoint-field-grid`,
+		`.info-grid > .panel`,
+		`[data-color-scheme="signal-blue"]`,
+		`[data-color-scheme="daylight"]`,
+		`.theme-choice-grid`,
+		`[data-density="compact"]`,
 	} {
 		if !strings.Contains(appCSS, expected) {
 			t.Errorf("responsive interface does not contain %q", expected)
@@ -162,6 +180,11 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 	discoveryResults := strings.Index(indexHTML, `class="panel section-stack discovery-results-panel"`)
 	if discoveryControls < 0 || discoveryResults <= discoveryControls {
 		t.Errorf("Discovery Results must remain a full-width panel after the collapsible Discovery Controls panel: controls=%d results=%d", discoveryControls, discoveryResults)
+	}
+	endpointTable := strings.Index(indexHTML, `class="panel section-stack endpoint-table-panel"`)
+	endpointEditor := strings.Index(indexHTML, `id="endpoint-editor-panel"`)
+	if endpointTable < 0 || endpointEditor <= endpointTable {
+		t.Errorf("Endpoint Editor must remain a full-width panel after the Endpoint Inventory table: table=%d editor=%d", endpointTable, endpointEditor)
 	}
 	for _, obsolete := range []string{"scrollSectionIntoView", "updateActiveNavFromScroll", "sectionHashes"} {
 		if strings.Contains(appJS, obsolete) {
