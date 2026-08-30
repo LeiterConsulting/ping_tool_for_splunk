@@ -1701,6 +1701,11 @@ td {
     grid-template-columns: 58px minmax(0, 1fr);
   }
 
+  .main-shell {
+    width: calc(100vw - 58px);
+    max-width: calc(100vw - 58px);
+  }
+
   .sidebar {
     padding: 0.4rem;
   }
@@ -1727,6 +1732,33 @@ td {
     padding: 0.85rem;
   }
 
+  .page-header > div:first-child,
+  .app-page,
+  .editor-grid,
+  .endpoint-table-panel,
+  .toolbar-row,
+  .table-meta-row,
+  .context-action-bar,
+  .table-wrap {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .app-page,
+  .editor-grid,
+  .endpoint-table-panel,
+  .toolbar-row,
+  .table-meta-row,
+  .context-action-bar {
+    width: 100%;
+  }
+
+  .page-header h1,
+  .page-copy,
+  .table-status {
+    overflow-wrap: anywhere;
+  }
+
   .page-copy {
     font-size: 0.86rem;
   }
@@ -1743,6 +1775,8 @@ td {
   }
 
   .content-scroll {
+    width: 100%;
+    max-width: 100%;
     padding: 0.75rem;
   }
 
@@ -1766,6 +1800,14 @@ td {
     flex: 1 1 100%;
   }
 
+  .action-select-field,
+  .compact-select-field,
+  .filter-input,
+  .text-input-compact {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .action-menu-popover {
     position: fixed;
     top: auto;
@@ -1778,5 +1820,21 @@ td {
 
   .settings-tabs {
     margin-inline: -0.1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+    overflow-x: visible;
+  }
+
+  .settings-tab {
+    min-width: 0;
+    padding-inline: 0.55rem;
+    text-align: center;
+    white-space: normal;
   }
 }

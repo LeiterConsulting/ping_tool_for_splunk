@@ -142,6 +142,9 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`@media (max-width: 1100px)`,
 		`grid-template-columns: 76px minmax(0, 1fr)`,
 		`@media (max-width: 640px)`,
+		`width: calc(100vw - 58px)`,
+		`@media (max-width: 480px)`,
+		`grid-template-columns: repeat(2, minmax(0, 1fr))`,
 		`.action-menu-popover`,
 		`.naming-rules-card`,
 	} {
