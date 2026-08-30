@@ -114,6 +114,10 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`id="endpoint-bulk-action"`,
 		`id="discovery-bulk-action"`,
 		`id="discovery-review-action"`,
+		`class="discovery-workspace"`,
+		`id="discovery-controls-panel" open`,
+		`class="panel section-stack discovery-results-panel"`,
+		`class="panel-caret"`,
 		`class="action-menu"`,
 		`class="panel settings-card section-stack naming-rules-card"`,
 	} {
@@ -147,10 +151,17 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`grid-template-columns: repeat(2, minmax(0, 1fr))`,
 		`.action-menu-popover`,
 		`.naming-rules-card`,
+		`.discovery-workspace`,
+		`.discovery-controls-panel[open] .panel-caret`,
 	} {
 		if !strings.Contains(appCSS, expected) {
 			t.Errorf("responsive interface does not contain %q", expected)
 		}
+	}
+	discoveryControls := strings.Index(indexHTML, `id="discovery-controls-panel"`)
+	discoveryResults := strings.Index(indexHTML, `class="panel section-stack discovery-results-panel"`)
+	if discoveryControls < 0 || discoveryResults <= discoveryControls {
+		t.Errorf("Discovery Results must remain a full-width panel after the collapsible Discovery Controls panel: controls=%d results=%d", discoveryControls, discoveryResults)
 	}
 	for _, obsolete := range []string{"scrollSectionIntoView", "updateActiveNavFromScroll", "sectionHashes"} {
 		if strings.Contains(appJS, obsolete) {

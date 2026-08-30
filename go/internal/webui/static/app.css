@@ -606,6 +606,67 @@ button:disabled {
   grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
 }
 
+.discovery-workspace {
+  display: grid;
+  gap: 1.5rem;
+  min-width: 0;
+  margin-top: 1.5rem;
+}
+
+.discovery-controls-panel,
+.discovery-results-panel {
+  width: 100%;
+  min-width: 0;
+}
+
+.collapsible-panel-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.collapsible-panel-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-panel-summary:hover .panel-title,
+.collapsible-panel-summary:focus-visible .panel-title {
+  color: white;
+}
+
+.collapsible-panel-summary:focus-visible {
+  outline: 2px solid rgba(57, 148, 230, 0.72);
+  outline-offset: 0.45rem;
+  border-radius: var(--radius-sm);
+}
+
+.panel-caret {
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: 0 0 1.35rem;
+  margin-top: 0.1rem;
+  fill: none;
+  stroke: var(--primary-400);
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform: rotate(-90deg);
+  transition: transform 150ms ease;
+}
+
+.discovery-controls-panel[open] .panel-caret {
+  transform: rotate(0deg);
+}
+
+.discovery-controls-content {
+  margin-top: 1.25rem;
+}
+
 .endpoint-editor-panel {
   position: sticky;
   top: 1rem;

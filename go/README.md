@@ -122,6 +122,7 @@ It provides:
 
 - URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages, with separate Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics settings subpages
 - responsive full navigation and compact icon-rail layouts without losing the configured `0.0.0.0:8080` listener behavior
+- collapsible Discovery Controls followed by a full-width Discovery Results table for high-volume review
 - endpoint CRUD with consolidated bulk Production/Maintenance, alerting, monitoring, and deletion actions
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
 - live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status

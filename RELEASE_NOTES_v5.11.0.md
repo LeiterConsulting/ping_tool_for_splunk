@@ -31,6 +31,7 @@ Release date: August 25, 2026
 - Replaces the single anchor-scrolled administration document with URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages.
 - Splits Settings into Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages while retaining unsaved draft state during in-app navigation.
 - Consolidates endpoint and discovery bulk actions into contextual selectors and moves reset, export, test, reorder, and destructive commands into overflow menus.
+- Makes Discovery Controls collapsible with a visible caret and moves Discovery Results to a full-width row beneath it for large result sets.
 - Adds a responsive navigation rail and wrapping action layouts for narrower screens.
 - Keeps naming-rule construction full width, moves per-rule reorder/remove commands into an overflow menu, and prevents preview-only sample text from marking configuration dirty.
 

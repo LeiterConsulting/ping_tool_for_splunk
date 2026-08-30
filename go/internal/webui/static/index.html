@@ -470,14 +470,17 @@
 
           <div id="discovery-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
 
-          <div class="editor-grid">
-            <article class="panel section-stack">
-              <div class="panel-header">
+          <div class="discovery-workspace">
+            <details class="panel discovery-controls-panel" id="discovery-controls-panel" open>
+              <summary class="collapsible-panel-summary">
                 <div>
                   <h3 class="panel-title">Discovery Controls</h3>
                   <p class="summary-note">These values map to the existing discovery script parameters.</p>
                 </div>
-              </div>
+                <svg class="panel-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+              </summary>
+
+              <div class="discovery-controls-content section-stack">
 
               <div class="field-grid field-grid-third">
                 <label class="field-group">
@@ -601,10 +604,11 @@
                 <p class="summary-note">Runs are staged into the editor and only persist after saving endpoints.</p>
               </article>
 
-              <div class="log-surface" id="discovery-logs">Discovery logs will appear here after a run.</div>
-            </article>
+                <div class="log-surface" id="discovery-logs">Discovery logs will appear here after a run.</div>
+              </div>
+            </details>
 
-            <article class="panel section-stack">
+            <article class="panel section-stack discovery-results-panel">
               <div class="panel-header">
                 <div>
                   <h3 class="panel-title">Discovery Results</h3>
