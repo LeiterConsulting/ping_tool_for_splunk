@@ -64,3 +64,7 @@ GPT5_2_PingMonitor_v5_Go_Rewrite.md
 go/dist/
 go/bin/
 go/.cache/
+
+# Python test caches
+__pycache__/
+*.pyc
