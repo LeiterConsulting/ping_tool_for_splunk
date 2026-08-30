@@ -24,6 +24,7 @@ Release date: August 25, 2026
 - Separates Alerting Enabled from monitoring: alert-disabled devices continue to be measured but are excluded from packaged alert searches.
 - Adds subnet name, VLAN, location, addressing mode, and routing-domain enrichment for discovery.
 - Adds ordered Go RE2 naming-convention rules with named captures, test/preview controls, fill-blank or overwrite behavior, and rule provenance.
+- Keeps each naming-pair title synchronized with its Rule ID and gives reorder/remove controls unique accessible names when multiple pairs are present.
 
 ## Splunk Pairing
 
@@ -43,6 +44,7 @@ Release date: August 25, 2026
 
 - Full Go test suite and full race-enabled Go test suite.
 - Deterministic browser-workflow tests for review gating, filters, approval metadata, and immutable scan evidence.
+- Interactive naming-builder validation for valid and invalid RE2 rules, hostname and FQDN sources, pair ordering/removal, contextual help, and non-persistent reset behavior.
 - API, persistence, restart, DHCP address-change, endpoint CSV round-trip, validation, and discovery-delta tests.
 - JavaScript syntax checks, Splunk XML parsing, Configuration Advisor validation, and Windows service-definition validation.
 - Splunk AppInspect precert on the packaged app: 0 errors, 0 failures, 0 future failures, 4 expected warnings, and 103 successful checks.

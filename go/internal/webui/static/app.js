@@ -2544,14 +2544,16 @@ function renderClassificationRuleEditor() {
   }
   elements.classificationRuleRows.innerHTML = state.classificationRules.map((rule, index) => {
     const assignments = rule.assignments || {};
+    const pairNumber = index + 1;
+    const titleID = `classification-rule-title-${index}`;
     return `
-      <article class="repeatable-row classification-rule-row" data-index="${index}">
+      <article class="repeatable-row classification-rule-row" data-index="${index}" aria-labelledby="${titleID}">
         <div class="repeatable-row-header">
-          <strong>Pair ${index + 1}: ${escapeHtml(rule.id || 'unnamed')}</strong>
+          <strong id="${titleID}" data-rule-title>Pair ${pairNumber}: ${escapeHtml(rule.id || 'unnamed')}</strong>
           <div class="button-row compact-button-row">
-            <button class="secondary-button compact-action" type="button" data-move-rule="up" data-index="${index}" ${index === 0 ? 'disabled' : ''}>Move Up</button>
-            <button class="secondary-button compact-action" type="button" data-move-rule="down" data-index="${index}" ${index === state.classificationRules.length - 1 ? 'disabled' : ''}>Move Down</button>
-            <button class="danger-button compact-action" type="button" data-remove-rule="${index}">Remove</button>
+            <button class="secondary-button compact-action" type="button" data-move-rule="up" data-index="${index}" aria-label="Move Pair ${pairNumber} up" ${index === 0 ? 'disabled' : ''}>Move Up</button>
+            <button class="secondary-button compact-action" type="button" data-move-rule="down" data-index="${index}" aria-label="Move Pair ${pairNumber} down" ${index === state.classificationRules.length - 1 ? 'disabled' : ''}>Move Down</button>
+            <button class="danger-button compact-action" type="button" data-remove-rule="${index}" aria-label="Remove Pair ${pairNumber}">Remove</button>
           </div>
         </div>
         <div class="field-grid">
@@ -4094,7 +4096,14 @@ elements.classificationRuleRows.addEventListener('click', (event) => {
 });
 elements.previewClassificationSampleButton.addEventListener('click', previewClassificationSample);
 
-elements.settingsForm.addEventListener('input', () => {
+elements.settingsForm.addEventListener('input', (event) => {
+  if (event.target.matches('[data-rule-field="id"]')) {
+    const row = event.target.closest('.classification-rule-row');
+    const title = row?.querySelector('[data-rule-title]');
+    if (row && title) {
+      title.textContent = `Pair ${Number(row.dataset.index) + 1}: ${readTextValue(event.target) || 'unnamed'}`;
+    }
+  }
   state.configDirty = true;
   renderConfigButtons();
   renderStatus();

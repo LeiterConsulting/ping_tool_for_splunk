@@ -73,6 +73,26 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	}
 }
 
+func TestStaticNamingRuleEditorKeepsDynamicContextAccessible(t *testing.T) {
+	appBytes, err := fs.ReadFile(staticFiles, "static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appJS := string(appBytes)
+	for _, expected := range []string{
+		`aria-labelledby="${titleID}"`,
+		`data-rule-title`,
+		`aria-label="Move Pair ${pairNumber} up"`,
+		`aria-label="Move Pair ${pairNumber} down"`,
+		`aria-label="Remove Pair ${pairNumber}"`,
+		`title.textContent = `,
+	} {
+		if !strings.Contains(appJS, expected) {
+			t.Errorf("naming rule editor does not contain %q", expected)
+		}
+	}
+}
+
 func TestStaticUIProvidesContextHelpForEveryConfigurationField(t *testing.T) {
 	indexBytes, err := fs.ReadFile(staticFiles, "static/index.html")
 	if err != nil {
