@@ -60,6 +60,18 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
 	}
 
+	for _, path := range []string{"/advisor", "/endpoints", "/discovery", "/settings/discovery", "/settings/splunk", "/settings/diagnostics"} {
+		deepLinkResponse := httptest.NewRecorder()
+		handler.ServeHTTP(deepLinkResponse, httptest.NewRequest(http.MethodGet, path, nil))
+		if deepLinkResponse.Code != http.StatusOK {
+			t.Errorf("deep link %s status = %d, want 200", path, deepLinkResponse.Code)
+			continue
+		}
+		if !strings.Contains(deepLinkResponse.Body.String(), `data-route="/endpoints"`) {
+			t.Errorf("deep link %s did not serve the application shell", path)
+		}
+	}
+
 	assetResponse := httptest.NewRecorder()
 	handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, "/app.js?v=v5.9.0", nil))
 	if assetResponse.Code != http.StatusOK {
@@ -70,6 +82,86 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 	}
 	if assetResponse.Header().Get("Pragma") != "no-cache" {
 		t.Fatalf("asset Pragma = %q, want no-cache", assetResponse.Header().Get("Pragma"))
+	}
+}
+
+func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
+	indexBytes, err := fs.ReadFile(staticFiles, "static/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appBytes, err := fs.ReadFile(staticFiles, "static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cssBytes, err := fs.ReadFile(staticFiles, "static/app.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexHTML := string(indexBytes)
+	appJS := string(appBytes)
+	appCSS := string(cssBytes)
+
+	for _, expected := range []string{
+		`data-route="/advisor"`,
+		`data-route="/endpoints"`,
+		`data-route="/discovery"`,
+		`data-route="/settings"`,
+		`data-settings-route="/settings/discovery"`,
+		`data-settings-route="/settings/splunk"`,
+		`data-settings-route="/settings/diagnostics"`,
+		`href="/settings/discovery"`,
+		`id="endpoint-bulk-action"`,
+		`id="discovery-bulk-action"`,
+		`id="discovery-review-action"`,
+		`class="action-menu"`,
+		`class="panel settings-card section-stack naming-rules-card"`,
+	} {
+		if !strings.Contains(indexHTML, expected) {
+			t.Errorf("routed interface does not contain %q", expected)
+		}
+	}
+	for _, obsolete := range []string{`href="#overview"`, `href="#inventory"`, `href="#discovery"`, `href="#settings"`} {
+		if strings.Contains(indexHTML, obsolete) {
+			t.Errorf("routed interface still contains anchor navigation %q", obsolete)
+		}
+	}
+	for _, expected := range []string{
+		`function renderRoute(pathname, historyMode = '')`,
+		`history.pushState(null, '', route)`,
+		`window.addEventListener('popstate'`,
+		`renderRoute('/endpoints', 'push')`,
+		`aria-label="Open Pair ${pairNumber} actions"`,
+		`event.target === elements.classificationPreviewHostname`,
+	} {
+		if !strings.Contains(appJS, expected) {
+			t.Errorf("route controller does not contain %q", expected)
+		}
+	}
+	for _, expected := range []string{
+		`@media (max-width: 1100px)`,
+		`grid-template-columns: 76px minmax(0, 1fr)`,
+		`@media (max-width: 640px)`,
+		`.action-menu-popover`,
+		`.naming-rules-card`,
+	} {
+		if !strings.Contains(appCSS, expected) {
+			t.Errorf("responsive interface does not contain %q", expected)
+		}
+	}
+	for _, obsolete := range []string{"scrollSectionIntoView", "updateActiveNavFromScroll", "sectionHashes"} {
+		if strings.Contains(appJS, obsolete) {
+			t.Errorf("route controller still contains obsolete scroll navigation %q", obsolete)
+		}
+	}
+
+	idPattern := regexp.MustCompile(`\bid="([^"]+)"`)
+	seenIDs := make(map[string]bool)
+	for _, match := range idPattern.FindAllStringSubmatch(indexHTML, -1) {
+		if seenIDs[match[1]] {
+			t.Errorf("static interface contains duplicate id %q", match[1])
+		}
+		seenIDs[match[1]] = true
 	}
 }
 
@@ -904,7 +996,7 @@ func TestStaticShellServesIndex(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
-	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", "Endpoint Inventory", "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete This Endpoint", "Needs Review", "Defer Review", "Return to Needs Review", "/review_workflow.js?v=test") {
+	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", `data-route="/endpoints"`, "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete this endpoint", "Needs Review", "Defer Review", "Return to Needs Review", "/review_workflow.js?v=test") {
 		t.Fatalf("body missing expected shell markers: %q", body)
 	}
 	for header, want := range map[string]string{

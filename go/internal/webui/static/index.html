@@ -16,12 +16,27 @@
           <p class="brand-subtitle" id="version-text">Loading deployment...</p>
         </div>
       </div>
-      <nav class="nav-list">
-        <a class="nav-item active" href="#overview" aria-current="page">Overview</a>
-        <a class="nav-item" href="#advisor">Advisor</a>
-        <a class="nav-item" href="#inventory">Endpoints</a>
-        <a class="nav-item" href="#discovery">Discovery</a>
-        <a class="nav-item" href="#settings">Settings</a>
+      <nav class="nav-list" aria-label="Primary navigation">
+        <a class="nav-item active" href="/" data-route="/" aria-current="page" title="Overview">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></svg>
+          <span class="nav-label">Overview</span>
+        </a>
+        <a class="nav-item" href="/advisor" data-route="/advisor" title="Advisor">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a7 7 0 0 0-4 12.74V19h8v-3.26A7 7 0 0 0 12 3Zm-2 19h4"/><path d="m9.5 11.5 1.7 1.7 3.3-3.7"/></svg>
+          <span class="nav-label">Advisor</span>
+        </a>
+        <a class="nav-item" href="/endpoints" data-route="/endpoints" title="Endpoints">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01M12 10v4"/></svg>
+          <span class="nav-label">Endpoints</span>
+        </a>
+        <a class="nav-item" href="/discovery" data-route="/discovery" title="Discovery">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4M11 7v4l3 2"/></svg>
+          <span class="nav-label">Discovery</span>
+        </a>
+        <a class="nav-item" href="/settings" data-route="/settings" title="Settings">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.17.38.47.7.85.9.24.13.5.2.78.2H21v4h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+          <span class="nav-label">Settings</span>
+        </a>
       </nav>
       <div class="sidebar-footer">
         <p id="sidebar-config-source">Config source loading...</p>
@@ -32,25 +47,26 @@
     <main class="main-shell">
       <header class="page-header">
         <div>
-          <p class="eyebrow">Collector Administration</p>
-          <h1>Ping Monitor</h1>
-          <p class="page-copy">See what the collector is doing now, manage endpoints safely, and keep delivery to Splunk healthy.</p>
+          <p class="eyebrow" id="page-eyebrow">Collector Administration</p>
+          <h1 id="page-title">Overview</h1>
+          <p class="page-copy" id="page-description">Live collector, cycle, endpoint reload, and delivery state.</p>
         </div>
         <div class="header-actions">
           <span class="status-pill" id="mode-pill">Loading...</span>
           <button class="secondary-button restart-button hidden" id="restart-collector-button" type="button">Restart Collector</button>
-          <button class="primary-button" id="refresh-button" type="button">Reload From Disk</button>
+          <details class="action-menu header-menu">
+            <summary class="icon-button" aria-label="Open global actions" title="Global actions">•••</summary>
+            <div class="action-menu-popover action-menu-popover-right">
+              <button class="menu-action" id="refresh-button" type="button">Reload all data from disk</button>
+            </div>
+          </details>
         </div>
       </header>
 
       <div class="content-scroll">
         <div id="runtime-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
-        <section id="overview" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Overview</h2>
-              <p>Live collector, cycle, endpoint reload, and delivery state.</p>
-            </div>
+        <section id="overview" class="section-stack app-page active" data-page="/">
+          <div class="page-context-row">
             <div class="meta-stack">
               <div class="meta-chip" id="config-path-chip">Loading config path...</div>
               <div class="meta-chip" id="endpoint-path">Loading endpoint path...</div>
@@ -122,12 +138,8 @@
           </div>
         </section>
 
-        <section id="advisor" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Configuration Advisor</h2>
-              <p>Validate signal quality, inventory integrity, and worst-case capacity before the service starts.</p>
-            </div>
+        <section id="advisor" class="section-stack app-page" data-page="/advisor" hidden>
+          <div class="page-context-row">
             <div class="section-actions advisor-toolbar">
               <label class="field-group advisor-profile-field">
                 <span>Operating profile</span>
@@ -224,16 +236,17 @@
           </article>
         </section>
 
-        <section id="inventory" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Endpoint Inventory</h2>
-              <p>Full CRUD over the live endpoint file. Changes stay local until you save them back to disk.</p>
-            </div>
+        <section id="inventory" class="section-stack app-page" data-page="/endpoints" hidden>
+          <div class="page-context-row">
             <div class="section-actions">
               <span class="meta-chip" id="endpoint-dirty-pill">In sync</span>
-              <button class="secondary-button" id="reset-endpoints-button" type="button">Reset Draft</button>
               <button class="primary-button" id="save-endpoints-button" type="button">Save Endpoints</button>
+              <details class="action-menu">
+                <summary class="icon-button" aria-label="Open endpoint file actions" title="Endpoint file actions">•••</summary>
+                <div class="action-menu-popover action-menu-popover-right">
+                  <button class="menu-action" id="reset-endpoints-button" type="button">Reset endpoint draft</button>
+                </div>
+              </details>
             </div>
           </div>
 
@@ -242,8 +255,18 @@
           <div class="editor-grid">
             <article class="panel section-stack endpoint-table-panel">
               <div class="toolbar-row">
-                <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor">
-                <div class="segmented-control" role="tablist" aria-label="Endpoint filter">
+                <input id="search-input" class="filter-input" type="search" placeholder="Search IP, hostname, group, vendor" aria-label="Search endpoints">
+                <label class="inline-field compact-select-field">
+                  <span>Show</span>
+                  <select id="endpoint-filter-select" class="text-input text-input-compact" aria-label="Endpoint filter">
+                    <option value="all">All endpoints</option>
+                    <option value="production">Production</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="legacy_dev">Legacy Dev</option>
+                    <option value="alerting_disabled">Alerting Disabled</option>
+                  </select>
+                </label>
+                <div class="segmented-control hidden" role="tablist" aria-label="Endpoint filter compatibility controls" aria-hidden="true">
                   <button class="segment active" type="button" role="tab" aria-selected="true" data-filter="all">All</button>
                   <button class="segment" type="button" role="tab" aria-selected="false" data-filter="production">Production</button>
                   <button class="segment" type="button" role="tab" aria-selected="false" data-filter="maintenance">Maintenance</button>
@@ -252,10 +275,32 @@
                 </div>
               </div>
 
-              <div class="button-row">
-                <button class="secondary-button" id="add-endpoint-button" type="button">Add Endpoint</button>
-                <button class="secondary-button" id="select-all-endpoints-button" type="button">Select All</button>
-                <button class="secondary-button" id="deselect-all-endpoints-button" type="button">Deselect All</button>
+              <div class="context-action-bar">
+                <button class="primary-button" id="add-endpoint-button" type="button">Add Endpoint</button>
+                <details class="action-menu">
+                  <summary class="secondary-button">Selection</summary>
+                  <div class="action-menu-popover">
+                    <button class="menu-action" id="select-all-endpoints-button" type="button">Select all matching endpoints</button>
+                    <button class="menu-action" id="deselect-all-endpoints-button" type="button">Clear endpoint selection</button>
+                  </div>
+                </details>
+                <label class="action-select-field">
+                  <span class="sr-only">Selected endpoint action</span>
+                  <select id="endpoint-bulk-action" class="text-input text-input-compact">
+                    <option value="">Selected endpoint action...</option>
+                    <option value="production">Mark Production</option>
+                    <option value="maintenance">Mark Maintenance</option>
+                    <option value="alerting_enable">Enable Alerting</option>
+                    <option value="alerting_disable">Disable Alerting</option>
+                    <option value="monitoring_resume">Resume Monitoring</option>
+                    <option value="monitoring_pause">Pause Monitoring</option>
+                    <option value="delete">Delete Selected</option>
+                  </select>
+                </label>
+                <button class="secondary-button" id="apply-endpoint-bulk-action" type="button">Apply</button>
+              </div>
+
+              <div class="button-row hidden" aria-hidden="true">
                 <button class="secondary-button" id="mark-selected-maintenance-button" type="button">Mark Maintenance</button>
                 <button class="secondary-button" id="mark-selected-production-button" type="button">Mark Selected Prod</button>
                 <button class="secondary-button" id="disable-selected-alerting-button" type="button">Disable Alerting</button>
@@ -315,7 +360,12 @@
                   <h3 class="panel-title">Endpoint Editor</h3>
                   <p class="summary-note" id="endpoint-selection-label">Select an endpoint to edit its live CSV fields.</p>
                 </div>
-                <button class="danger-button" id="delete-current-endpoint-button" type="button">Delete This Endpoint</button>
+                <details class="action-menu">
+                  <summary class="icon-button" aria-label="Open endpoint editor actions" title="Endpoint editor actions">•••</summary>
+                  <div class="action-menu-popover action-menu-popover-right">
+                    <button class="menu-action menu-action-danger" id="delete-current-endpoint-button" type="button">Delete this endpoint</button>
+                  </div>
+                </details>
               </div>
 
               <form id="endpoint-form" class="form-stack" autocomplete="off">
@@ -410,12 +460,8 @@
 
         </section>
 
-        <section id="discovery" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Discovery</h2>
-              <p>Run the companion discovery workflow, review the discovered endpoints, and load them into the endpoint draft before saving.</p>
-            </div>
+        <section id="discovery" class="section-stack app-page" data-page="/discovery" hidden>
+          <div class="page-context-row">
             <div class="section-actions">
               <span class="meta-chip" id="discovery-availability">Checking discovery...</span>
               <span class="meta-chip" id="discovery-run-state">Idle</span>
@@ -452,11 +498,43 @@
                 </label>
               </div>
 
-              <div class="button-row">
+              <div class="context-action-bar discovery-action-bar">
                 <button class="primary-button" id="run-discovery-button" type="button">Run Discovery</button>
                 <button class="danger-button" id="cancel-discovery-button" type="button" disabled>Cancel Discovery</button>
-                <button class="secondary-button" id="select-all-discovery-button" type="button">Select All</button>
-                <button class="secondary-button" id="deselect-all-discovery-button" type="button">Deselect All</button>
+                <details class="action-menu">
+                  <summary class="secondary-button">Selection</summary>
+                  <div class="action-menu-popover">
+                    <button class="menu-action" id="select-all-discovery-button" type="button">Select all visible results</button>
+                    <button class="menu-action" id="deselect-all-discovery-button" type="button">Clear discovery selection</button>
+                  </div>
+                </details>
+                <label class="action-select-field">
+                  <span class="sr-only">Selected discovery action</span>
+                  <select id="discovery-bulk-action" class="text-input text-input-compact">
+                    <option value="">Selected discovery action...</option>
+                    <option value="production">Mark Production</option>
+                    <option value="maintenance">Mark Maintenance</option>
+                    <option value="alerting_enable">Enable Alerting</option>
+                    <option value="alerting_disable">Disable Alerting</option>
+                    <option value="dynamic">Mark DHCP / Dynamic</option>
+                    <option value="static">Mark Static</option>
+                    <option value="defer">Defer Review</option>
+                    <option value="ignore">Ignore Selected</option>
+                    <option value="needs_review">Return to Needs Review</option>
+                    <option value="export_selected">Export Selected CSV</option>
+                    <option value="add_selected">Add Selected to Endpoint Draft</option>
+                  </select>
+                </label>
+                <button class="secondary-button" id="apply-discovery-bulk-action" type="button">Apply</button>
+                <details class="action-menu">
+                  <summary class="icon-button" aria-label="Open discovery export actions" title="Discovery export actions">•••</summary>
+                  <div class="action-menu-popover action-menu-popover-right">
+                    <button class="menu-action" id="export-discovery-all-button" type="button">Export all results as CSV</button>
+                  </div>
+                </details>
+              </div>
+
+              <div class="button-row hidden" aria-hidden="true">
                 <button class="secondary-button" id="mark-discovery-maintenance-button" type="button">Mark Maintenance</button>
                 <button class="secondary-button" id="mark-discovery-production-button" type="button">Mark Selected Prod</button>
                 <button class="secondary-button" id="disable-discovery-alerting-button" type="button">Disable Alerting</button>
@@ -466,7 +544,6 @@
                 <button class="secondary-button" id="defer-discovery-selected-button" type="button">Defer Review</button>
                 <button class="secondary-button" id="ignore-discovery-selected-button" type="button">Ignore Selected</button>
                 <button class="secondary-button" id="reset-discovery-review-button" type="button">Return to Needs Review</button>
-                <button class="secondary-button" id="export-discovery-all-button" type="button">Export All CSV</button>
                 <button class="secondary-button" id="export-discovery-selected-button" type="button">Export Selected CSV</button>
                 <button class="secondary-button" id="add-discovery-selected-button" type="button">Add Selected to Device List</button>
               </div>
@@ -487,7 +564,18 @@
                   <label class="field-group"><span>Vendor</span><input id="discovery-bulk-vendor" class="text-input" type="text"></label>
                   <label class="field-group"><span>Review Note</span><input id="discovery-review-note" class="text-input" type="text" maxlength="2000" placeholder="Optional reason for deferring or ignoring"></label>
                 </div>
-                <div class="button-row">
+                <div class="context-action-bar">
+                  <label class="action-select-field">
+                    <span class="sr-only">Bulk discovery review action</span>
+                    <select id="discovery-review-action" class="text-input text-input-compact">
+                      <option value="fields">Apply Common Fields</option>
+                      <option value="preview_naming">Preview Naming Rules</option>
+                      <option value="apply_naming">Apply Naming Rules</option>
+                    </select>
+                  </label>
+                  <button class="secondary-button" id="apply-discovery-review-action" type="button">Apply</button>
+                </div>
+                <div class="button-row hidden" aria-hidden="true">
                   <button class="secondary-button" id="apply-discovery-bulk-fields-button" type="button">Apply Common Fields</button>
                   <button class="secondary-button" id="preview-discovery-classification-button" type="button">Preview Naming Rules</button>
                   <button class="secondary-button" id="apply-discovery-classification-button" type="button">Apply Naming Rules</button>
@@ -524,7 +612,18 @@
                 </div>
               </div>
 
-              <div class="segmented-control" role="tablist" aria-label="Discovery review filter">
+              <label class="inline-field compact-select-field">
+                <span>Review queue</span>
+                <select id="discovery-review-filter-select" class="text-input text-input-compact" aria-label="Discovery review filter">
+                  <option value="needs_review">Needs Review</option>
+                  <option value="staged">Staged</option>
+                  <option value="approved">Approved</option>
+                  <option value="deferred">Deferred</option>
+                  <option value="ignored">Ignored</option>
+                  <option value="all">All Results</option>
+                </select>
+              </label>
+              <div class="segmented-control hidden" role="tablist" aria-label="Discovery review filter compatibility controls" aria-hidden="true">
                 <button class="segment active" type="button" role="tab" aria-selected="true" data-discovery-review-filter="needs_review">Needs Review</button>
                 <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="staged">Staged</button>
                 <button class="segment" type="button" role="tab" aria-selected="false" data-discovery-review-filter="approved">Approved</button>
@@ -631,21 +730,29 @@
           </article>
         </section>
 
-        <section id="settings" class="section-stack">
-          <div class="section-heading">
-            <div>
-              <h2>Configuration</h2>
-              <p>Changes are saved to disk. Engine settings take effect after the collector restarts.</p>
-            </div>
+        <section id="settings" class="section-stack app-page" data-page="/settings" hidden>
+          <div class="page-context-row">
+            <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
             <div class="section-actions">
-              <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
-              <button class="secondary-button" id="test-hec-button" type="button">Test Event HEC</button>
-              <button class="secondary-button" id="test-metrics-button" type="button">Test Metrics HEC</button>
-              <button class="secondary-button" id="reload-config-button" type="button">Reload Config</button>
-              <button class="secondary-button" id="reset-config-button" type="button">Reset Changes</button>
               <button class="primary-button" id="save-config-button" type="button">Save Config</button>
+              <details class="action-menu">
+                <summary class="icon-button" aria-label="Open configuration actions" title="Configuration actions">•••</summary>
+                <div class="action-menu-popover action-menu-popover-right">
+                  <button class="menu-action" id="test-hec-button" type="button">Test Event HEC</button>
+                  <button class="menu-action" id="test-metrics-button" type="button">Test Metrics HEC</button>
+                  <button class="menu-action" id="reload-config-button" type="button">Reload configuration from disk</button>
+                  <button class="menu-action" id="reset-config-button" type="button">Reset unsaved changes</button>
+                </div>
+              </details>
             </div>
           </div>
+
+          <nav class="settings-tabs" aria-label="Configuration sections">
+            <a class="settings-tab active" href="/settings" aria-current="page" data-settings-route="/settings" data-settings-tab="runtime">Runtime</a>
+            <a class="settings-tab" href="/settings/discovery" data-settings-route="/settings/discovery" data-settings-tab="discovery">Discovery &amp; CMDB</a>
+            <a class="settings-tab" href="/settings/splunk" data-settings-route="/settings/splunk" data-settings-tab="splunk">Splunk Delivery</a>
+            <a class="settings-tab" href="/settings/diagnostics" data-settings-route="/settings/diagnostics" data-settings-tab="diagnostics">Diagnostics</a>
+          </nav>
 
           <div id="settings-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
           <div id="output-test-details" class="log-surface hidden"></div>
@@ -653,7 +760,7 @@
           <form id="settings-form" class="settings-stack" autocomplete="off">
             <div class="settings-grid">
               <div class="settings-stack">
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="runtime">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Core Runtime</h3>
@@ -684,7 +791,7 @@
                   </label>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="runtime">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Output and Ping Engine</h3>
@@ -731,7 +838,7 @@
                   </label>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="discovery">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Weekly Discovery Schedule</h3>
@@ -794,7 +901,7 @@
                   </div>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="discovery">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Discovery Subnet Catalog</h3>
@@ -806,7 +913,7 @@
                   <p class="field-help">The most-specific matching CIDR supplies subnet name, VLAN, location, routing domain, and addressing mode.</p>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack naming-rules-card" data-settings-panel="discovery">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Naming Convention Rules</h3>
@@ -832,7 +939,7 @@
                   <p class="field-help">Go uses RE2 regular expressions: execution is bounded and backreferences/lookaround are intentionally unsupported. Named captures such as <code>(?P&lt;site&gt;...)</code> can be used in assignments as <code>${site}</code>.</p>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="diagnostics">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Diagnostics</h3>
@@ -861,7 +968,7 @@
               </div>
 
               <div class="settings-stack">
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="splunk">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">HEC Events</h3>
@@ -960,7 +1067,7 @@
                   </div>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="splunk">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Metrics Output</h3>
@@ -1048,7 +1155,7 @@
                   </div>
                 </article>
 
-                <article class="panel settings-card section-stack">
+                <article class="panel settings-card section-stack" data-settings-panel="splunk">
                   <div class="panel-header compact-panel-header">
                     <div>
                       <h3 class="panel-title">Durable Delivery</h3>

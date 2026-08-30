@@ -120,7 +120,9 @@ The optional local admin UI runs from the same Go binary and works against the s
 
 It provides:
 
-- endpoint CRUD with bulk dev/prod actions
+- URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages, with separate Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics settings subpages
+- responsive full navigation and compact icon-rail layouts without losing the configured `0.0.0.0:8080` listener behavior
+- endpoint CRUD with consolidated bulk Production/Maintenance, alerting, monitoring, and deletion actions
 - explicit-selection safeguards for bulk actions and revision conflict protection for saves
 - live collector, monitoring-cycle, endpoint-reload, Splunk-delivery, and outbox status
 - config editing against the active config file
@@ -134,7 +136,12 @@ It provides:
 - a dedicated Advisor view with readiness counts, current/proposed schedule evidence, findings, change previews, safe fixes, profiles, and a bounded benchmark
 - a confirmation-gated Restart Collector action when a saved config revision is not yet active
 
-The UI serves these key routes:
+The browser UI serves these page routes:
+
+- `GET /`, `/advisor`, `/endpoints`, and `/discovery`
+- `GET /settings`, `/settings/discovery`, `/settings/splunk`, and `/settings/diagnostics`
+
+The UI serves these key API routes:
 
 - `GET /healthz`
 - `GET /api/status`

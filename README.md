@@ -162,6 +162,9 @@ Endpoint file rules:
 
 The current Go runtime separates endpoint hot reload from engine configuration loading:
 
+- The admin UI is divided into URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages instead of one anchor-scrolled document. Settings has dedicated Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages.
+- Primary actions remain visible while selection, export, reset, test, reorder, and destructive actions use contextual dropdowns or overflow menus. Draft endpoint/config state remains in memory while moving between pages.
+- The navigation collapses to an icon rail on narrower displays, action groups wrap without overflowing, and settings subpage links remain horizontally scrollable at phone widths.
 - `endpoints.csv` is checked between cycles and reloaded automatically when the file changes.
 - Invalid endpoint edits do not replace the active set; the runtime keeps the last known good endpoint list until the file is corrected.
 - The embedded UI loads the active deployment files at startup, so an existing deployment can be managed in place without re-entering configuration.

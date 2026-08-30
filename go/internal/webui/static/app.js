@@ -13,6 +13,8 @@ const state = {
   configDirty: false,
   config: null,
   configSecrets: {},
+  activeRoute: '/',
+  settingsTab: 'runtime',
   classificationRules: [],
   discoverySubnets: [],
   runtimeRefreshPending: false,
@@ -69,6 +71,10 @@ const elements = {
   sidebarConfigSource: document.getElementById('sidebar-config-source'),
   sidebarDiscoveryStatus: document.getElementById('sidebar-discovery-status'),
   versionText: document.getElementById('version-text'),
+  pageEyebrow: document.getElementById('page-eyebrow'),
+  pageTitle: document.getElementById('page-title'),
+  pageDescription: document.getElementById('page-description'),
+  pageSections: Array.from(document.querySelectorAll('.app-page[data-page]')),
   modePill: document.getElementById('mode-pill'),
   runtimeBanner: document.getElementById('runtime-banner'),
   runtimeState: document.getElementById('runtime-state'),
@@ -161,8 +167,11 @@ const elements = {
     maintenance_reason: document.getElementById('endpoint-maintenance-reason'),
   },
   searchInput: document.getElementById('search-input'),
+  endpointFilterSelect: document.getElementById('endpoint-filter-select'),
+  endpointBulkAction: document.getElementById('endpoint-bulk-action'),
+  applyEndpointBulkActionButton: document.getElementById('apply-endpoint-bulk-action'),
   filterButtons: Array.from(document.querySelectorAll('[data-filter]')),
-  navLinks: Array.from(document.querySelectorAll('.nav-item[href^="#"]')),
+  navLinks: Array.from(document.querySelectorAll('.nav-item[data-route]')),
   discoveryBanner: document.getElementById('discovery-banner'),
   discoveryAvailability: document.getElementById('discovery-availability'),
   discoveryRunState: document.getElementById('discovery-run-state'),
@@ -184,6 +193,11 @@ const elements = {
   ignoreDiscoverySelectedButton: document.getElementById('ignore-discovery-selected-button'),
   resetDiscoveryReviewButton: document.getElementById('reset-discovery-review-button'),
   discoveryReviewNote: document.getElementById('discovery-review-note'),
+  discoveryBulkAction: document.getElementById('discovery-bulk-action'),
+  applyDiscoveryBulkActionButton: document.getElementById('apply-discovery-bulk-action'),
+  discoveryReviewAction: document.getElementById('discovery-review-action'),
+  applyDiscoveryReviewActionButton: document.getElementById('apply-discovery-review-action'),
+  discoveryReviewFilterSelect: document.getElementById('discovery-review-filter-select'),
   discoveryReviewFilterButtons: Array.from(document.querySelectorAll('[data-discovery-review-filter]')),
   discoveryBulkFields: {
     group: document.getElementById('discovery-bulk-group'),
@@ -221,6 +235,8 @@ const elements = {
   outputTestDetails: document.getElementById('output-test-details'),
   settingsSourceChip: document.getElementById('settings-source-chip'),
   settingsForm: document.getElementById('settings-form'),
+  settingsTabs: Array.from(document.querySelectorAll('[data-settings-route]')),
+  settingsPanels: Array.from(document.querySelectorAll('[data-settings-panel]')),
   testHECButton: document.getElementById('test-hec-button'),
   testMetricsButton: document.getElementById('test-metrics-button'),
   reloadConfigButton: document.getElementById('reload-config-button'),
@@ -307,7 +323,68 @@ const elements = {
   },
 };
 
-const sectionHashes = ['#overview', '#advisor', '#inventory', '#discovery', '#settings'];
+const pageRoutes = {
+  '/': {
+    section: 'overview',
+    eyebrow: 'Collector Administration',
+    title: 'Overview',
+    description: 'Live collector health, monitoring cycles, endpoint reload state, and Splunk delivery.',
+  },
+  '/advisor': {
+    section: 'advisor',
+    eyebrow: 'Readiness and Signal Quality',
+    title: 'Configuration Advisor',
+    description: 'Validate signal quality, inventory integrity, and worst-case capacity before service startup.',
+  },
+  '/endpoints': {
+    section: 'inventory',
+    eyebrow: 'Monitored Inventory',
+    title: 'Endpoints',
+    description: 'Manage monitored devices and operational policy without losing draft changes between views.',
+  },
+  '/discovery': {
+    section: 'discovery',
+    eyebrow: 'Network Discovery',
+    title: 'Discovery',
+    description: 'Scan, review, classify, and stage discovered assets using explicit CMDB evidence.',
+  },
+  '/settings': {
+    section: 'settings',
+    settingsTab: 'runtime',
+    eyebrow: 'Configuration',
+    title: 'Runtime Settings',
+    description: 'Tune probe timing, concurrency, execution mode, and local result retention.',
+  },
+  '/settings/discovery': {
+    section: 'settings',
+    settingsTab: 'discovery',
+    eyebrow: 'Configuration',
+    title: 'Discovery and CMDB',
+    description: 'Configure schedules, subnet context, retention, and naming-convention rules.',
+  },
+  '/settings/splunk': {
+    section: 'settings',
+    settingsTab: 'splunk',
+    eyebrow: 'Configuration',
+    title: 'Splunk Delivery',
+    description: 'Configure event, metrics, acknowledgment, retry, and durable outbox behavior.',
+  },
+  '/settings/diagnostics': {
+    section: 'settings',
+    settingsTab: 'diagnostics',
+    eyebrow: 'Configuration',
+    title: 'Diagnostics',
+    description: 'Control runtime diagnostic output and memory instrumentation.',
+  },
+};
+
+const legacyHashRoutes = {
+  '#overview': '/',
+  '#advisor': '/advisor',
+  '#inventory': '/endpoints',
+  '#discovery': '/discovery',
+  '#settings': '/settings',
+};
 
 const checkboxFormat = 'Checked or unchecked.';
 const positiveIntegerFormat = 'Whole number, 1 or higher.';
@@ -1799,6 +1876,9 @@ function updateSortButtons() {
 }
 
 function renderEndpointFilterButtons() {
+  if (elements.endpointFilterSelect) {
+    elements.endpointFilterSelect.value = state.filter;
+  }
   elements.filterButtons.forEach((button) => {
     const isActive = (button.dataset.filter || 'all') === state.filter;
     button.classList.toggle('active', isActive);
@@ -1898,17 +1978,28 @@ function postJson(path, payload) {
   });
 }
 
-function usesInnerScroll() {
-  return Boolean(elements.contentScroll) && getComputedStyle(elements.contentScroll).overflowY !== 'visible';
+function normalizeRoutePath(pathname) {
+  const clean = String(pathname || '/').replace(/\/+$/, '') || '/';
+  if (clean === '/overview') {
+    return '/';
+  }
+  return pageRoutes[clean] ? clean : '/';
 }
 
-function setActiveNav(hash, preferredLink = null) {
-  const fallbackLink = elements.navLinks.find((link) => link.getAttribute('href') === '#overview') || null;
-  const resolvedLink = preferredLink
-    || elements.navLinks.find((link) => link.getAttribute('href') === hash)
-    || fallbackLink;
+function closeActionMenus(except = null) {
+  document.querySelectorAll('details.action-menu[open]').forEach((menu) => {
+    if (menu !== except) {
+      menu.removeAttribute('open');
+    }
+  });
+}
+
+function setActiveNav(route) {
   elements.navLinks.forEach((link) => {
-    const isActive = link === resolvedLink;
+    const linkRoute = link.dataset.route || '/';
+    const isActive = linkRoute === '/settings'
+      ? route.startsWith('/settings')
+      : linkRoute === route;
     link.classList.toggle('active', isActive);
     if (isActive) {
       link.setAttribute('aria-current', 'page');
@@ -1918,39 +2009,53 @@ function setActiveNav(hash, preferredLink = null) {
   });
 }
 
-function scrollSectionIntoView(hash, behavior = 'smooth') {
-  if (!hash) {
-    return;
-  }
-  const target = document.querySelector(hash);
-  if (!(target instanceof HTMLElement)) {
-    setActiveNav(hash);
-    return;
-  }
-  if (usesInnerScroll()) {
-    const contentTop = elements.contentScroll.getBoundingClientRect().top;
-    const targetTop = target.getBoundingClientRect().top;
-    const nextTop = elements.contentScroll.scrollTop + (targetTop - contentTop) - 24;
-    elements.contentScroll.scrollTo({ top: Math.max(0, nextTop), behavior });
-  } else {
-    target.scrollIntoView({ behavior, block: 'start' });
-  }
-  setActiveNav(hash);
+function renderSettingsTab(tab) {
+  state.settingsTab = tab || 'runtime';
+  elements.settingsTabs.forEach((button) => {
+    const active = button.dataset.settingsTab === state.settingsTab;
+    button.classList.toggle('active', active);
+    if (active) {
+      button.setAttribute('aria-current', 'page');
+    } else {
+      button.removeAttribute('aria-current');
+    }
+  });
+  elements.settingsPanels.forEach((panel) => {
+    panel.hidden = panel.dataset.settingsPanel !== state.settingsTab;
+  });
 }
 
-function updateActiveNavFromScroll() {
-  const threshold = 140;
-  const activeHash = sectionHashes.reduce((current, hash) => {
-    const target = document.querySelector(hash);
-    if (!(target instanceof HTMLElement)) {
-      return current;
-    }
-    const top = usesInnerScroll()
-      ? target.getBoundingClientRect().top - elements.contentScroll.getBoundingClientRect().top
-      : target.getBoundingClientRect().top;
-    return top <= threshold ? hash : current;
-  }, '#overview');
-  setActiveNav(activeHash);
+function renderRoute(pathname, historyMode = '') {
+  const route = normalizeRoutePath(pathname);
+  const definition = pageRoutes[route];
+  state.activeRoute = route;
+  if (historyMode === 'push') {
+    history.pushState(null, '', route);
+  } else if (historyMode === 'replace') {
+    history.replaceState(null, '', `${route}${location.search}`);
+  }
+  elements.pageSections.forEach((section) => {
+    const active = section.id === definition.section;
+    section.hidden = !active;
+    section.classList.toggle('active', active);
+  });
+  elements.pageEyebrow.textContent = definition.eyebrow;
+  elements.pageTitle.textContent = definition.title;
+  elements.pageDescription.textContent = definition.description;
+  document.title = `${definition.title} · Ping Monitor`;
+  setActiveNav(route);
+  renderSettingsTab(definition.settingsTab || state.settingsTab);
+  closeActionMenus();
+  if (elements.contentScroll) {
+    elements.contentScroll.scrollTop = 0;
+  }
+}
+
+function initializeRouting() {
+  const legacyRoute = legacyHashRoutes[location.hash];
+  const route = normalizeRoutePath(legacyRoute || location.pathname);
+  const needsReplace = Boolean(legacyRoute) || route !== location.pathname || Boolean(location.hash);
+  renderRoute(route, needsReplace ? 'replace' : '');
 }
 
 function loadEndpointForm(endpoint) {
@@ -2184,6 +2289,8 @@ function renderEndpointButtons() {
   elements.pauseSelectedButton.disabled = actionIndices.length === 0;
   elements.resumeSelectedButton.disabled = actionIndices.length === 0;
   elements.deleteEndpointButton.disabled = actionIndices.length === 0;
+  elements.endpointBulkAction.disabled = actionIndices.length === 0;
+  elements.applyEndpointBulkActionButton.disabled = actionIndices.length === 0 || !elements.endpointBulkAction.value;
   elements.deleteCurrentEndpointButton.disabled = !hasEditorSelection;
   elements.previewEndpointClassificationButton.disabled = !hasEditorSelection;
   elements.applyEndpointClassificationButton.disabled = !hasEditorSelection;
@@ -2254,6 +2361,7 @@ function renderDiscovery() {
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', String(active));
   });
+  elements.discoveryReviewFilterSelect.value = state.discovery.reviewFilter;
   elements.discoveryMergeMode.value = state.discovery.mergeMode;
   elements.discoveryPageSize.value = String(state.tables.discovery.pageSize);
   elements.discoveryRunState.textContent = state.discovery.runState;
@@ -2289,6 +2397,10 @@ function renderDiscovery() {
   elements.exportDiscoveryAllButton.disabled = !hasResults || state.discovery.running;
   elements.exportDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.addDiscoverySelectedButton.disabled = selectedCount === 0 || state.discovery.running;
+  elements.discoveryBulkAction.disabled = selectedCount === 0 || state.discovery.running || state.discovery.reviewBusy;
+  elements.applyDiscoveryBulkActionButton.disabled = selectedCount === 0 || state.discovery.running || state.discovery.reviewBusy || !elements.discoveryBulkAction.value;
+  elements.discoveryReviewAction.disabled = selectedCount === 0 || state.discovery.running;
+  elements.applyDiscoveryReviewActionButton.disabled = selectedCount === 0 || state.discovery.running;
   elements.discoveryMergeMode.disabled = !hasResults || state.discovery.running;
   renderDiscoveryPreflight();
 
@@ -2550,11 +2662,14 @@ function renderClassificationRuleEditor() {
       <article class="repeatable-row classification-rule-row" data-index="${index}" aria-labelledby="${titleID}">
         <div class="repeatable-row-header">
           <strong id="${titleID}" data-rule-title>Pair ${pairNumber}: ${escapeHtml(rule.id || 'unnamed')}</strong>
-          <div class="button-row compact-button-row">
-            <button class="secondary-button compact-action" type="button" data-move-rule="up" data-index="${index}" aria-label="Move Pair ${pairNumber} up" ${index === 0 ? 'disabled' : ''}>Move Up</button>
-            <button class="secondary-button compact-action" type="button" data-move-rule="down" data-index="${index}" aria-label="Move Pair ${pairNumber} down" ${index === state.classificationRules.length - 1 ? 'disabled' : ''}>Move Down</button>
-            <button class="danger-button compact-action" type="button" data-remove-rule="${index}" aria-label="Remove Pair ${pairNumber}">Remove</button>
-          </div>
+          <details class="action-menu">
+            <summary class="icon-button" aria-label="Open Pair ${pairNumber} actions" title="Pair ${pairNumber} actions">•••</summary>
+            <div class="action-menu-popover action-menu-popover-right">
+              <button class="menu-action" type="button" data-move-rule="up" data-index="${index}" aria-label="Move Pair ${pairNumber} up" ${index === 0 ? 'disabled' : ''}>Move up</button>
+              <button class="menu-action" type="button" data-move-rule="down" data-index="${index}" aria-label="Move Pair ${pairNumber} down" ${index === state.classificationRules.length - 1 ? 'disabled' : ''}>Move down</button>
+              <button class="menu-action menu-action-danger" type="button" data-remove-rule="${index}" aria-label="Remove Pair ${pairNumber}">Remove pair</button>
+            </div>
+          </details>
         </div>
         <div class="field-grid">
           <label class="field-group"><span>Rule ID</span><input class="text-input" data-rule-field="id" value="${escapeHtml(rule.id || '')}" placeholder="site-network-vendor"></label>
@@ -3074,10 +3189,7 @@ async function reloadAllData(showSuccess = false) {
     }
     elements.refreshButton.disabled = false;
     elements.refreshButton.textContent = 'Reload From Disk';
-    requestAnimationFrame(() => {
-      scrollSectionIntoView(location.hash || '#overview', 'auto');
-      updateActiveNavFromScroll();
-    });
+    requestAnimationFrame(() => renderRoute(state.activeRoute));
   }
 }
 
@@ -3277,6 +3389,37 @@ function deselectAllEndpoints() {
   renderEndpointButtons();
 }
 
+function applyEndpointBulkAction() {
+  const action = elements.endpointBulkAction.value;
+  elements.endpointBulkAction.value = '';
+  switch (action) {
+    case 'production':
+      setEndpointModeForSelection('production');
+      break;
+    case 'maintenance':
+      setEndpointModeForSelection('maintenance');
+      break;
+    case 'alerting_enable':
+      setEndpointAlertingForSelection(true);
+      break;
+    case 'alerting_disable':
+      setEndpointAlertingForSelection(false);
+      break;
+    case 'monitoring_resume':
+      setEndpointMonitoringForSelection(true);
+      break;
+    case 'monitoring_pause':
+      setEndpointMonitoringForSelection(false);
+      break;
+    case 'delete':
+      deleteSelectedEndpoint();
+      break;
+    default:
+      renderEndpointButtons();
+  }
+  renderEndpointButtons();
+}
+
 function setEndpointModeForSelection(mode) {
   const indexes = getEndpointActionIndices();
   if (indexes.length === 0) {
@@ -3422,6 +3565,62 @@ function selectAllVisibleDiscovery() {
 function deselectAllDiscovery() {
   state.discovery.selectedIndices.clear();
   renderDiscovery();
+}
+
+function applyDiscoveryBulkAction() {
+  const action = elements.discoveryBulkAction.value;
+  elements.discoveryBulkAction.value = '';
+  switch (action) {
+    case 'production':
+      setDiscoveryModeForSelection('production');
+      break;
+    case 'maintenance':
+      setDiscoveryModeForSelection('maintenance');
+      break;
+    case 'alerting_enable':
+      setDiscoveryAlertingForSelection(true);
+      break;
+    case 'alerting_disable':
+      setDiscoveryAlertingForSelection(false);
+      break;
+    case 'dynamic':
+      setDiscoveryAddressingForSelection(true);
+      break;
+    case 'static':
+      setDiscoveryAddressingForSelection(false);
+      break;
+    case 'defer':
+      void persistDiscoveryReviewState('deferred');
+      break;
+    case 'ignore':
+      void persistDiscoveryReviewState('ignored');
+      break;
+    case 'needs_review':
+      void persistDiscoveryReviewState('needs_review');
+      break;
+    case 'export_selected':
+      exportDiscoveryCsv(true);
+      break;
+    case 'add_selected':
+      addSelectedDiscoveryToEndpoints();
+      break;
+    default:
+      renderDiscovery();
+  }
+  renderDiscovery();
+}
+
+function applyDiscoveryReviewAction() {
+  switch (elements.discoveryReviewAction.value) {
+    case 'preview_naming':
+      void classifyDiscoverySelection(false);
+      break;
+    case 'apply_naming':
+      void classifyDiscoverySelection(true);
+      break;
+    default:
+      applyDiscoveryBulkFields();
+  }
 }
 
 function setDiscoveryModeForSelection(mode) {
@@ -3661,8 +3860,7 @@ function addSelectedDiscoveryToEndpoints() {
     'success',
     `Applied ${indexes.length} selected discovery result${indexes.length === 1 ? '' : 's'} to the working endpoint draft. Added ${addedCount}, updated ${updatedCount}, skipped ${skippedCount}.`,
   );
-  history.replaceState(null, '', '#inventory');
-  scrollSectionIntoView('#inventory');
+  renderRoute('/endpoints', 'push');
 }
 
 function exportDiscoveryCsv(selectedOnly) {
@@ -3852,15 +4050,43 @@ elements.advisorProfile.addEventListener('change', () => loadAdvisor(false));
 
 elements.navLinks.forEach((link) => {
   link.addEventListener('click', (event) => {
-    const hash = link.getAttribute('href');
-    if (!hash) {
+    const route = link.dataset.route;
+    if (!route) {
       return;
     }
     event.preventDefault();
-    history.replaceState(null, '', hash);
-    setActiveNav(hash, link);
-    scrollSectionIntoView(hash);
+    renderRoute(route, 'push');
   });
+});
+
+elements.settingsTabs.forEach((link) => {
+  link.addEventListener('click', (event) => {
+    event.preventDefault();
+    renderRoute(link.dataset.settingsRoute || '/settings', 'push');
+  });
+});
+
+document.querySelectorAll('details.action-menu').forEach((menu) => {
+  menu.addEventListener('toggle', () => {
+    if (menu.open) {
+      closeActionMenus(menu);
+    }
+  });
+});
+
+document.addEventListener('click', (event) => {
+  const menuSummary = event.target.closest('details.action-menu > summary');
+  if (menuSummary) {
+    closeActionMenus(menuSummary.parentElement);
+    return;
+  }
+  if (event.target.closest('.menu-action')) {
+    closeActionMenus();
+    return;
+  }
+  if (!event.target.closest('details.action-menu')) {
+    closeActionMenus();
+  }
 });
 
 elements.filterButtons.forEach((button) => {
@@ -3870,6 +4096,13 @@ elements.filterButtons.forEach((button) => {
     renderEndpointTable();
     renderEndpointEditor();
   });
+});
+
+elements.endpointFilterSelect.addEventListener('change', (event) => {
+  state.filter = event.target.value || 'all';
+  setTablePage('endpoint', 1);
+  renderEndpointTable();
+  renderEndpointEditor();
 });
 
 elements.endpointRows.addEventListener('change', (event) => {
@@ -3914,6 +4147,8 @@ elements.endpointForm.addEventListener('change', () => updateCurrentEndpointFrom
 elements.addEndpointButton.addEventListener('click', addEndpoint);
 elements.selectAllEndpointsButton.addEventListener('click', selectAllVisibleEndpoints);
 elements.deselectAllEndpointsButton.addEventListener('click', deselectAllEndpoints);
+elements.endpointBulkAction.addEventListener('change', renderEndpointButtons);
+elements.applyEndpointBulkActionButton.addEventListener('click', applyEndpointBulkAction);
 elements.markSelectedMaintenanceButton.addEventListener('click', () => setEndpointModeForSelection('maintenance'));
 elements.markSelectedProductionButton.addEventListener('click', () => setEndpointModeForSelection('production'));
 elements.disableSelectedAlertingButton.addEventListener('click', () => setEndpointAlertingForSelection(false));
@@ -3955,6 +4190,10 @@ Object.values(elements.discoveryInputs).forEach((input) => {
 });
 elements.selectAllDiscoveryButton.addEventListener('click', selectAllVisibleDiscovery);
 elements.deselectAllDiscoveryButton.addEventListener('click', deselectAllDiscovery);
+elements.discoveryBulkAction.addEventListener('change', renderDiscovery);
+elements.applyDiscoveryBulkActionButton.addEventListener('click', applyDiscoveryBulkAction);
+elements.discoveryReviewAction.addEventListener('change', renderDiscovery);
+elements.applyDiscoveryReviewActionButton.addEventListener('click', applyDiscoveryReviewAction);
 elements.markDiscoveryMaintenanceButton.addEventListener('click', () => setDiscoveryModeForSelection('maintenance'));
 elements.markDiscoveryProductionButton.addEventListener('click', () => setDiscoveryModeForSelection('production'));
 elements.disableDiscoveryAlertingButton.addEventListener('click', () => setDiscoveryAlertingForSelection(false));
@@ -4045,6 +4284,12 @@ elements.discoveryReviewFilterButtons.forEach((button) => {
     renderDiscovery();
   });
 });
+elements.discoveryReviewFilterSelect.addEventListener('change', (event) => {
+  state.discovery.reviewFilter = event.target.value || 'needs_review';
+  state.discovery.selectedIndices.clear();
+  setTablePage('discovery', 1);
+  renderDiscovery();
+});
 elements.discoverySubnetRows.addEventListener('click', (event) => {
   const button = event.target.closest('[data-remove-subnet]');
   if (!button) {
@@ -4097,6 +4342,9 @@ elements.classificationRuleRows.addEventListener('click', (event) => {
 elements.previewClassificationSampleButton.addEventListener('click', previewClassificationSample);
 
 elements.settingsForm.addEventListener('input', (event) => {
+  if (event.target === elements.classificationPreviewHostname || event.target === elements.classificationPreviewFQDN) {
+    return;
+  }
   if (event.target.matches('[data-rule-field="id"]')) {
     const row = event.target.closest('.classification-rule-row');
     const title = row?.querySelector('[data-rule-title]');
@@ -4108,7 +4356,10 @@ elements.settingsForm.addEventListener('input', (event) => {
   renderConfigButtons();
   renderStatus();
 });
-elements.settingsForm.addEventListener('change', () => {
+elements.settingsForm.addEventListener('change', (event) => {
+  if (event.target === elements.classificationPreviewHostname || event.target === elements.classificationPreviewFQDN) {
+    return;
+  }
   state.configDirty = true;
   renderConfigButtons();
   renderStatus();
@@ -4123,16 +4374,7 @@ elements.reloadConfigButton.addEventListener('click', () => {
 elements.resetConfigButton.addEventListener('click', resetConfigChanges);
 elements.saveConfigButton.addEventListener('click', saveConfig);
 
-elements.contentScroll?.addEventListener('scroll', updateActiveNavFromScroll, { passive: true });
-window.addEventListener('scroll', () => {
-  if (!usesInnerScroll()) {
-    updateActiveNavFromScroll();
-  }
-}, { passive: true });
-window.addEventListener('resize', updateActiveNavFromScroll);
-window.addEventListener('hashchange', () => {
-  scrollSectionIntoView(location.hash || '#overview', 'auto');
-});
+window.addEventListener('popstate', () => renderRoute(location.pathname));
 window.addEventListener('beforeunload', (event) => {
   if (!hasUnsavedChanges()) {
     return;
@@ -4141,5 +4383,6 @@ window.addEventListener('beforeunload', (event) => {
   event.returnValue = '';
 });
 
+initializeRouting();
 reloadAllData();
 window.setInterval(refreshRuntimeStatus, 5000);

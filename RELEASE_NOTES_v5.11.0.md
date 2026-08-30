@@ -26,6 +26,14 @@ Release date: August 25, 2026
 - Adds ordered Go RE2 naming-convention rules with named captures, test/preview controls, fill-blank or overwrite behavior, and rule provenance.
 - Keeps each naming-pair title synchronized with its Rule ID and gives reorder/remove controls unique accessible names when multiple pairs are present.
 
+## Multi-Page Admin UI
+
+- Replaces the single anchor-scrolled administration document with URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages.
+- Splits Settings into Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages while retaining unsaved draft state during in-app navigation.
+- Consolidates endpoint and discovery bulk actions into contextual selectors and moves reset, export, test, reorder, and destructive commands into overflow menus.
+- Adds a responsive navigation rail and wrapping action layouts for narrower screens.
+- Keeps naming-rule construction full width, moves per-rule reorder/remove commands into an overflow menu, and prevents preview-only sample text from marking configuration dirty.
+
 ## Splunk Pairing
 
 - Pairs with Splunk app 3.2.0 build 44.
@@ -47,9 +55,10 @@ Release date: August 25, 2026
 - Interactive naming-builder validation for valid and invalid RE2 rules, hostname and FQDN sources, pair ordering/removal, contextual help, and non-persistent reset behavior.
 - API, persistence, restart, DHCP address-change, endpoint CSV round-trip, validation, and discovery-delta tests.
 - JavaScript syntax checks, Splunk XML parsing, Configuration Advisor validation, and Windows service-definition validation.
+- Direct-route, browser history, single-visible-page, contextual-action, draft-preservation, and interactive regex naming-rule checks against the deployed Windows binary.
 - Splunk AppInspect precert on the packaged app: 0 errors, 0 failures, 0 future failures, 4 expected warnings, and 103 successful checks.
 
 ## Environment-Dependent Checks
 
-- A fresh interactive click-through of the final review controls could not be completed because the workstation's in-app browser automation session became unavailable. The workflow is covered by deterministic JavaScript, API, HTTP/static-shell, and Go integration tests; an operator click-through remains recommended before broad rollout.
+- The multi-page shell, settings subpages, contextual action enablement, browser back/forward behavior, endpoint selection preservation, non-persistent naming-rule preview, and deployed v5.11.0 runtime status were interactively verified at `http://127.0.0.1:8080`.
 - Creating, starting, stopping, and deleting a real Windows Service still requires an elevated clean-host validation pass. Installer definition and preflight validation are automated and pass.
