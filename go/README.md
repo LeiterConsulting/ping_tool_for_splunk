@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.11.0 is the current Go runtime. It adds durable discovery review, DHCP-safe asset reconciliation, bounded local logging, discovery history and scheduling, durable Splunk evidence, explicit monitoring and alert policy, and an opt-in versioned configuration upgrade path.
+Ping Monitor v5.11.1 is the current Go runtime. It retains the v5.11 discovery and CMDB workflow while correcting explicit-target and automatic local-adapter selection on hosts without a conventionally exposed IPv4 default gateway.
 
 ## Current Go Release
 
-- Version: `v5.11.0`
+- Version: `v5.11.1`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.11.0.md](../RELEASE_NOTES_v5.11.0.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.11.1.md](../RELEASE_NOTES_v5.11.1.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -206,7 +206,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.0`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.1`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

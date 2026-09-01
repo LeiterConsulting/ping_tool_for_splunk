@@ -40,7 +40,7 @@
 
 .NOTES
     Author: Network Discovery Tool
-    Version: 2.5.2
+    Version: 2.5.3
     Compatible with the current endpoint schema, including the optional trailing dev column.
 #>
 
@@ -76,32 +76,138 @@ function Get-LocalIPInfo {
         Gets the primary local IP address and network information
     #>
     
-    # Get the primary network adapter with a default gateway (most likely the main network)
-    $adapters = Get-NetIPConfiguration | Where-Object { 
-        $null -ne $_.IPv4DefaultGateway -and
-        $_.NetAdapter.Status -eq 'Up' 
+    $configurations = @(Get-NetIPConfiguration -ErrorAction Stop | Where-Object {
+        $null -ne $_.NetAdapter -and $_.NetAdapter.Status -eq 'Up'
+    })
+    $defaultRoutes = @(Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue | Where-Object {
+        [string]$_.State -ne 'Dead'
+    })
+
+    $candidates = @(
+        foreach ($configuration in $configurations) {
+            $interfaceIndex = if ($null -ne $configuration.InterfaceIndex) {
+                [int]$configuration.InterfaceIndex
+            }
+            elseif ($null -ne $configuration.NetAdapter.ifIndex) {
+                [int]$configuration.NetAdapter.ifIndex
+            }
+            else {
+                continue
+            }
+
+            $interfaceMetric = 0
+            if ($null -ne $configuration.NetIPv4Interface -and $null -ne $configuration.NetIPv4Interface.InterfaceMetric) {
+                $interfaceMetric = [int]$configuration.NetIPv4Interface.InterfaceMetric
+            }
+
+            $matchingRoutes = @($defaultRoutes | Where-Object { [int]$_.InterfaceIndex -eq $interfaceIndex })
+            $bestRoute = $matchingRoutes | Sort-Object { [int]$_.RouteMetric } | Select-Object -First 1
+            $configuredGateway = $configuration.IPv4DefaultGateway | Select-Object -First 1
+            $hasConfiguredGateway = $null -ne $configuredGateway -and
+                -not [string]::IsNullOrWhiteSpace([string]$configuredGateway.NextHop) -and
+                [string]$configuredGateway.NextHop -ne '0.0.0.0'
+            $gateway = if ($hasConfiguredGateway) {
+                [string]$configuredGateway.NextHop
+            }
+            elseif ($null -ne $bestRoute -and -not [string]::IsNullOrWhiteSpace([string]$bestRoute.NextHop) -and [string]$bestRoute.NextHop -ne '0.0.0.0') {
+                [string]$bestRoute.NextHop
+            }
+            else {
+                $null
+            }
+            $hasDefaultRoute = $null -ne $bestRoute -or $hasConfiguredGateway
+            $routeMetric = if ($null -ne $bestRoute -and $null -ne $bestRoute.RouteMetric) { [int]$bestRoute.RouteMetric } else { 0 }
+
+            foreach ($address in @($configuration.IPv4Address)) {
+                $parsedAddress = $null
+                $addressText = [string]$address.IPAddress
+                if (-not [System.Net.IPAddress]::TryParse($addressText, [ref]$parsedAddress) -or
+                    $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
+                    continue
+                }
+
+                $octets = $parsedAddress.GetAddressBytes()
+                if ($addressText -eq '0.0.0.0' -or $octets[0] -eq 127 -or
+                    ($octets[0] -eq 169 -and $octets[1] -eq 254) -or $octets[0] -ge 224) {
+                    continue
+                }
+
+                $addressState = [string]$address.AddressState
+                if ($addressState -in @('Duplicate', 'Invalid', 'Tentative')) {
+                    continue
+                }
+
+                [PSCustomObject]@{
+                    IPAddress        = $parsedAddress.IPAddressToString
+                    PrefixLength     = if ($null -ne $address.PrefixLength) { [int]$address.PrefixLength } else { $null }
+                    Gateway          = $gateway
+                    InterfaceName    = [string]$configuration.InterfaceAlias
+                    InterfaceIndex   = $interfaceIndex
+                    InterfaceMetric  = $interfaceMetric
+                    RouteMetric      = $routeMetric
+                    EffectiveMetric  = $interfaceMetric + $routeMetric
+                    HasDefaultRoute  = $hasDefaultRoute
+                    SkipAsSource     = [bool]$address.SkipAsSource
+                    AddressPreferred = [string]::IsNullOrWhiteSpace($addressState) -or $addressState -eq 'Preferred'
+                }
+            }
+        }
+    )
+
+    if ($candidates.Count -eq 0) {
+        throw "No usable active IPv4 interface was found. An eligible adapter must be Up with a non-loopback, non-APIPA IPv4 address. Specify -TargetNetwork <IPv4/CIDR> to scan an explicitly routed network."
     }
-    
-    if (-not $adapters) {
-        throw "No active network adapter with a default gateway found"
+
+    $routedCandidates = @($candidates | Where-Object { $_.HasDefaultRoute })
+    if ($routedCandidates.Count -gt 0) {
+        $lowestMetric = ($routedCandidates | Measure-Object -Property EffectiveMetric -Minimum).Minimum
+        $bestCandidates = @($routedCandidates | Where-Object { $_.EffectiveMetric -eq $lowestMetric })
+        $bestInterfaces = @($bestCandidates | Group-Object -Property InterfaceIndex)
+        if ($bestInterfaces.Count -gt 1) {
+            $descriptions = $bestInterfaces | ForEach-Object {
+                $item = $_.Group | Select-Object -First 1
+                "$($item.InterfaceName) (index $($item.InterfaceIndex), metric $($item.EffectiveMetric), $($item.IPAddress)/$($item.PrefixLength))"
+            }
+            throw "Multiple IPv4 default routes share the lowest effective metric, so local subnet selection is ambiguous: $($descriptions -join '; '). Specify -TargetNetwork <IPv4/CIDR>."
+        }
+        $selected = $bestCandidates | Sort-Object SkipAsSource, @{ Expression = { -not $_.AddressPreferred } }, IPAddress | Select-Object -First 1
+        $selectionReason = 'default_route'
     }
-    
-    # Prefer ethernet over wifi if both available
-    $adapter = $adapters | Sort-Object { 
-        if ($_.InterfaceAlias -match 'Ethernet|LAN') { 0 } 
-        elseif ($_.InterfaceAlias -match 'Wi-Fi|Wireless') { 1 } 
-        else { 2 } 
-    } | Select-Object -First 1
-    
-    $ipAddress = ($adapter.IPv4Address | Select-Object -First 1).IPAddress
-    $gateway = $adapter.IPv4DefaultGateway.NextHop
-    $interfaceName = $adapter.InterfaceAlias
-    
+    else {
+        $interfaces = @($candidates | Group-Object -Property InterfaceIndex)
+        if ($interfaces.Count -gt 1) {
+            $descriptions = $interfaces | ForEach-Object {
+                $item = $_.Group | Select-Object -First 1
+                "$($item.InterfaceName) (index $($item.InterfaceIndex), $($item.IPAddress)/$($item.PrefixLength))"
+            }
+            throw "No IPv4 default route was found and local adapter selection is ambiguous. Active IPv4 candidates: $($descriptions -join '; '). Specify -TargetNetwork <IPv4/CIDR>."
+        }
+        $selected = $interfaces[0].Group | Sort-Object SkipAsSource, @{ Expression = { -not $_.AddressPreferred } }, IPAddress | Select-Object -First 1
+        $selectionReason = 'only_active_ipv4_interface'
+        Write-Warning "No IPv4 default route was found. Using the only active IPv4 interface, '$($selected.InterfaceName)' ($($selected.IPAddress)/$($selected.PrefixLength)). Use -TargetNetwork to select a different routed subnet explicitly."
+    }
+
     return [PSCustomObject]@{
-        IPAddress     = $ipAddress
-        Gateway       = $gateway
-        InterfaceName = $interfaceName
+        IPAddress       = $selected.IPAddress
+        PrefixLength    = $selected.PrefixLength
+        Gateway         = $selected.Gateway
+        InterfaceName   = $selected.InterfaceName
+        InterfaceIndex  = $selected.InterfaceIndex
+        SelectionReason = $selectionReason
     }
+}
+
+function Get-DiscoveryLocalInfo {
+    <#
+    .SYNOPSIS
+        Resolves local adapter information only when an explicit target was not supplied.
+    #>
+    param([string]$TargetNetwork)
+
+    if (-not [string]::IsNullOrWhiteSpace($TargetNetwork)) {
+        return $null
+    }
+    return Get-LocalIPInfo
 }
 
 function Get-SubnetRange {
@@ -145,10 +251,14 @@ function Resolve-DiscoveryTarget {
     param(
         [string]$TargetNetwork,
         [int]$SubnetMask,
-        [pscustomobject]$LocalInfo
+        [AllowNull()]
+        [psobject]$LocalInfo
     )
 
     if ([string]::IsNullOrWhiteSpace($TargetNetwork)) {
+        if ($null -eq $LocalInfo) {
+            throw "Local network information is required when TargetNetwork is not specified"
+        }
         return [PSCustomObject]@{
             BaseIP    = $LocalInfo.IPAddress
             CIDR      = $SubnetMask
@@ -582,19 +692,30 @@ Write-Host "  Network Endpoint Discovery Tool" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Get local network info
-Write-Host "Detecting local network configuration..." -ForegroundColor Yellow
-$localInfo = Get-LocalIPInfo
-Write-Host "  Local IP:    $($localInfo.IPAddress)" -ForegroundColor White
-Write-Host "  Gateway:     $($localInfo.Gateway)" -ForegroundColor White
-Write-Host "  Interface:   $($localInfo.InterfaceName)" -ForegroundColor White
-Write-Host ""
+# Get local network info only for automatic local-subnet discovery. Explicit
+# targets may be reachable through static routes and do not require a default gateway.
+if ([string]::IsNullOrWhiteSpace($TargetNetwork)) {
+    Write-Host "Detecting local network configuration..." -ForegroundColor Yellow
+}
+$localInfo = Get-DiscoveryLocalInfo -TargetNetwork $TargetNetwork
+if ($null -ne $localInfo) {
+    Write-Host "  Local IP:    $($localInfo.IPAddress)" -ForegroundColor White
+    Write-Host "  Gateway:     $(if ($localInfo.Gateway) { $localInfo.Gateway } else { '(none)' })" -ForegroundColor White
+    Write-Host "  Interface:   $($localInfo.InterfaceName)" -ForegroundColor White
+    Write-Host "  Selection:   $($localInfo.SelectionReason)" -ForegroundColor White
+    Write-Host ""
+}
+else {
+    Write-Host "Skipping local adapter detection because an explicit discovery target was supplied." -ForegroundColor Gray
+    Write-Host ""
+}
 
 $discoveryTarget = Resolve-DiscoveryTarget -TargetNetwork $TargetNetwork -SubnetMask $SubnetMask -LocalInfo $localInfo
 if ($discoveryTarget.Source -eq 'explicit') {
     Write-Host "Using explicit discovery target: $($discoveryTarget.Display)" -ForegroundColor Yellow
     Write-Host ""
 }
+$gatewayIP = if ($null -ne $localInfo) { $localInfo.Gateway } else { $null }
 
 # Calculate IP range
 Write-Host "Calculating subnet range ($($discoveryTarget.Display))..." -ForegroundColor Yellow
@@ -666,9 +787,9 @@ foreach ($host_ in ($onlineHosts | Sort-Object { [version]($_.IP -replace '(\d+)
         $hostname = "host-$($host_.IP -replace '\.', '-')"
     }
     
-    $group = Get-DeviceGroup -Hostname $hostname -IPAddress $host_.IP -GatewayIP $localInfo.Gateway
-    $description = Get-DeviceDescription -Hostname $hostname -Group $group -IPAddress $host_.IP -GatewayIP $localInfo.Gateway
-    $classification = Get-DeviceClassification -Hostname $hostname -Group $group -IPAddress $host_.IP -GatewayIP $localInfo.Gateway
+    $group = Get-DeviceGroup -Hostname $hostname -IPAddress $host_.IP -GatewayIP $gatewayIP
+    $description = Get-DeviceDescription -Hostname $hostname -Group $group -IPAddress $host_.IP -GatewayIP $gatewayIP
+    $classification = Get-DeviceClassification -Hostname $hostname -Group $group -IPAddress $host_.IP -GatewayIP $gatewayIP
     
     $endpoints += [PSCustomObject]@{
         ip               = $host_.IP

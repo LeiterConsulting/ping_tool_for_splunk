@@ -1,5 +1,5 @@
 # ============================================
-# Splunk Ping Monitor Configuration (Go v5.11.0)
+# Splunk Ping Monitor Configuration (Go v5.11.1)
 # ============================================
 # Legacy-compatible configuration example. New deployments use config.json.
 # Relative paths are resolved from the directory containing this file.

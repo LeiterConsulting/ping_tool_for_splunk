@@ -10,8 +10,9 @@ The short answers below help route an incident. The numbered documents contain t
 |----|----------|---------------------|----------------|
 | 0001 | Why does the Windows service enter Paused or fail to start while the executable runs manually? | The service changes from Stopped to Paused, `Start-Service` fails, or the interactive executable behaves differently from the managed instance. | [Windows Service Enters Paused State or Fails to Start](windows-service-paused-or-fails-to-start-0001.md) |
 | 0002 | Why is `Install-Service.ps1` missing `-Validate` or another documented parameter? | PowerShell rejects a parameter before validation begins, suggesting that the executable and service-management script came from different releases. | [Install-Service.ps1 Is Missing an Expected Parameter](install-service-script-version-mismatch-0002.md) |
+| 0003 | Why does discovery report that no active adapter with a default gateway was found? | Discovery stops before scanning, including when an explicit target was supplied or the scanner uses static routes or an isolated interface. | [Discovery Cannot Find an Adapter with a Default Gateway](discovery-no-default-gateway-0003.md) |
 
-Catalog coverage: Troubleshooting 0001 through 0002.
+Catalog coverage: Troubleshooting 0001 through 0003.
 
 ## The service is Paused. Is it actually paused by an operator?
 
@@ -71,6 +72,12 @@ Yes. The current Go executable has a read-only validation command:
 ```
 
 This validates the executable's configuration, endpoint inventory, and scheduler capacity. It does not validate the Windows service's persisted paths or execution account. After correcting the script mismatch, run the installer-level validation described in [Troubleshooting 0002](install-service-script-version-mismatch-0002.md).
+
+## Why does discovery require a default gateway for a remote target?
+
+It should not. Ping Monitor v5.11.0 evaluated the local adapter before it evaluated an explicit discovery target, so isolated scanners and statically routed hosts could fail before scanning. Ping Monitor v5.11.1 corrects that ordering and makes automatic interface selection route-aware and ambiguity-safe.
+
+Use [Troubleshooting 0003](discovery-no-default-gateway-0003.md) to identify the affected script, upgrade the standalone and embedded copies correctly, verify explicit-target behavior, and collect sanitized route evidence if automatic local discovery remains ambiguous.
 
 ## Which issue should I fix first when both symptoms occur?
 

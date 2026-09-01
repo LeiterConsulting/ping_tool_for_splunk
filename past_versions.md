@@ -2,12 +2,16 @@
 
 This file archives the historical runtime notes, older release summaries, and changelog entries that were previously mixed into the top-level README.
 
-For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.7.2.md](RELEASE_NOTES_v5.7.2.md).
+For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.11.1.md](RELEASE_NOTES_v5.11.1.md).
 
 ## Historical Runtime Summary
 
 | Runtime | Version | Status | Notes |
 |---------|---------|--------|-------|
+| Ping Monitor v5 (Go) | `v5.11.0` | Superseded by `v5.11.1` | Discovery review, DHCP-safe identity, naming conventions, and multi-page administration |
+| Ping Monitor v5 (Go) | `v5.10.0` | Superseded by `v5.11.0` | Scheduled discovery and CMDB workflow foundations |
+| Ping Monitor v5 (Go) | `v5.9.0` | Superseded by `v5.10.0` | Structured configuration, discovery export, DNS evidence, and log rotation |
+| Ping Monitor v5 (Go) | `v5.7.2` | Superseded by `v5.9.0` | Windows service lifecycle hotfix |
 | Ping Monitor v5 (Go) | `v5.7.1` | Superseded by `v5.7.2` | Confirmation-gated, in-process collector restart |
 | Ping Monitor v5 (Go) | `v5.7.0` | Superseded by `v5.7.1` | Configuration Advisor, deterministic capacity, and controlled remediation |
 | Ping Monitor v5 (Go) | `v5.6.0` | Superseded by `v5.7.0` | Embedded operator interface and revision-safe administration |
@@ -22,6 +26,10 @@ For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.7.2.md
 
 ## Archived Release Notes
 
+- [RELEASE_NOTES_v5.11.0.md](RELEASE_NOTES_v5.11.0.md)
+- [RELEASE_NOTES_v5.10.0.md](RELEASE_NOTES_v5.10.0.md)
+- [RELEASE_NOTES_v5.9.0.md](RELEASE_NOTES_v5.9.0.md)
+- [RELEASE_NOTES_v5.7.2.md](RELEASE_NOTES_v5.7.2.md)
 - [RELEASE_NOTES_v5.7.1.md](RELEASE_NOTES_v5.7.1.md)
 - [RELEASE_NOTES_v5.7.0.md](RELEASE_NOTES_v5.7.0.md)
 - [RELEASE_NOTES_v5.6.0.md](RELEASE_NOTES_v5.6.0.md)

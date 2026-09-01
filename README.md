@@ -4,11 +4,15 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Current Release
 
-- Go runtime: `v5.11.0`
+- Go runtime: `v5.11.1`
 - Splunk app: `3.2.0` build `44`
-- Current runtime release notes: [RELEASE_NOTES_v5.11.0.md](RELEASE_NOTES_v5.11.0.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.11.1.md](RELEASE_NOTES_v5.11.1.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.2.0.md](RELEASE_NOTES_splunk_app_3.2.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
+
+## v5.11.1 Hotfix Highlights
+
+Version 5.11.1 makes discovery adapter selection truthful and route-aware. Explicit subnet scans no longer require a local default gateway; automatic local scans use the lowest effective IPv4 default-route metric, allow one unambiguous isolated IPv4 interface with a warning, and reject ambiguous multi-interface selection with actionable candidate evidence. Existing configurations, endpoints, discovery history, and Splunk app 3.2.0 remain compatible.
 
 ## v5.11.0 Release Highlights
 
@@ -18,7 +22,7 @@ Version 5.11.0 adds explicit Production/Maintenance/Legacy Dev modes, independen
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.11.0 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
+| Go v5.11.1 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
