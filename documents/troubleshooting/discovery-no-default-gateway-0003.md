@@ -21,11 +21,11 @@ That behavior was overly restrictive in two ways:
 - a remote or statically routed target does not require the scanner to have a default gateway;
 - `IPv4DefaultGateway` alone is not authoritative evidence of Windows route selection.
 
-Reinstalling the Windows service does not repair this condition. The failing component is the discovery script used by the collector or invoked directly.
+Reinstalling the Windows service does not repair this condition. In v5.11.x, the failing component is the discovery script used by the collector or invoked directly.
 
 ## Goal
 
-Use Ping Monitor v5.11.2 or newer so explicit targets bypass local adapter detection, automatic discovery selects an interface from truthful Windows route evidence, and a stale adjacent script cannot silently shadow the corrected embedded workflow.
+Use Ping Monitor v5.12.0 or newer so the collector performs discovery natively in Go. Explicit targets bypass local adapter detection, automatic discovery fails closed when interface selection is ambiguous, and adjacent PowerShell scripts cannot affect the default workflow.
 
 ## Identify the installed versions
 
@@ -41,18 +41,27 @@ Check the companion script header:
 Select-String -LiteralPath ./DiscoverEndpoints.ps1 -Pattern 'Version:'
 ```
 
-The corrected discovery script reports version `2.5.3`. A v5.11.0 executable or script version 2.5.2 is affected. A v5.11.1 executable can still show the old line 86 error when an adjacent version 2.5.2 script takes precedence; the UI version identifies the executable, not the selected external script.
+For v5.12.0 and newer, query the running collector:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8080/api/status |
+  Select-Object version, discovery_engine, discovery_script_path
+```
+
+The default reports `discovery_engine` as `native_go` and has no `discovery_script_path` value. The corrected standalone compatibility script reports version `2.5.3`. A v5.11.0 executable or script version 2.5.2 is affected. A v5.11.1 executable can still show the old line 86 error when an adjacent version 2.5.2 script takes precedence; the UI version identifies the executable, not the selected external script.
 
 ## Upgrade safely
 
-1. Download the v5.11.2 Windows ZIP from the tagged GitHub release.
-2. Verify it against `SHA256SUMS_v5.11.2.txt`.
+1. Download the v5.12.0 Windows ZIP from the tagged GitHub release.
+2. Verify it against `SHA256SUMS_v5.12.0.txt`.
 3. Stop the collector or service.
-4. Replace `pingmonitor.exe` and any standalone `DiscoverEndpoints.ps1` in the deployment directory.
+4. Replace `pingmonitor.exe`. Replace `DiscoverEndpoints.ps1` only if operators still invoke it directly.
 5. Preserve `config.psd1` or `config.json`, `endpoints.csv`, `ui_preferences.json`, and the discovery data directory.
-6. Start the collector and confirm `/api/status` reports v5.11.2 and `discovery_script_path` reports `embedded:DiscoverEndpoints.ps1`.
+6. Start the collector and confirm `/api/status` reports v5.12.0, `discovery_engine` reports `native_go`, and `discovery_script_path` is empty.
 
-In v5.11.2 and newer, the version-matched embedded script is authoritative by default. A standalone adjacent script is used by the collector only when its path is deliberately supplied with `--discovery-script`. This prevents an old file from silently overriding a binary hotfix. A service reinstall is unnecessary when deployment paths and service arguments are unchanged.
+In v5.12.0 and newer, adjacent scripts are ignored. A standalone script is used by the collector only when its path is deliberately supplied with the deprecated `--discovery-script` compatibility override. A service reinstall is unnecessary when deployment paths and service arguments are unchanged.
+
+For v5.11.2 specifically, the version-matched embedded script remains authoritative by default. That release fixed the stale-script override but still required PowerShell internally for discovery.
 
 For immediate recovery while still on v5.11.1, replace the adjacent `DiscoverEndpoints.ps1` with version 2.5.3 or rename/remove it and restart the collector so the embedded copy is selected.
 
@@ -77,6 +86,10 @@ Skipping local adapter detection because an explicit discovery target was suppli
 The scan may find no responsive hosts if the example network is not routed in the environment. That is separate from adapter selection; use an approved reachable test range for a complete result test.
 
 ## Understand automatic local selection
+
+The native v5.12.0 workflow considers active, non-loopback, non-APIPA IPv4 interfaces and matches the operating system's preferred outbound IPv4 address. It accepts a single isolated interface with a warning and refuses to guess when multiple interfaces cannot be distinguished. Specify the target CIDR explicitly for multi-homed, isolated, or statically routed discovery hosts.
+
+When the standalone compatibility script is invoked without `-TargetNetwork`, it:
 
 When `-TargetNetwork` is omitted, the corrected discovery workflow:
 
@@ -107,9 +120,9 @@ Internal IP addresses and interface names may be sensitive. Redact them accordin
 
 ## Success criteria
 
-- `pingmonitor.exe --version` reports v5.11.2 or newer.
+- `pingmonitor.exe --version` reports v5.12.0 or newer.
 - The standalone script, if present, reports version 2.5.3 or newer.
-- `/api/status` reports `embedded:DiscoverEndpoints.ps1` unless a custom external script was deliberately configured.
+- `/api/status` reports `discovery_engine=native_go` and no script path unless a custom external script was deliberately configured.
 - Explicit targets start without local adapter detection.
 - Automatic local discovery either selects a route with a stated reason or stops with actionable ambiguity evidence.
 - Discovery produces review-only output without modifying `endpoints.csv` until an operator explicitly stages and saves approved results.

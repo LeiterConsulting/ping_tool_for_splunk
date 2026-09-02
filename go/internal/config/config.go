@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -397,27 +396,12 @@ func writeYAML(path string, cfg Config) error {
 	return os.WriteFile(path, b, 0o644)
 }
 
-func loadFromPSD1(ctx context.Context, path string, root string) (Config, error) {
-	// Prefer pwsh Import-PowerShellDataFile when available; it is strict and battle-tested.
-	// On macOS/Linux, pwsh might not be installed; fall back to our native, non-executing parser.
-	var raw map[string]interface{}
-	if pwsh, err := exec.LookPath("pwsh"); err == nil {
-		cmd := exec.CommandContext(ctx, pwsh, "-NoProfile", "-NonInteractive", "-Command",
-			fmt.Sprintf("Import-PowerShellDataFile -Path '%s' | ConvertTo-Json -Depth 50 -Compress", strings.ReplaceAll(path, "'", "''")),
-		)
-		out, err := cmd.Output()
-		if err != nil {
-			return Config{}, fmt.Errorf("psd1 parse failed: %w", err)
-		}
-		if err := json.Unmarshal(out, &raw); err != nil {
-			return Config{}, fmt.Errorf("psd1 json decode failed: %w", err)
-		}
-	} else {
-		m, err := parsePSD1File(path)
-		if err != nil {
-			return Config{}, fmt.Errorf("psd1 parse failed (native): %w", err)
-		}
-		raw = m
+func loadFromPSD1(_ context.Context, path string, root string) (Config, error) {
+	// PSD1 compatibility is parsed as constant data inside this process. This
+	// keeps existing deployments valid without requiring or executing pwsh.
+	raw, err := parsePSD1File(path)
+	if err != nil {
+		return Config{}, fmt.Errorf("psd1 parse failed (native): %w", err)
 	}
 
 	cfg := Defaults(root)
@@ -987,42 +971,75 @@ func loadEndpoints(path string, allowEmpty bool) ([]models.Endpoint, error) {
 			}
 			discoveryLatency = &parsed
 		}
+		parseOptionalFloat := func(name string) (*float64, error) {
+			value := get(row, name)
+			if value == "" {
+				return nil, nil
+			}
+			parsed, parseErr := strconv.ParseFloat(value, 64)
+			if parseErr != nil {
+				return nil, fmt.Errorf("endpoints CSV record %d: invalid %s value %q", record, name, value)
+			}
+			return &parsed, nil
+		}
+		discoveryLatencyResolution, err := parseOptionalFloat("discovery_latency_resolution_ms")
+		if err != nil {
+			return nil, err
+		}
+		discoveryLatencyUpperBound, err := parseOptionalFloat("discovery_latency_upper_bound_ms")
+		if err != nil {
+			return nil, err
+		}
+		discoveryProbeElapsed, err := parseOptionalFloat("discovery_probe_elapsed_ms")
+		if err != nil {
+			return nil, err
+		}
+		discoveryLatencyCensored, err := parseCSVBoolDefault(get(row, "discovery_latency_censored"), false)
+		if err != nil {
+			return nil, fmt.Errorf("endpoints CSV record %d: invalid discovery_latency_censored value: %w", record, err)
+		}
 		ep := models.Endpoint{
-			EndpointID:           models.StableEndpointID(get(row, "endpoint_id"), ip),
-			AssetID:              get(row, "asset_id"),
-			IP:                   ip,
-			Hostname:             hn,
-			FQDN:                 get(row, "fqdn"),
-			Dev:                  dev,
-			DeviceMode:           strings.ToLower(get(row, "device_mode")),
-			MonitoringEnabled:    models.Bool(monitoringEnabled),
-			AlertingEnabled:      models.Bool(alertingEnabled),
-			AlertingReason:       get(row, "alerting_reason"),
-			MaintenanceUntil:     get(row, "maintenance_until"),
-			MaintenanceReason:    get(row, "maintenance_reason"),
-			DynamicAddress:       dynamicAddress,
-			SubnetID:             get(row, "subnet_id"),
-			SubnetName:           get(row, "subnet_name"),
-			SubnetVLAN:           get(row, "subnet_vlan"),
-			SubnetLocation:       get(row, "subnet_location"),
-			AddressingMode:       strings.ToLower(get(row, "addressing_mode")),
-			RoutingDomain:        get(row, "routing_domain"),
-			ClassificationSource: get(row, "classification_source"),
-			DiscoveryReviewState: get(row, "discovery_review_state"),
-			DiscoveryReviewedAt:  get(row, "discovery_reviewed_at"),
-			DiscoveryReviewNote:  get(row, "discovery_review_note"),
-			DNSStatus:            get(row, "dns_status"),
-			DNSForwardConfirmed:  dnsForwardConfirmed,
-			DiscoveredAt:         get(row, "discovered_at"),
-			DiscoveryScanID:      get(row, "discovery_scan_id"),
-			DiscoverySource:      get(row, "discovery_source"),
-			DiscoveryLatencyMs:   discoveryLatency,
-			Group:                firstNonEmpty(get(row, "group"), "default"),
-			Description:          get(row, "description"),
-			EntityType:           get(row, "entitytype"),
-			Device:               get(row, "device"),
-			Vendor:               get(row, "vendor"),
-			AdditionalNotes:      get(row, "additional_notes"),
+			EndpointID:                   models.StableEndpointID(get(row, "endpoint_id"), ip),
+			AssetID:                      get(row, "asset_id"),
+			IP:                           ip,
+			Hostname:                     hn,
+			FQDN:                         get(row, "fqdn"),
+			Dev:                          dev,
+			DeviceMode:                   strings.ToLower(get(row, "device_mode")),
+			MonitoringEnabled:            models.Bool(monitoringEnabled),
+			AlertingEnabled:              models.Bool(alertingEnabled),
+			AlertingReason:               get(row, "alerting_reason"),
+			MaintenanceUntil:             get(row, "maintenance_until"),
+			MaintenanceReason:            get(row, "maintenance_reason"),
+			DynamicAddress:               dynamicAddress,
+			SubnetID:                     get(row, "subnet_id"),
+			SubnetName:                   get(row, "subnet_name"),
+			SubnetVLAN:                   get(row, "subnet_vlan"),
+			SubnetLocation:               get(row, "subnet_location"),
+			AddressingMode:               strings.ToLower(get(row, "addressing_mode")),
+			RoutingDomain:                get(row, "routing_domain"),
+			ClassificationSource:         get(row, "classification_source"),
+			DiscoveryReviewState:         get(row, "discovery_review_state"),
+			DiscoveryReviewedAt:          get(row, "discovery_reviewed_at"),
+			DiscoveryReviewNote:          get(row, "discovery_review_note"),
+			DNSStatus:                    get(row, "dns_status"),
+			DNSForwardConfirmed:          dnsForwardConfirmed,
+			DiscoveredAt:                 get(row, "discovered_at"),
+			DiscoveryScanID:              get(row, "discovery_scan_id"),
+			DiscoverySource:              get(row, "discovery_source"),
+			DiscoveryLatencyMs:           discoveryLatency,
+			DiscoveryProbeBackend:        get(row, "discovery_probe_backend"),
+			DiscoveryLatencySource:       get(row, "discovery_latency_source"),
+			DiscoveryLatencyResolutionMs: discoveryLatencyResolution,
+			DiscoveryLatencyCensored:     discoveryLatencyCensored,
+			DiscoveryLatencyUpperBoundMs: discoveryLatencyUpperBound,
+			DiscoveryProbeElapsedMs:      discoveryProbeElapsed,
+			Group:                        firstNonEmpty(get(row, "group"), "default"),
+			Description:                  get(row, "description"),
+			EntityType:                   get(row, "entitytype"),
+			Device:                       get(row, "device"),
+			Vendor:                       get(row, "vendor"),
+			AdditionalNotes:              get(row, "additional_notes"),
 		}
 		eps = append(eps, ep)
 	}

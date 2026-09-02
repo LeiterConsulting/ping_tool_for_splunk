@@ -20,6 +20,9 @@ func TestBuildPayloadCarriesAlertAndIdentityPolicy(t *testing.T) {
 	if payload.Fields["metric_name:ping.alerting_enabled"] != 0 {
 		t.Fatalf("alerting metric = %#v", payload.Fields["metric_name:ping.alerting_enabled"])
 	}
+	if got, ok := payload.Fields["metric_name:ping.observed_at_epoch"].(float64); !ok || got != 1787572800 {
+		t.Fatalf("observed_at_epoch = %#v, want 1787572800", payload.Fields["metric_name:ping.observed_at_epoch"])
+	}
 	for key, want := range map[string]interface{}{
 		"device_mode": models.DeviceModeProduction, "alerting_enabled": false,
 		"alerting_reason": "ticket-123", "asset_id": "asset-1",

@@ -92,6 +92,45 @@ func TestAnalyzeConfigWarnsWhenMetricsOnlySuppressesDiscoveryEvents(t *testing.T
 	}
 }
 
+func TestAnalyzeDiscoverySchedulesReportsProbeLimitsOutsideNativeBoundaries(t *testing.T) {
+	cfg := config.Defaults(t.TempDir())
+	cfg.Discovery.Schedules = []config.DiscoverySchedule{
+		{
+			ID:           "timeout-too-large",
+			Enabled:      true,
+			Targets:      []string{"192.0.2.0/30"},
+			Frequency:    "weekly",
+			Day:          "sunday",
+			Time:         "02:00",
+			Timezone:     "Local",
+			TimeoutMs:    60001,
+			Concurrency:  25,
+			ImportPolicy: "review",
+		},
+		{
+			ID:           "concurrency-too-large",
+			Enabled:      true,
+			Targets:      []string{"198.51.100.0/30"},
+			Frequency:    "weekly",
+			Day:          "monday",
+			Time:         "02:00",
+			Timezone:     "Local",
+			TimeoutMs:    500,
+			Concurrency:  4097,
+			ImportPolicy: "review",
+		},
+	}
+
+	report := Report{}
+	analyzeDiscoverySchedules(&report, cfg)
+	if !hasFinding(report.Findings, "DISCOVERY_TIMEOUT") || !hasFinding(report.Findings, "DISCOVERY_CONCURRENCY_CLAMPED") {
+		t.Fatalf("native discovery bounds were not reported: %#v", report.Findings)
+	}
+	if hasFinding(report.Findings, "DISCOVERY_CONCURRENCY") {
+		t.Fatalf("high-but-positive legacy concurrency should remain valid and be clamped: %#v", report.Findings)
+	}
+}
+
 func TestBenchmarkIsBoundedAndNonSLA(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, "config.json")

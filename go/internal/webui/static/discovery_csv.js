@@ -8,7 +8,9 @@
     'discovery_review_state', 'discovery_reviewed_at', 'discovery_review_note',
     'subnet_id', 'subnet_name', 'subnet_vlan', 'subnet_location', 'addressing_mode', 'routing_domain',
     'dns_status', 'dns_forward_confirmed', 'discovered_at', 'discovery_scan_id',
-    'discovery_source', 'discovery_latency_ms',
+    'discovery_source', 'discovery_latency_ms', 'discovery_probe_backend',
+    'discovery_latency_source', 'discovery_latency_resolution_ms', 'discovery_latency_censored',
+    'discovery_latency_upper_bound_ms', 'discovery_probe_elapsed_ms',
   ]);
 
   function safeCellText(value) {

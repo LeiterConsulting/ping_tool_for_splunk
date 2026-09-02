@@ -31,20 +31,17 @@ import (
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/classification"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/diagnostics"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/discovery"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
-	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/httpcfg"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/hec"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/output/outbox"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/systeminfo"
 )
 
 //go:embed static/*
 var staticFiles embed.FS
-
-//go:embed assets/DiscoverEndpoints.ps1
-var embeddedDiscoveryScript []byte
-
-const embeddedDiscoveryScriptPath = "embedded:DiscoverEndpoints.ps1"
 
 var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 
@@ -77,6 +74,7 @@ type statusResponse struct {
 	ConfigFormat           string               `json:"config_format"`
 	EndpointsPath          string               `json:"endpoints_path"`
 	DiscoveryAvailable     bool                 `json:"discovery_available"`
+	DiscoveryEngine        string               `json:"discovery_engine"`
 	DiscoveryScriptPath    string               `json:"discovery_script_path,omitempty"`
 	Mode                   string               `json:"mode"`
 	Delivery               *outbox.Status       `json:"delivery,omitempty"`
@@ -86,6 +84,23 @@ type statusResponse struct {
 	EndpointsRevision      string               `json:"endpoints_revision,omitempty"`
 	ConfigRestartRequired  bool                 `json:"config_restart_required"`
 	EndpointsReloadPending bool                 `json:"endpoints_reload_pending"`
+}
+
+type systemCapacityResponse struct {
+	MonitoringWorkersConfigured int `json:"monitoring_workers_configured"`
+	DiscoveryProbeWorkerMaximum int `json:"discovery_probe_worker_maximum"`
+	DiscoveryDNSWorkerMaximum   int `json:"discovery_dns_worker_maximum"`
+	ActiveEndpoints             int `json:"active_endpoints"`
+	PingsPerCycle               int `json:"pings_per_cycle"`
+	CycleIntervalSeconds        int `json:"cycle_interval_seconds"`
+	TimeoutMs                   int `json:"timeout_ms"`
+}
+
+type systemResponse struct {
+	GeneratedAt string                 `json:"generated_at"`
+	Resources   systeminfo.Snapshot    `json:"resources"`
+	Runtime     runtimeinfo.Snapshot   `json:"runtime"`
+	Capacity    systemCapacityResponse `json:"capacity"`
 }
 
 type resultLogStatus struct {
@@ -161,30 +176,32 @@ type discoveryRunRequest struct {
 }
 
 type discoveryResponse struct {
-	GeneratedAt string            `json:"generated_at"`
-	ScanID      string            `json:"scan_id"`
-	Target      string            `json:"target"`
-	Summary     endpointSummary   `json:"summary"`
-	Delta       discoveryDelta    `json:"delta"`
-	Items       []models.Endpoint `json:"items"`
-	Logs        string            `json:"logs,omitempty"`
-	DurationMs  int64             `json:"duration_ms"`
+	GeneratedAt string             `json:"generated_at"`
+	ScanID      string             `json:"scan_id"`
+	Target      string             `json:"target"`
+	Summary     endpointSummary    `json:"summary"`
+	Delta       discoveryDelta     `json:"delta"`
+	Items       []models.Endpoint  `json:"items"`
+	Logs        string             `json:"logs,omitempty"`
+	DurationMs  int64              `json:"duration_ms"`
+	Evidence    discovery.Evidence `json:"evidence"`
 	changes     discoveryItemChanges
 }
 
 type discoveryStreamEvent struct {
-	Type        string            `json:"type"`
-	SummaryText string            `json:"summary_text,omitempty"`
-	LogLine     string            `json:"log_line,omitempty"`
-	GeneratedAt string            `json:"generated_at,omitempty"`
-	ScanID      string            `json:"scan_id,omitempty"`
-	Target      string            `json:"target,omitempty"`
-	Summary     *endpointSummary  `json:"summary,omitempty"`
-	Delta       *discoveryDelta   `json:"delta,omitempty"`
-	Items       []models.Endpoint `json:"items,omitempty"`
-	Logs        string            `json:"logs,omitempty"`
-	DurationMs  int64             `json:"duration_ms,omitempty"`
-	Error       string            `json:"error,omitempty"`
+	Type        string              `json:"type"`
+	SummaryText string              `json:"summary_text,omitempty"`
+	LogLine     string              `json:"log_line,omitempty"`
+	GeneratedAt string              `json:"generated_at,omitempty"`
+	ScanID      string              `json:"scan_id,omitempty"`
+	Target      string              `json:"target,omitempty"`
+	Summary     *endpointSummary    `json:"summary,omitempty"`
+	Delta       *discoveryDelta     `json:"delta,omitempty"`
+	Items       []models.Endpoint   `json:"items,omitempty"`
+	Logs        string              `json:"logs,omitempty"`
+	DurationMs  int64               `json:"duration_ms,omitempty"`
+	Evidence    *discovery.Evidence `json:"evidence,omitempty"`
+	Error       string              `json:"error,omitempty"`
 }
 
 type discoveryProgressState struct {
@@ -231,23 +248,25 @@ type discoverySnapshot struct {
 	Delta          discoveryDelta      `json:"delta"`
 	Items          []models.Endpoint   `json:"items"`
 	DurationMs     int64               `json:"duration_ms,omitempty"`
+	Evidence       discovery.Evidence  `json:"evidence,omitempty"`
 }
 
 type discoveryScanSummary struct {
-	ScanID         string          `json:"scan_id"`
-	GeneratedAt    string          `json:"generated_at"`
-	Target         string          `json:"target"`
-	SubnetID       string          `json:"subnet_id,omitempty"`
-	SubnetName     string          `json:"subnet_name,omitempty"`
-	SubnetVLAN     string          `json:"subnet_vlan,omitempty"`
-	SubnetLocation string          `json:"subnet_location,omitempty"`
-	AddressingMode string          `json:"addressing_mode,omitempty"`
-	RoutingDomain  string          `json:"routing_domain,omitempty"`
-	ScheduleID     string          `json:"schedule_id,omitempty"`
-	Summary        endpointSummary `json:"summary"`
-	Delta          discoveryDelta  `json:"delta"`
-	DurationMs     int64           `json:"duration_ms,omitempty"`
-	FileName       string          `json:"file_name,omitempty"`
+	ScanID         string             `json:"scan_id"`
+	GeneratedAt    string             `json:"generated_at"`
+	Target         string             `json:"target"`
+	SubnetID       string             `json:"subnet_id,omitempty"`
+	SubnetName     string             `json:"subnet_name,omitempty"`
+	SubnetVLAN     string             `json:"subnet_vlan,omitempty"`
+	SubnetLocation string             `json:"subnet_location,omitempty"`
+	AddressingMode string             `json:"addressing_mode,omitempty"`
+	RoutingDomain  string             `json:"routing_domain,omitempty"`
+	ScheduleID     string             `json:"schedule_id,omitempty"`
+	Summary        endpointSummary    `json:"summary"`
+	Delta          discoveryDelta     `json:"delta"`
+	DurationMs     int64              `json:"duration_ms,omitempty"`
+	Evidence       discovery.Evidence `json:"evidence,omitempty"`
+	FileName       string             `json:"file_name,omitempty"`
 }
 
 type discoveryHistoryIndex struct {
@@ -301,6 +320,9 @@ type outputTestResponse struct {
 	DurationMs   int64    `json:"duration_ms"`
 	Message      string   `json:"message"`
 	ResponseBody string   `json:"response_body,omitempty"`
+	Confirmation string   `json:"confirmation"`
+	ACKRequested bool     `json:"ack_requested"`
+	ACKnowledged bool     `json:"acknowledged"`
 	Warnings     []string `json:"warnings,omitempty"`
 }
 
@@ -326,6 +348,7 @@ type apiServer struct {
 	statusConfig    config.Config
 	hasStatusConfig bool
 	discoveryMu     sync.Mutex
+	resources       *systeminfo.Sampler
 }
 
 func Start(ctx context.Context, opts Options) error {
@@ -402,6 +425,7 @@ func newHandlerAndServer(opts Options) (http.Handler, *apiServer, error) {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/api/status", server.handleStatus)
+	mux.HandleFunc("/api/system", server.handleSystem)
 	mux.HandleFunc("/api/ui-preferences", server.handleUIPreferences)
 	mux.HandleFunc("/api/endpoints", server.handleEndpoints)
 	mux.HandleFunc("/api/config", server.handleConfig)
@@ -445,10 +469,11 @@ func newAPIServer(opts Options) *apiServer {
 		}
 	}
 	opts.DiscoveryScriptPath = resolveDiscoveryScriptPath(opts)
-	server := &apiServer{opts: opts}
+	server := &apiServer{opts: opts, resources: systeminfo.NewSampler()}
 	if opts.EffectiveConfig != nil {
 		server.statusConfig = *opts.EffectiveConfig
 		server.hasStatusConfig = true
+		opts.Runtime.ConfigureMonitoringWorkers(opts.EffectiveConfig.ParallelThreads)
 	}
 	return server
 }
@@ -458,70 +483,33 @@ func resolveDiscoveryScriptPath(opts Options) string {
 		return cleanPathForStatus(opts.DiscoveryScriptPath)
 	}
 
-	// The embedded script is versioned with the binary and is the authoritative
-	// default. Automatically preferring an adjacent script lets a stale file
-	// silently shadow a collector hotfix after an executable-only upgrade.
-	if hasEmbeddedDiscoveryScript() {
-		return embeddedDiscoveryScriptPath
-	}
-
-	// This fallback only applies to builds where the embedded asset is absent.
-	candidates := []string{
-		filepath.Join(opts.RootDir, "DiscoverEndpoints.ps1"),
-		filepath.Join(filepath.Dir(opts.ConfigPath), "DiscoverEndpoints.ps1"),
-		filepath.Join(filepath.Dir(opts.EndpointsPath), "DiscoverEndpoints.ps1"),
-	}
-	seen := make(map[string]struct{}, len(candidates))
-	for _, candidate := range candidates {
-		cleaned := filepath.Clean(candidate)
-		if _, ok := seen[cleaned]; ok {
-			continue
-		}
-		seen[cleaned] = struct{}{}
-		if discoveryScriptAvailable(cleaned) {
-			return cleanPathForStatus(cleaned)
-		}
-	}
-
-	return cleanPathForStatus(candidates[0])
+	// An empty script path selects the native Go discovery engine. Adjacent
+	// PowerShell files are intentionally ignored; compatibility execution must
+	// be explicitly requested with --discovery-script.
+	return ""
 }
 
-func hasEmbeddedDiscoveryScript() bool {
-	return len(bytes.TrimSpace(embeddedDiscoveryScript)) > 0
+func discoveryEngineName(scriptPath string) string {
+	if strings.TrimSpace(scriptPath) != "" {
+		return "powershell_compat"
+	}
+	return discovery.EngineName
 }
 
-func discoveryScriptAvailable(path string) bool {
-	if path == embeddedDiscoveryScriptPath {
-		return hasEmbeddedDiscoveryScript()
+func discoveryAvailable(scriptPath string) bool {
+	if strings.TrimSpace(scriptPath) == "" {
+		return true
 	}
-	_, err := os.Stat(path)
+	if !discoveryScriptAvailable(scriptPath) {
+		return false
+	}
+	_, err := exec.LookPath("pwsh")
 	return err == nil
 }
 
-func materializeDiscoveryScript(path string) (string, func(), error) {
-	if path != embeddedDiscoveryScriptPath {
-		return path, func() {}, nil
-	}
-	if !hasEmbeddedDiscoveryScript() {
-		return "", nil, errors.New("embedded discovery script is not available")
-	}
-	tempFile, err := os.CreateTemp("", "pingmonitor_discovery_*.ps1")
-	if err != nil {
-		return "", nil, err
-	}
-	cleanup := func() {
-		_ = os.Remove(tempFile.Name())
-	}
-	if _, err := tempFile.Write(embeddedDiscoveryScript); err != nil {
-		_ = tempFile.Close()
-		cleanup()
-		return "", nil, err
-	}
-	if err := tempFile.Close(); err != nil {
-		cleanup()
-		return "", nil, err
-	}
-	return tempFile.Name(), cleanup, nil
+func discoveryScriptAvailable(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func cleanPathForStatus(path string) string {
@@ -592,7 +580,8 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		ConfigPath:             info.Path,
 		ConfigFormat:           info.Format,
 		EndpointsPath:          filepath.Clean(s.opts.EndpointsPath),
-		DiscoveryAvailable:     discoveryScriptAvailable(s.opts.DiscoveryScriptPath),
+		DiscoveryAvailable:     discoveryAvailable(s.opts.DiscoveryScriptPath),
+		DiscoveryEngine:        discoveryEngineName(s.opts.DiscoveryScriptPath),
 		DiscoveryScriptPath:    s.opts.DiscoveryScriptPath,
 		Mode:                   "editable",
 		Delivery:               delivery,
@@ -602,6 +591,32 @@ func (s *apiServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		EndpointsRevision:      endpointsRevision,
 		ConfigRestartRequired:  configRestartRequired,
 		EndpointsReloadPending: endpointsReloadPending,
+	})
+}
+
+func (s *apiServer) handleSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	runtimeSnapshot := s.opts.Runtime.Snapshot()
+	capacity := systemCapacityResponse{
+		MonitoringWorkersConfigured: int(runtimeSnapshot.MonitoringWorkers.Configured),
+		DiscoveryProbeWorkerMaximum: discovery.MaxProbeWorkerLimit,
+		DiscoveryDNSWorkerMaximum:   discovery.MaxDNSWorkerLimit,
+		ActiveEndpoints:             runtimeSnapshot.ActiveEndpoints,
+	}
+	if cfg, ok := s.effectiveStatusConfig(); ok {
+		capacity.MonitoringWorkersConfigured = cfg.ParallelThreads
+		capacity.PingsPerCycle = cfg.PingsPerCycle
+		capacity.CycleIntervalSeconds = cfg.CycleIntervalSeconds
+		capacity.TimeoutMs = cfg.TimeoutMs
+	}
+	writeJSON(w, http.StatusOK, systemResponse{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		Resources:   s.resources.Snapshot(),
+		Runtime:     runtimeSnapshot,
+		Capacity:    capacity,
 	})
 }
 
@@ -1166,6 +1181,9 @@ func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunReques
 		return discoveryResponse{}, errors.New("another discovery run is already active")
 	}
 	defer s.discoveryMu.Unlock()
+	if discoveryEngineName(s.opts.DiscoveryScriptPath) == discovery.EngineName {
+		return s.runNativeDiscovery(ctx, request, nil)
+	}
 	cmd, tempPath, cleanup, err := s.prepareDiscoveryCommand(ctx, request)
 	if err != nil {
 		return discoveryResponse{}, err
@@ -1192,6 +1210,10 @@ func (s *apiServer) runDiscovery(ctx context.Context, request discoveryRunReques
 		Items:       endpoints,
 		Logs:        sanitizeDiscoveryLog(string(out)),
 		DurationMs:  time.Since(start).Milliseconds(),
+		Evidence: discovery.Evidence{
+			Engine: discoveryEngineName(s.opts.DiscoveryScriptPath), HostsObserved: len(endpoints),
+			RequestedConcurrency: request.ThrottleLimit,
+		},
 	}
 	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
 		return discoveryResponse{}, fmt.Errorf("persist discovery history: %w", err)
@@ -1209,6 +1231,9 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 		return err
 	}
 	defer s.discoveryMu.Unlock()
+	if discoveryEngineName(s.opts.DiscoveryScriptPath) == discovery.EngineName {
+		return s.streamNativeDiscovery(ctx, request, emit)
+	}
 	cmd, tempPath, cleanup, err := s.prepareDiscoveryCommand(ctx, request)
 	if err != nil {
 		_ = emit(discoveryStreamEvent{Type: "error", Error: err.Error()})
@@ -1296,6 +1321,10 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 		Items:       endpoints,
 		Logs:        result.Logs,
 		DurationMs:  time.Since(start).Milliseconds(),
+		Evidence: discovery.Evidence{
+			Engine: discoveryEngineName(s.opts.DiscoveryScriptPath), HostsObserved: len(endpoints),
+			RequestedConcurrency: request.ThrottleLimit,
+		},
 	}
 	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
 		streamErr := fmt.Errorf("persist discovery history: %w", err)
@@ -1318,6 +1347,79 @@ func (s *apiServer) streamDiscoveryRun(ctx context.Context, request discoveryRun
 		Items:       endpoints,
 		Logs:        result.Logs,
 		DurationMs:  response.DurationMs,
+		Evidence:    &response.Evidence,
+	})
+}
+
+func (s *apiServer) runNativeDiscovery(
+	ctx context.Context,
+	request discoveryRunRequest,
+	progress func(discovery.Progress) error,
+) (discoveryResponse, error) {
+	cfg, ok := s.effectiveStatusConfig()
+	if !ok {
+		var err error
+		cfg, _, err = config.LoadEditable(ctx, s.opts.ConfigPath, s.opts.RootDir)
+		if err != nil {
+			return discoveryResponse{}, fmt.Errorf("load discovery configuration: %w", err)
+		}
+	}
+	result, err := discovery.Run(ctx, discovery.Options{
+		TargetNetwork: request.TargetNetwork, SubnetMask: request.SubnetMask,
+		Timeout: time.Duration(request.TimeoutMs) * time.Millisecond, Concurrency: request.ThrottleLimit,
+		PingMode: cfg.Ping.Mode, Progress: progress, WorkerTelemetry: s.opts.Runtime,
+		OnBackendFallback: func(ip, from, to, reason string) {
+			diagnostics.LogWarn("discovery probe backend fallback", map[string]interface{}{
+				"target_ip": ip, "from": from, "to": to, "reason": reason,
+			})
+		},
+	})
+	if err != nil {
+		return discoveryResponse{}, err
+	}
+	endpoints, err := s.enrichDiscoveryEndpoints(result.Target, result.Items)
+	if err != nil {
+		return discoveryResponse{}, fmt.Errorf("discovery classification failed: %w", err)
+	}
+	response := discoveryResponse{
+		GeneratedAt: result.GeneratedAt.Format(time.RFC3339Nano), ScanID: result.ScanID,
+		Target: result.Target, Summary: summarizeEndpoints(endpoints), Items: endpoints,
+		Logs: strings.Join(result.Logs, "\n"), DurationMs: result.Duration.Milliseconds(), Evidence: result.Evidence,
+	}
+	if err := s.persistDiscoverySnapshot(request, &response); err != nil {
+		return discoveryResponse{}, fmt.Errorf("persist discovery history: %w", err)
+	}
+	if err := s.emitDiscoveryEvents(ctx, request, response); err != nil {
+		return discoveryResponse{}, fmt.Errorf("discovery completed and history was retained locally, but configured event output could not accept the evidence: %w", err)
+	}
+	return response, nil
+}
+
+func (s *apiServer) streamNativeDiscovery(
+	ctx context.Context,
+	request discoveryRunRequest,
+	emit func(discoveryStreamEvent) error,
+) error {
+	initial := newDiscoveryProgressState(request)
+	if err := emit(discoveryStreamEvent{Type: "started", SummaryText: initial.SummaryText}); err != nil {
+		return err
+	}
+	response, err := s.runNativeDiscovery(ctx, request, func(progress discovery.Progress) error {
+		return emit(discoveryStreamEvent{
+			Type: "progress", SummaryText: progress.Message, LogLine: progress.LogLine,
+			Target: progress.Target,
+		})
+	})
+	if err != nil {
+		_ = emit(discoveryStreamEvent{Type: "error", Error: err.Error()})
+		return err
+	}
+	summary := response.Summary
+	return emit(discoveryStreamEvent{
+		Type: "complete", GeneratedAt: response.GeneratedAt, ScanID: response.ScanID,
+		Target: response.Target, SummaryText: fmt.Sprintf("Discovery completed with %d endpoint%s.", len(response.Items), pluralSuffix(len(response.Items))),
+		Summary: &summary, Delta: &response.Delta, Items: response.Items, Logs: response.Logs,
+		DurationMs: response.DurationMs, Evidence: &response.Evidence,
 	})
 }
 
@@ -1325,20 +1427,15 @@ func (s *apiServer) prepareDiscoveryCommand(ctx context.Context, request discove
 	if !discoveryScriptAvailable(s.opts.DiscoveryScriptPath) {
 		return nil, "", nil, fmt.Errorf("discovery script not found: %s", s.opts.DiscoveryScriptPath)
 	}
-	scriptPath, cleanupScript, err := materializeDiscoveryScript(s.opts.DiscoveryScriptPath)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("discovery script preparation failed: %w", err)
-	}
 	pwsh, err := exec.LookPath("pwsh")
 	if err != nil {
-		cleanupScript()
 		return nil, "", nil, fmt.Errorf("pwsh not available for discovery: %w", err)
 	}
 	tempPath := filepath.Join(os.TempDir(), fmt.Sprintf("pingmonitor_discovery_%d.csv", time.Now().UnixNano()))
 	args := []string{
 		"-NoProfile",
 		"-ExecutionPolicy", "Bypass",
-		"-File", scriptPath,
+		"-File", s.opts.DiscoveryScriptPath,
 		"-OutputPath", tempPath,
 		"-SubnetMask", strconv.Itoa(request.SubnetMask),
 		"-Timeout", strconv.Itoa(request.TimeoutMs),
@@ -1349,7 +1446,6 @@ func (s *apiServer) prepareDiscoveryCommand(ctx context.Context, request discove
 	}
 	cleanup := func() {
 		_ = os.Remove(tempPath)
-		cleanupScript()
 	}
 	return exec.CommandContext(ctx, pwsh, args...), tempPath, cleanup, nil
 }
@@ -1424,6 +1520,7 @@ func (s *apiServer) persistDiscoverySnapshot(request discoveryRunRequest, respon
 		Delta:          response.Delta,
 		Items:          response.Items,
 		DurationMs:     response.DurationMs,
+		Evidence:       response.Evidence,
 	}
 	stamp := strings.NewReplacer("-", "", ":", "").Replace(response.GeneratedAt)
 	stamp = strings.TrimSuffix(stamp, "Z")
@@ -1474,31 +1571,44 @@ func (s *apiServer) emitDiscoveryEvents(ctx context.Context, request discoveryRu
 		EventID: stableDiscoveryEventID(
 			s.opts.CollectorID, response.ScanID, response.Target, "scan_summary",
 		),
-		CollectorID:       s.opts.CollectorID,
-		CollectorHost:     s.opts.CollectorHost,
-		CycleID:           cycleID,
-		Timestamp:         response.GeneratedAt,
-		RecordType:        "discovery_scan_summary",
-		EvidenceKind:      "icmp_subnet_discovery",
-		ScanID:            response.ScanID,
-		PreviousScanID:    response.Delta.PreviousScanID,
-		ScheduleID:        request.ScheduleID,
-		TargetNetwork:     response.Target,
-		SubnetID:          subnet.ID,
-		SubnetName:        subnet.Name,
-		SubnetVLAN:        subnet.VLAN,
-		SubnetLocation:    subnet.Location,
-		AddressingMode:    subnet.AddressingMode,
-		RoutingDomain:     subnet.RoutingDomain,
-		BaselineAvailable: baselineAvailable,
-		EndpointsObserved: len(response.Items),
-		NewEndpoints:      response.Delta.New,
-		MissingEndpoints:  response.Delta.Missing,
-		Unchanged:         response.Delta.Unchanged,
-		UnresolvedDynamic: response.Delta.UnresolvedDynamic,
-		ScanDurationMs:    response.DurationMs,
-		TimeoutMs:         request.TimeoutMs,
-		ThrottleLimit:     request.ThrottleLimit,
+		CollectorID:          s.opts.CollectorID,
+		CollectorHost:        s.opts.CollectorHost,
+		CycleID:              cycleID,
+		Timestamp:            response.GeneratedAt,
+		RecordType:           "discovery_scan_summary",
+		EvidenceKind:         "icmp_subnet_discovery",
+		ScanID:               response.ScanID,
+		PreviousScanID:       response.Delta.PreviousScanID,
+		ScheduleID:           request.ScheduleID,
+		TargetNetwork:        response.Target,
+		SubnetID:             subnet.ID,
+		SubnetName:           subnet.Name,
+		SubnetVLAN:           subnet.VLAN,
+		SubnetLocation:       subnet.Location,
+		AddressingMode:       subnet.AddressingMode,
+		RoutingDomain:        subnet.RoutingDomain,
+		BaselineAvailable:    baselineAvailable,
+		EndpointsObserved:    len(response.Items),
+		NewEndpoints:         response.Delta.New,
+		MissingEndpoints:     response.Delta.Missing,
+		Unchanged:            response.Delta.Unchanged,
+		UnresolvedDynamic:    response.Delta.UnresolvedDynamic,
+		ScanDurationMs:       response.DurationMs,
+		TimeoutMs:            request.TimeoutMs,
+		ThrottleLimit:        request.ThrottleLimit,
+		DiscoveryEngine:      response.Evidence.Engine,
+		ProbeBackends:        append([]string(nil), response.Evidence.ProbeBackends...),
+		LatencySources:       append([]string(nil), response.Evidence.LatencySources...),
+		RequestedConcurrency: response.Evidence.RequestedConcurrency,
+		ProbeWorkers:         response.Evidence.ProbeWorkers,
+		DNSWorkers:           response.Evidence.DNSWorkers,
+		HostsConsidered:      response.Evidence.HostsConsidered,
+		HostsProbed:          response.Evidence.HostsProbed,
+		HostsNotObserved:     response.Evidence.HostsNotObserved,
+		HostsIndeterminate:   response.Evidence.HostsIndeterminate,
+		DNSForwardConfirmed:  response.Evidence.DNSForwardConfirmed,
+		DNSPtrOnly:           response.Evidence.DNSPtrOnly,
+		DNSUnresolved:        response.Evidence.DNSUnresolved,
 	}
 	encoded, err := json.Marshal(summary)
 	if err != nil {
@@ -1562,57 +1672,63 @@ func (s *apiServer) discoveryEndpointEvent(
 		source = "icmp_subnet_scan"
 	}
 	event := models.DiscoveryEvent{
-		SchemaVersion:        models.SchemaVersion,
-		EventID:              stableDiscoveryEventID(s.opts.CollectorID, response.ScanID, endpoint.IP, deltaStatus),
-		CollectorID:          s.opts.CollectorID,
-		CollectorHost:        s.opts.CollectorHost,
-		CycleID:              "discovery-" + response.ScanID,
-		Timestamp:            response.GeneratedAt,
-		RecordType:           "discovery_observation",
-		EvidenceKind:         "icmp_subnet_discovery",
-		ScanID:               response.ScanID,
-		PreviousScanID:       response.Delta.PreviousScanID,
-		ScheduleID:           request.ScheduleID,
-		TargetNetwork:        response.Target,
-		SubnetID:             subnet.ID,
-		SubnetName:           subnet.Name,
-		SubnetVLAN:           subnet.VLAN,
-		SubnetLocation:       subnet.Location,
-		AddressingMode:       subnet.AddressingMode,
-		RoutingDomain:        subnet.RoutingDomain,
-		TargetIP:             endpoint.IP,
-		EndpointID:           models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
-		Hostname:             endpoint.Hostname,
-		FQDN:                 endpoint.FQDN,
-		Dev:                  endpoint.Dev,
-		DeviceMode:           endpoint.EffectiveDeviceMode(),
-		MonitoringEnabled:    endpoint.IsMonitoringEnabled(),
-		AlertingEnabled:      endpoint.IsAlertingEnabled(),
-		AlertingReason:       endpoint.AlertingReason,
-		MaintenanceUntil:     endpoint.MaintenanceUntil,
-		MaintenanceReason:    endpoint.MaintenanceReason,
-		AssetID:              endpoint.AssetID,
-		DynamicAddress:       endpoint.DynamicAddress,
-		ClassificationSource: endpoint.ClassificationSource,
-		DiscoveryReviewState: endpoint.DiscoveryReviewState,
-		DiscoveryReviewedAt:  endpoint.DiscoveryReviewedAt,
-		DiscoveryReviewNote:  endpoint.DiscoveryReviewNote,
-		Group:                endpoint.Group,
-		Description:          endpoint.Description,
-		EntityType:           endpoint.EntityType,
-		Device:               endpoint.Device,
-		Vendor:               endpoint.Vendor,
-		Notes:                endpoint.AdditionalNotes,
-		DNSStatus:            endpoint.DNSStatus,
-		DNSForwardConfirmed:  endpoint.DNSForwardConfirmed,
-		DiscoveredAt:         endpoint.DiscoveredAt,
-		DiscoverySource:      source,
-		DiscoveryLatencyMs:   endpoint.DiscoveryLatencyMs,
-		DiscoveryStatus:      discoveryStatus,
-		DiscoveryDelta:       deltaStatus,
-		DiscoveryObserved:    observed,
-		BaselineAvailable:    baselineAvailable,
-		ScanDurationMs:       response.DurationMs,
+		SchemaVersion:                models.SchemaVersion,
+		EventID:                      stableDiscoveryEventID(s.opts.CollectorID, response.ScanID, endpoint.IP, deltaStatus),
+		CollectorID:                  s.opts.CollectorID,
+		CollectorHost:                s.opts.CollectorHost,
+		CycleID:                      "discovery-" + response.ScanID,
+		Timestamp:                    response.GeneratedAt,
+		RecordType:                   "discovery_observation",
+		EvidenceKind:                 "icmp_subnet_discovery",
+		ScanID:                       response.ScanID,
+		PreviousScanID:               response.Delta.PreviousScanID,
+		ScheduleID:                   request.ScheduleID,
+		TargetNetwork:                response.Target,
+		SubnetID:                     subnet.ID,
+		SubnetName:                   subnet.Name,
+		SubnetVLAN:                   subnet.VLAN,
+		SubnetLocation:               subnet.Location,
+		AddressingMode:               subnet.AddressingMode,
+		RoutingDomain:                subnet.RoutingDomain,
+		TargetIP:                     endpoint.IP,
+		EndpointID:                   models.StableEndpointID(endpoint.EndpointID, endpoint.IP),
+		Hostname:                     endpoint.Hostname,
+		FQDN:                         endpoint.FQDN,
+		Dev:                          endpoint.Dev,
+		DeviceMode:                   endpoint.EffectiveDeviceMode(),
+		MonitoringEnabled:            endpoint.IsMonitoringEnabled(),
+		AlertingEnabled:              endpoint.IsAlertingEnabled(),
+		AlertingReason:               endpoint.AlertingReason,
+		MaintenanceUntil:             endpoint.MaintenanceUntil,
+		MaintenanceReason:            endpoint.MaintenanceReason,
+		AssetID:                      endpoint.AssetID,
+		DynamicAddress:               endpoint.DynamicAddress,
+		ClassificationSource:         endpoint.ClassificationSource,
+		DiscoveryReviewState:         endpoint.DiscoveryReviewState,
+		DiscoveryReviewedAt:          endpoint.DiscoveryReviewedAt,
+		DiscoveryReviewNote:          endpoint.DiscoveryReviewNote,
+		Group:                        endpoint.Group,
+		Description:                  endpoint.Description,
+		EntityType:                   endpoint.EntityType,
+		Device:                       endpoint.Device,
+		Vendor:                       endpoint.Vendor,
+		Notes:                        endpoint.AdditionalNotes,
+		DNSStatus:                    endpoint.DNSStatus,
+		DNSForwardConfirmed:          endpoint.DNSForwardConfirmed,
+		DiscoveredAt:                 endpoint.DiscoveredAt,
+		DiscoverySource:              source,
+		DiscoveryLatencyMs:           endpoint.DiscoveryLatencyMs,
+		DiscoveryProbeBackend:        endpoint.DiscoveryProbeBackend,
+		DiscoveryLatencySource:       endpoint.DiscoveryLatencySource,
+		DiscoveryLatencyResolutionMs: endpoint.DiscoveryLatencyResolutionMs,
+		DiscoveryLatencyCensored:     endpoint.DiscoveryLatencyCensored,
+		DiscoveryLatencyUpperBoundMs: endpoint.DiscoveryLatencyUpperBoundMs,
+		DiscoveryProbeElapsedMs:      endpoint.DiscoveryProbeElapsedMs,
+		DiscoveryStatus:              discoveryStatus,
+		DiscoveryDelta:               deltaStatus,
+		DiscoveryObserved:            observed,
+		BaselineAvailable:            baselineAvailable,
+		ScanDurationMs:               response.DurationMs,
 	}
 	return json.Marshal(event)
 }
@@ -1747,7 +1863,7 @@ func discoveryScanSummaryFromSnapshot(snapshot discoverySnapshot, fileName strin
 		SubnetLocation: snapshot.SubnetLocation, AddressingMode: snapshot.AddressingMode,
 		RoutingDomain: snapshot.RoutingDomain,
 		ScheduleID:    snapshot.Request.ScheduleID, Summary: snapshot.Summary, Delta: snapshot.Delta,
-		DurationMs: snapshot.DurationMs, FileName: fileName,
+		DurationMs: snapshot.DurationMs, Evidence: snapshot.Evidence, FileName: fileName,
 	}
 }
 
@@ -2007,7 +2123,7 @@ func (s *apiServer) runDiscoveryScheduler(ctx context.Context) {
 
 func (s *apiServer) evaluateDiscoverySchedules(ctx context.Context, states map[string]discoveryScheduleRunState) {
 	cfg, ok := s.effectiveStatusConfig()
-	if !ok || len(cfg.Discovery.Schedules) == 0 || !discoveryScriptAvailable(s.opts.DiscoveryScriptPath) {
+	if !ok || len(cfg.Discovery.Schedules) == 0 || !discoveryAvailable(s.opts.DiscoveryScriptPath) {
 		return
 	}
 	historyPath := discoveryHistoryPath(cfg, s.opts.ConfigPath)
@@ -2163,8 +2279,14 @@ func normalizeDiscoveryRunRequest(request *discoveryRunRequest) error {
 	if request.TimeoutMs == 0 {
 		request.TimeoutMs = 500
 	}
+	if request.TimeoutMs < 100 || request.TimeoutMs > 60000 {
+		return errors.New("timeout_ms must be between 100 and 60000")
+	}
 	if request.ThrottleLimit == 0 {
 		request.ThrottleLimit = 50
+	}
+	if request.ThrottleLimit < 1 {
+		return errors.New("throttle_limit must be at least 1")
 	}
 	request.TargetNetwork = strings.TrimSpace(request.TargetNetwork)
 	normalizedTarget, normalizedMask, err := normalizeDiscoveryTarget(request.TargetNetwork, request.SubnetMask)
@@ -2340,7 +2462,10 @@ func probeHECOutput(ctx context.Context, cfg config.Config) (outputTestResponse,
 			"message":     "Ping Monitor admin UI event HEC connectivity probe",
 		},
 	}
-	return executeOutputProbe(ctx, outputTestResponse{Target: "hec", URL: url, Warnings: warnings}, cfg.HEC.VerifySSL, cfg.HEC.SSLProtocol, url, token, payload)
+	probeConfig := cfg.HEC
+	probeConfig.URL = url
+	probeConfig.Token = token
+	return executeOutputProbe(ctx, outputTestResponse{Target: "hec", URL: url, Warnings: warnings}, probeConfig, payload)
 }
 
 func probeMetricsOutput(ctx context.Context, cfg config.Config) (outputTestResponse, error) {
@@ -2367,45 +2492,48 @@ func probeMetricsOutput(ctx context.Context, cfg config.Config) (outputTestRespo
 			"target":                    "metrics",
 		},
 	}
-	return executeOutputProbe(ctx, outputTestResponse{Target: "metrics", URL: url, Warnings: warnings}, cfg.Metrics.VerifySSL, cfg.Metrics.SSLProtocol, url, token, payload)
+	probeConfig := config.HEC{
+		Enabled: true, URL: url, Token: token, VerifySSL: cfg.Metrics.VerifySSL,
+		SSLProtocol: cfg.Metrics.SSLProtocol, BatchSize: cfg.Metrics.BatchSize,
+		Retry:  config.Retry{Enabled: true, MaxAttempts: 3, BaseDelayMs: 250, JitterPct: 20, Backoff: "exponential"},
+		UseACK: cfg.Metrics.UseACK, ACKTimeoutSeconds: cfg.Metrics.ACKTimeoutSeconds,
+		ACKPollIntervalMs: cfg.Metrics.ACKPollIntervalMs, Channel: cfg.Metrics.Channel,
+	}
+	return executeOutputProbe(ctx, outputTestResponse{Target: "metrics", URL: url, Warnings: warnings}, probeConfig, payload)
 }
 
-func executeOutputProbe(ctx context.Context, base outputTestResponse, verifySSL bool, sslProtocol string, url string, token string, payload interface{}) (outputTestResponse, error) {
+func executeOutputProbe(ctx context.Context, base outputTestResponse, cfg config.HEC, payload interface{}) (outputTestResponse, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return outputTestResponse{}, err
 	}
-	client := httpcfg.NewClient(verifySSL, sslProtocol, 10*time.Second)
-	start := time.Now()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	writer, err := hec.New(cfg, probeHostname(), "ping-monitor-ui-"+base.Target)
 	if err != nil {
 		return outputTestResponse{}, err
 	}
-	req.Header.Set("Authorization", "Splunk "+token)
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		base.Success = false
-		base.DurationMs = time.Since(start).Milliseconds()
-		base.Message = err.Error()
+	defer writer.Close()
+	base.ACKRequested = cfg.UseACK
+	base.Confirmation = "hec_accepted_only"
+	start := time.Now()
+	result, sendErr := writer.SendPayloadsWithResult(ctx, []json.RawMessage{body})
+	base.StatusCode = result.StatusCode
+	base.DurationMs = time.Since(start).Milliseconds()
+	base.ResponseBody = result.ResponseBody
+	base.ACKnowledged = result.ACKnowledged
+	base.Success = sendErr == nil
+	if result.ACKnowledged {
+		base.Confirmation = "indexed_acknowledged"
+	}
+	label := strings.ToUpper(base.Target)
+	if sendErr != nil {
+		base.Message = fmt.Sprintf("%s delivery probe was not confirmed: %v", label, sendErr)
 		return base, nil
 	}
-	defer resp.Body.Close()
-	responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	trimmedBody := strings.TrimSpace(string(responseBody))
-	base.StatusCode = resp.StatusCode
-	base.DurationMs = time.Since(start).Milliseconds()
-	base.Success = resp.StatusCode >= 200 && resp.StatusCode < 300
-	base.ResponseBody = trimmedBody
-	if base.Success {
-		base.Message = fmt.Sprintf("%s probe succeeded with HTTP %d", strings.ToUpper(base.Target), resp.StatusCode)
-	} else {
-		base.Message = fmt.Sprintf("%s probe failed with HTTP %d", strings.ToUpper(base.Target), resp.StatusCode)
+	if result.ACKnowledged {
+		base.Message = fmt.Sprintf("%s probe was indexed and acknowledged by Splunk (HTTP %d)", label, result.StatusCode)
+		return base, nil
 	}
-	if trimmedBody == "" {
-		base.ResponseBody = http.StatusText(resp.StatusCode)
-	}
+	base.Message = fmt.Sprintf("%s probe was accepted by HEC (HTTP %d); indexing was not confirmed because Indexer ACK is disabled", label, result.StatusCode)
 	return base, nil
 }
 

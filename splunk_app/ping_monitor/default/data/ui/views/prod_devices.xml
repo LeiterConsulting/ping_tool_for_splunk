@@ -181,6 +181,9 @@
         latest(avg_latency_ms) as avg_latency_ms,
 		latest(effective_state) as effective_state,
         latest(stale_after_seconds) as stale_after_seconds,
+        latest(observation_status) as observation_status,
+        latest(measurement_valid) as measurement_valid,
+        latest(pings_successful) as pings_successful,
         latest(group) as group,
         latest(entitytype) as entitytype,
         latest(device) as device,
@@ -188,6 +191,7 @@
         latest(description) as description,
         latest(additional_notes) as additional_notes
         by endpoint_key
+| `ping_enforce_observation_coherence`
 | `ping_apply_stale_state(last_seen, stale_after_seconds)`
 | `ping_apply_status_label`
 | eval avg_latency_ms=round(avg_latency_ms, 2)

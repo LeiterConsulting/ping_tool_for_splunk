@@ -25,41 +25,47 @@ const (
 // Endpoint matches endpoints.csv schema.
 // Note: Field names match v4 payload keys (lowercase + underscores) where applicable.
 type Endpoint struct {
-	EndpointID           string   `json:"endpoint_id,omitempty"`
-	IP                   string   `json:"ip"`
-	Hostname             string   `json:"hostname"`
-	FQDN                 string   `json:"fqdn,omitempty"`
-	Dev                  bool     `json:"dev"`
-	DeviceMode           string   `json:"device_mode,omitempty"`
-	MonitoringEnabled    *bool    `json:"monitoring_enabled,omitempty"`
-	AlertingEnabled      *bool    `json:"alerting_enabled,omitempty"`
-	AlertingReason       string   `json:"alerting_reason,omitempty"`
-	MaintenanceUntil     string   `json:"maintenance_until,omitempty"`
-	MaintenanceReason    string   `json:"maintenance_reason,omitempty"`
-	AssetID              string   `json:"asset_id,omitempty"`
-	DynamicAddress       bool     `json:"dynamic_address,omitempty"`
-	SubnetID             string   `json:"subnet_id,omitempty"`
-	SubnetName           string   `json:"subnet_name,omitempty"`
-	SubnetVLAN           string   `json:"subnet_vlan,omitempty"`
-	SubnetLocation       string   `json:"subnet_location,omitempty"`
-	AddressingMode       string   `json:"addressing_mode,omitempty"`
-	RoutingDomain        string   `json:"routing_domain,omitempty"`
-	ClassificationSource string   `json:"classification_source,omitempty"`
-	DiscoveryReviewState string   `json:"discovery_review_state,omitempty"`
-	DiscoveryReviewedAt  string   `json:"discovery_reviewed_at,omitempty"`
-	DiscoveryReviewNote  string   `json:"discovery_review_note,omitempty"`
-	DNSStatus            string   `json:"dns_status,omitempty"`
-	DNSForwardConfirmed  bool     `json:"dns_forward_confirmed,omitempty"`
-	DiscoveredAt         string   `json:"discovered_at,omitempty"`
-	DiscoveryScanID      string   `json:"discovery_scan_id,omitempty"`
-	DiscoverySource      string   `json:"discovery_source,omitempty"`
-	DiscoveryLatencyMs   *float64 `json:"discovery_latency_ms,omitempty"`
-	Group                string   `json:"group"`
-	Description          string   `json:"description"`
-	EntityType           string   `json:"entitytype"`
-	Device               string   `json:"device"`
-	Vendor               string   `json:"vendor"`
-	AdditionalNotes      string   `json:"additional_notes"`
+	EndpointID                   string   `json:"endpoint_id,omitempty"`
+	IP                           string   `json:"ip"`
+	Hostname                     string   `json:"hostname"`
+	FQDN                         string   `json:"fqdn,omitempty"`
+	Dev                          bool     `json:"dev"`
+	DeviceMode                   string   `json:"device_mode,omitempty"`
+	MonitoringEnabled            *bool    `json:"monitoring_enabled,omitempty"`
+	AlertingEnabled              *bool    `json:"alerting_enabled,omitempty"`
+	AlertingReason               string   `json:"alerting_reason,omitempty"`
+	MaintenanceUntil             string   `json:"maintenance_until,omitempty"`
+	MaintenanceReason            string   `json:"maintenance_reason,omitempty"`
+	AssetID                      string   `json:"asset_id,omitempty"`
+	DynamicAddress               bool     `json:"dynamic_address,omitempty"`
+	SubnetID                     string   `json:"subnet_id,omitempty"`
+	SubnetName                   string   `json:"subnet_name,omitempty"`
+	SubnetVLAN                   string   `json:"subnet_vlan,omitempty"`
+	SubnetLocation               string   `json:"subnet_location,omitempty"`
+	AddressingMode               string   `json:"addressing_mode,omitempty"`
+	RoutingDomain                string   `json:"routing_domain,omitempty"`
+	ClassificationSource         string   `json:"classification_source,omitempty"`
+	DiscoveryReviewState         string   `json:"discovery_review_state,omitempty"`
+	DiscoveryReviewedAt          string   `json:"discovery_reviewed_at,omitempty"`
+	DiscoveryReviewNote          string   `json:"discovery_review_note,omitempty"`
+	DNSStatus                    string   `json:"dns_status,omitempty"`
+	DNSForwardConfirmed          bool     `json:"dns_forward_confirmed,omitempty"`
+	DiscoveredAt                 string   `json:"discovered_at,omitempty"`
+	DiscoveryScanID              string   `json:"discovery_scan_id,omitempty"`
+	DiscoverySource              string   `json:"discovery_source,omitempty"`
+	DiscoveryLatencyMs           *float64 `json:"discovery_latency_ms,omitempty"`
+	DiscoveryProbeBackend        string   `json:"discovery_probe_backend,omitempty"`
+	DiscoveryLatencySource       string   `json:"discovery_latency_source,omitempty"`
+	DiscoveryLatencyResolutionMs *float64 `json:"discovery_latency_resolution_ms,omitempty"`
+	DiscoveryLatencyCensored     bool     `json:"discovery_latency_censored,omitempty"`
+	DiscoveryLatencyUpperBoundMs *float64 `json:"discovery_latency_upper_bound_ms,omitempty"`
+	DiscoveryProbeElapsedMs      *float64 `json:"discovery_probe_elapsed_ms,omitempty"`
+	Group                        string   `json:"group"`
+	Description                  string   `json:"description"`
+	EntityType                   string   `json:"entitytype"`
+	Device                       string   `json:"device"`
+	Vendor                       string   `json:"vendor"`
+	AdditionalNotes              string   `json:"additional_notes"`
 }
 
 func (e Endpoint) IsMonitoringEnabled() bool {
@@ -210,6 +216,68 @@ type SummaryEvent struct {
 // does not use monitoring state or packet-loss fields: absence from one scan is
 // "not_observed", not proof that an asset is down or decommissioned.
 type DiscoveryEvent struct {
+	SchemaVersion                int      `json:"schema_version"`
+	EventID                      string   `json:"event_id"`
+	CollectorID                  string   `json:"collector_id"`
+	CollectorHost                string   `json:"collector_host"`
+	CycleID                      string   `json:"cycle_id"`
+	Timestamp                    string   `json:"timestamp"`
+	RecordType                   string   `json:"record_type"`
+	EvidenceKind                 string   `json:"evidence_kind"`
+	ScanID                       string   `json:"scan_id"`
+	PreviousScanID               string   `json:"previous_scan_id,omitempty"`
+	ScheduleID                   string   `json:"schedule_id,omitempty"`
+	TargetNetwork                string   `json:"target_network"`
+	TargetIP                     string   `json:"target_ip"`
+	EndpointID                   string   `json:"endpoint_id"`
+	Hostname                     string   `json:"hostname,omitempty"`
+	FQDN                         string   `json:"fqdn,omitempty"`
+	Dev                          bool     `json:"dev"`
+	DeviceMode                   string   `json:"device_mode,omitempty"`
+	MonitoringEnabled            bool     `json:"monitoring_enabled"`
+	AlertingEnabled              bool     `json:"alerting_enabled"`
+	AlertingReason               string   `json:"alerting_reason,omitempty"`
+	MaintenanceUntil             string   `json:"maintenance_until,omitempty"`
+	MaintenanceReason            string   `json:"maintenance_reason,omitempty"`
+	AssetID                      string   `json:"asset_id,omitempty"`
+	DynamicAddress               bool     `json:"dynamic_address"`
+	SubnetID                     string   `json:"subnet_id,omitempty"`
+	SubnetName                   string   `json:"subnet_name,omitempty"`
+	SubnetVLAN                   string   `json:"subnet_vlan,omitempty"`
+	SubnetLocation               string   `json:"subnet_location,omitempty"`
+	AddressingMode               string   `json:"addressing_mode,omitempty"`
+	RoutingDomain                string   `json:"routing_domain,omitempty"`
+	ClassificationSource         string   `json:"classification_source,omitempty"`
+	DiscoveryReviewState         string   `json:"discovery_review_state,omitempty"`
+	DiscoveryReviewedAt          string   `json:"discovery_reviewed_at,omitempty"`
+	DiscoveryReviewNote          string   `json:"discovery_review_note,omitempty"`
+	Group                        string   `json:"group,omitempty"`
+	Description                  string   `json:"description,omitempty"`
+	EntityType                   string   `json:"entitytype,omitempty"`
+	Device                       string   `json:"device,omitempty"`
+	Vendor                       string   `json:"vendor,omitempty"`
+	Notes                        string   `json:"additional_notes,omitempty"`
+	DNSStatus                    string   `json:"dns_status,omitempty"`
+	DNSForwardConfirmed          bool     `json:"dns_forward_confirmed"`
+	DiscoveredAt                 string   `json:"discovered_at,omitempty"`
+	DiscoverySource              string   `json:"discovery_source,omitempty"`
+	DiscoveryLatencyMs           *float64 `json:"discovery_latency_ms,omitempty"`
+	DiscoveryProbeBackend        string   `json:"discovery_probe_backend,omitempty"`
+	DiscoveryLatencySource       string   `json:"discovery_latency_source,omitempty"`
+	DiscoveryLatencyResolutionMs *float64 `json:"discovery_latency_resolution_ms,omitempty"`
+	DiscoveryLatencyCensored     bool     `json:"discovery_latency_censored,omitempty"`
+	DiscoveryLatencyUpperBoundMs *float64 `json:"discovery_latency_upper_bound_ms,omitempty"`
+	DiscoveryProbeElapsedMs      *float64 `json:"discovery_probe_elapsed_ms,omitempty"`
+	DiscoveryStatus              string   `json:"discovery_status"`
+	DiscoveryDelta               string   `json:"discovery_delta_status"`
+	DiscoveryObserved            bool     `json:"discovery_observed"`
+	BaselineAvailable            bool     `json:"baseline_available"`
+	ScanDurationMs               int64    `json:"scan_duration_ms,omitempty"`
+}
+
+// DiscoveryScanEvent records that a scan completed even when it observed no
+// endpoints. It is the audit/control-plane companion to DiscoveryEvent.
+type DiscoveryScanEvent struct {
 	SchemaVersion        int      `json:"schema_version"`
 	EventID              string   `json:"event_id"`
 	CollectorID          string   `json:"collector_id"`
@@ -222,77 +290,34 @@ type DiscoveryEvent struct {
 	PreviousScanID       string   `json:"previous_scan_id,omitempty"`
 	ScheduleID           string   `json:"schedule_id,omitempty"`
 	TargetNetwork        string   `json:"target_network"`
-	TargetIP             string   `json:"target_ip"`
-	EndpointID           string   `json:"endpoint_id"`
-	Hostname             string   `json:"hostname,omitempty"`
-	FQDN                 string   `json:"fqdn,omitempty"`
-	Dev                  bool     `json:"dev"`
-	DeviceMode           string   `json:"device_mode,omitempty"`
-	MonitoringEnabled    bool     `json:"monitoring_enabled"`
-	AlertingEnabled      bool     `json:"alerting_enabled"`
-	AlertingReason       string   `json:"alerting_reason,omitempty"`
-	MaintenanceUntil     string   `json:"maintenance_until,omitempty"`
-	MaintenanceReason    string   `json:"maintenance_reason,omitempty"`
-	AssetID              string   `json:"asset_id,omitempty"`
-	DynamicAddress       bool     `json:"dynamic_address"`
 	SubnetID             string   `json:"subnet_id,omitempty"`
 	SubnetName           string   `json:"subnet_name,omitempty"`
 	SubnetVLAN           string   `json:"subnet_vlan,omitempty"`
 	SubnetLocation       string   `json:"subnet_location,omitempty"`
 	AddressingMode       string   `json:"addressing_mode,omitempty"`
 	RoutingDomain        string   `json:"routing_domain,omitempty"`
-	ClassificationSource string   `json:"classification_source,omitempty"`
-	DiscoveryReviewState string   `json:"discovery_review_state,omitempty"`
-	DiscoveryReviewedAt  string   `json:"discovery_reviewed_at,omitempty"`
-	DiscoveryReviewNote  string   `json:"discovery_review_note,omitempty"`
-	Group                string   `json:"group,omitempty"`
-	Description          string   `json:"description,omitempty"`
-	EntityType           string   `json:"entitytype,omitempty"`
-	Device               string   `json:"device,omitempty"`
-	Vendor               string   `json:"vendor,omitempty"`
-	Notes                string   `json:"additional_notes,omitempty"`
-	DNSStatus            string   `json:"dns_status,omitempty"`
-	DNSForwardConfirmed  bool     `json:"dns_forward_confirmed"`
-	DiscoveredAt         string   `json:"discovered_at,omitempty"`
-	DiscoverySource      string   `json:"discovery_source,omitempty"`
-	DiscoveryLatencyMs   *float64 `json:"discovery_latency_ms,omitempty"`
-	DiscoveryStatus      string   `json:"discovery_status"`
-	DiscoveryDelta       string   `json:"discovery_delta_status"`
-	DiscoveryObserved    bool     `json:"discovery_observed"`
 	BaselineAvailable    bool     `json:"baseline_available"`
+	EndpointsObserved    int      `json:"endpoints_observed"`
+	NewEndpoints         int      `json:"new_endpoints"`
+	MissingEndpoints     int      `json:"missing_endpoints"`
+	Unchanged            int      `json:"unchanged_endpoints"`
+	UnresolvedDynamic    int      `json:"unresolved_dynamic_observations"`
 	ScanDurationMs       int64    `json:"scan_duration_ms,omitempty"`
-}
-
-// DiscoveryScanEvent records that a scan completed even when it observed no
-// endpoints. It is the audit/control-plane companion to DiscoveryEvent.
-type DiscoveryScanEvent struct {
-	SchemaVersion     int    `json:"schema_version"`
-	EventID           string `json:"event_id"`
-	CollectorID       string `json:"collector_id"`
-	CollectorHost     string `json:"collector_host"`
-	CycleID           string `json:"cycle_id"`
-	Timestamp         string `json:"timestamp"`
-	RecordType        string `json:"record_type"`
-	EvidenceKind      string `json:"evidence_kind"`
-	ScanID            string `json:"scan_id"`
-	PreviousScanID    string `json:"previous_scan_id,omitempty"`
-	ScheduleID        string `json:"schedule_id,omitempty"`
-	TargetNetwork     string `json:"target_network"`
-	SubnetID          string `json:"subnet_id,omitempty"`
-	SubnetName        string `json:"subnet_name,omitempty"`
-	SubnetVLAN        string `json:"subnet_vlan,omitempty"`
-	SubnetLocation    string `json:"subnet_location,omitempty"`
-	AddressingMode    string `json:"addressing_mode,omitempty"`
-	RoutingDomain     string `json:"routing_domain,omitempty"`
-	BaselineAvailable bool   `json:"baseline_available"`
-	EndpointsObserved int    `json:"endpoints_observed"`
-	NewEndpoints      int    `json:"new_endpoints"`
-	MissingEndpoints  int    `json:"missing_endpoints"`
-	Unchanged         int    `json:"unchanged_endpoints"`
-	UnresolvedDynamic int    `json:"unresolved_dynamic_observations"`
-	ScanDurationMs    int64  `json:"scan_duration_ms,omitempty"`
-	TimeoutMs         int    `json:"timeout_ms"`
-	ThrottleLimit     int    `json:"throttle_limit"`
+	TimeoutMs            int      `json:"timeout_ms"`
+	ThrottleLimit        int      `json:"throttle_limit"`
+	DiscoveryEngine      string   `json:"discovery_engine,omitempty"`
+	ProbeBackends        []string `json:"probe_backends,omitempty"`
+	LatencySources       []string `json:"latency_sources,omitempty"`
+	RequestedConcurrency int      `json:"requested_concurrency"`
+	ProbeWorkers         int      `json:"probe_workers"`
+	DNSWorkers           int      `json:"dns_workers"`
+	HostsConsidered      int      `json:"hosts_considered"`
+	HostsProbed          int      `json:"hosts_probed"`
+	HostsNotObserved     int      `json:"hosts_not_observed"`
+	HostsIndeterminate   int      `json:"hosts_indeterminate"`
+	DNSForwardConfirmed  int      `json:"dns_forward_confirmed"`
+	DNSPtrOnly           int      `json:"dns_ptr_only"`
+	DNSUnresolved        int      `json:"dns_unresolved"`
 }
 
 type MetricsEvent struct {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/config"
+	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/discovery"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/models"
 	filerevision "github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/revision"
 	"github.com/LeiterConsulting/ping_tool_for_splunk/go/internal/runtimeinfo"
@@ -60,7 +61,7 @@ func TestStaticAssetsAreVersionedAndNotCached(t *testing.T) {
 		t.Fatalf("index Cache-Control = %q, want no-store", cacheControl)
 	}
 
-	for _, path := range []string{"/advisor", "/endpoints", "/discovery", "/settings/appearance", "/settings/discovery", "/settings/splunk", "/settings/diagnostics"} {
+	for _, path := range []string{"/advisor", "/endpoints", "/discovery", "/system", "/settings/appearance", "/settings/discovery", "/settings/splunk", "/settings/diagnostics"} {
 		deepLinkResponse := httptest.NewRecorder()
 		handler.ServeHTTP(deepLinkResponse, httptest.NewRequest(http.MethodGet, path, nil))
 		if deepLinkResponse.Code != http.StatusOK {
@@ -106,6 +107,7 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`data-route="/advisor"`,
 		`data-route="/endpoints"`,
 		`data-route="/discovery"`,
+		`data-route="/system"`,
 		`data-route="/settings"`,
 		`data-settings-route="/settings/appearance"`,
 		`data-settings-route="/settings/discovery"`,
@@ -128,6 +130,8 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`id="appearance-save-button"`,
 		`class="action-menu"`,
 		`class="panel settings-card section-stack naming-rules-card"`,
+		`id="system-monitor-workers-meter"`,
+		`id="system-go-limit"`,
 	} {
 		if !strings.Contains(indexHTML, expected) {
 			t.Errorf("routed interface does not contain %q", expected)
@@ -145,6 +149,8 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`renderRoute('/endpoints', 'push')`,
 		`function openEndpointEditor(scrollIntoView = true)`,
 		`async function loadUIPreferences(showSuccess = false)`,
+		`async function refreshSystemMetrics(showSuccess = false)`,
+		`function renderWorkerPool(`,
 		`putJson('/api/ui-preferences'`,
 		`aria-label="Open Pair ${pairNumber} actions"`,
 		`event.target === elements.classificationPreviewHostname`,
@@ -170,6 +176,8 @@ func TestStaticUIUsesRoutedPagesAndConsolidatedActions(t *testing.T) {
 		`[data-color-scheme="signal-blue"]`,
 		`[data-color-scheme="daylight"]`,
 		`.theme-choice-grid`,
+		`.system-dashboard-grid`,
+		`.usage-track`,
 		`[data-density="compact"]`,
 	} {
 		if !strings.Contains(appCSS, expected) {
@@ -691,6 +699,56 @@ func TestStatusAPI_ReportsRuntimeAndRestartTruth(t *testing.T) {
 	}
 }
 
+func TestSystemAPIReportsResourcesCapacityAndObservedWorkers(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	cfg := config.Defaults(tempDir)
+	cfg.ParallelThreads = 17
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tracker := runtimeinfo.New("monitor", "cfg", "endpoints", 1)
+	tracker.ConfigureMonitoringWorkers(cfg.ParallelThreads)
+	tracker.MonitoringWorkerStarted()
+	defer tracker.MonitoringWorkerFinished()
+
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		Version: "test", Runtime: tracker, EffectiveConfig: &cfg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/system", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("system status = %d (%s)", response.Code, response.Body.String())
+	}
+	var payload systemResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.Resources.Process.PID <= 0 || payload.Resources.Go.Goroutines < 1 || payload.Resources.LogicalCPUs < 1 {
+		t.Fatalf("resource identity = %#v", payload.Resources)
+	}
+	if payload.Capacity.MonitoringWorkersConfigured != 17 || payload.Capacity.DiscoveryProbeWorkerMaximum != discovery.MaxProbeWorkerLimit || payload.Capacity.DiscoveryDNSWorkerMaximum != discovery.MaxDNSWorkerLimit {
+		t.Fatalf("capacity = %#v", payload.Capacity)
+	}
+	if payload.Runtime.MonitoringWorkers.Active != 1 || payload.Runtime.MonitoringWorkers.Peak != 1 {
+		t.Fatalf("worker truth = %#v", payload.Runtime.MonitoringWorkers)
+	}
+
+	methodResponse := httptest.NewRecorder()
+	handler.ServeHTTP(methodResponse, httptest.NewRequest(http.MethodPost, "/api/system", nil))
+	if methodResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST system status = %d, want 405", methodResponse.Code)
+	}
+}
+
 func TestConfigAPI_RejectsStaleRevision(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.psd1")
@@ -766,7 +824,7 @@ func TestStatusAPI_UsesExplicitDiscoveryScript(t *testing.T) {
 	}
 }
 
-func TestStatusAPI_DefaultsToEmbeddedWhenAdjacentScriptExists(t *testing.T) {
+func TestStatusAPI_DefaultsToNativeWhenAdjacentScriptExists(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.psd1")
 	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
@@ -793,8 +851,8 @@ func TestStatusAPI_DefaultsToEmbeddedWhenAdjacentScriptExists(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if !payload.DiscoveryAvailable || payload.DiscoveryScriptPath != embeddedDiscoveryScriptPath {
-		t.Fatalf("unexpected discovery status: available=%v path=%q", payload.DiscoveryAvailable, payload.DiscoveryScriptPath)
+	if !payload.DiscoveryAvailable || payload.DiscoveryEngine != discovery.EngineName || payload.DiscoveryScriptPath != "" {
+		t.Fatalf("unexpected discovery status: available=%v engine=%q path=%q", payload.DiscoveryAvailable, payload.DiscoveryEngine, payload.DiscoveryScriptPath)
 	}
 }
 
@@ -830,7 +888,7 @@ func TestStatusAPI_MissingExplicitDiscoveryScriptDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestStatusAPI_UsesEmbeddedDiscoveryFallback(t *testing.T) {
+func TestStatusAPI_UsesNativeDiscoveryByDefault(t *testing.T) {
 	tempDir := t.TempDir()
 	configPath := filepath.Join(tempDir, "config.psd1")
 	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
@@ -861,8 +919,8 @@ func TestStatusAPI_UsesEmbeddedDiscoveryFallback(t *testing.T) {
 	if !payload.DiscoveryAvailable {
 		t.Fatal("discovery_available = false, want true")
 	}
-	if payload.DiscoveryScriptPath != embeddedDiscoveryScriptPath {
-		t.Fatalf("discovery_script_path = %q, want %q", payload.DiscoveryScriptPath, embeddedDiscoveryScriptPath)
+	if payload.DiscoveryEngine != discovery.EngineName || payload.DiscoveryScriptPath != "" {
+		t.Fatalf("discovery engine/path = %q/%q, want native Go with no script", payload.DiscoveryEngine, payload.DiscoveryScriptPath)
 	}
 }
 
@@ -914,6 +972,35 @@ func TestNormalizeDiscoveryRunRequest(t *testing.T) {
 	}
 }
 
+func TestNormalizeDiscoveryRunRequestRejectsUnsafeBounds(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		request discoveryRunRequest
+		want    string
+	}{
+		{name: "timeout too low", request: discoveryRunRequest{TargetNetwork: "10.0.0.0/30", TimeoutMs: 99, ThrottleLimit: 2}, want: "timeout_ms must be between 100 and 60000"},
+		{name: "timeout too high", request: discoveryRunRequest{TargetNetwork: "10.0.0.0/30", TimeoutMs: 60001, ThrottleLimit: 2}, want: "timeout_ms must be between 100 and 60000"},
+		{name: "concurrency negative", request: discoveryRunRequest{TargetNetwork: "10.0.0.0/30", TimeoutMs: 100, ThrottleLimit: -1}, want: "throttle_limit must be at least 1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := normalizeDiscoveryRunRequest(&test.request)
+			if err == nil || err.Error() != test.want {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestNormalizeDiscoveryRunRequestPreservesHighLegacyConcurrency(t *testing.T) {
+	request := discoveryRunRequest{TargetNetwork: "10.0.0.0/30", TimeoutMs: 100, ThrottleLimit: 4097}
+	if err := normalizeDiscoveryRunRequest(&request); err != nil {
+		t.Fatalf("normalizeDiscoveryRunRequest() error = %v", err)
+	}
+	if request.ThrottleLimit != 4097 {
+		t.Fatalf("throttle_limit = %d, want requested legacy value 4097", request.ThrottleLimit)
+	}
+}
+
 func TestHandleDiscoveryStream_InvalidTarget(t *testing.T) {
 	handler, err := newHandler(Options{ConfigPath: "config.psd1", EndpointsPath: "endpoints.csv", RootDir: ".", Version: "test"})
 	if err != nil {
@@ -957,29 +1044,6 @@ func TestSanitizeDiscoveryLog(t *testing.T) {
 	}
 	if !containsAll(cleaned, "Hosts to scan:", "Found 2 active hosts out of 2 scanned") {
 		t.Fatalf("sanitizeDiscoveryLog() missing expected content: %q", cleaned)
-	}
-}
-
-func TestMaterializeDiscoveryScript_EmbeddedFallback(t *testing.T) {
-	scriptPath, cleanup, err := materializeDiscoveryScript(embeddedDiscoveryScriptPath)
-	if err != nil {
-		t.Fatalf("materializeDiscoveryScript() error = %v", err)
-	}
-	defer cleanup()
-
-	info, err := os.Stat(scriptPath)
-	if err != nil {
-		t.Fatalf("Stat() error = %v", err)
-	}
-	if info.Size() == 0 {
-		t.Fatal("embedded discovery script materialized as empty file")
-	}
-	content, err := os.ReadFile(scriptPath)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if !bytes.Equal(content, embeddedDiscoveryScript) {
-		t.Fatal("materialized discovery script does not match embedded asset")
 	}
 }
 
@@ -1029,7 +1093,7 @@ func TestOutputTestAPI_HECProbe(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if !payload.Success || payload.StatusCode != http.StatusOK {
+	if !payload.Success || payload.StatusCode != http.StatusOK || payload.Confirmation != "hec_accepted_only" || payload.ACKRequested || payload.ACKnowledged {
 		t.Fatalf("unexpected output test payload: %#v", payload)
 	}
 }
@@ -1079,11 +1143,50 @@ func TestOutputTestAPI_MetricsProbe(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v", err)
 	}
-	if !payload.Success || payload.StatusCode != http.StatusOK {
+	if !payload.Success || payload.StatusCode != http.StatusOK || payload.Confirmation != "hec_accepted_only" || payload.ACKRequested || payload.ACKnowledged {
 		t.Fatalf("unexpected output test payload: %#v", payload)
 	}
-	if !strings.Contains(payload.Message, fmt.Sprintf("HTTP %d", http.StatusOK)) {
+	if !strings.Contains(payload.Message, fmt.Sprintf("HTTP %d", http.StatusOK)) || !strings.Contains(payload.Message, "indexing was not confirmed") {
 		t.Fatalf("message = %q, want HTTP status text", payload.Message)
+	}
+}
+
+func TestProbeHECOutputWaitsForIndexerACK(t *testing.T) {
+	var pollCount int
+	probeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Splunk-Request-Channel") == "" {
+			t.Error("missing X-Splunk-Request-Channel")
+		}
+		switch r.URL.Path {
+		case "/services/collector/event":
+			_, _ = w.Write([]byte(`{"ackId":42}`))
+		case "/services/collector/ack":
+			pollCount++
+			_, _ = w.Write([]byte(`{"acks":{"42":true}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer probeServer.Close()
+
+	cfg := config.Defaults(t.TempDir())
+	cfg.OutputMode = "hec"
+	cfg.HEC.Enabled = true
+	cfg.HEC.URL = probeServer.URL + "/services/collector/event"
+	cfg.HEC.Token = "test-token"
+	cfg.HEC.UseACK = true
+	cfg.HEC.ACKTimeoutSeconds = 2
+	cfg.HEC.ACKPollIntervalMs = 50
+
+	result, err := probeHECOutput(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Success || result.StatusCode != http.StatusOK || result.Confirmation != "indexed_acknowledged" || !result.ACKRequested || !result.ACKnowledged {
+		t.Fatalf("unexpected ACK probe result: %#v", result)
+	}
+	if pollCount < 1 || !strings.Contains(result.Message, "indexed and acknowledged") {
+		t.Fatalf("ACK probe did not prove indexer acknowledgment: polls=%d message=%q", pollCount, result.Message)
 	}
 }
 
@@ -1100,7 +1203,7 @@ func TestStaticShellServesIndex(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", resp.Code, http.StatusOK)
 	}
-	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", `data-route="/endpoints"`, "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Cancel Discovery", "Delete this endpoint", "Needs Review", "Defer Review", "Return to Needs Review", "/review_workflow.js?v=test") {
+	if body := resp.Body.String(); !containsAll(body, "Ping Monitor", `data-route="/endpoints"`, "Collector Administration", "Monitoring Cycle", "Pending Delivery", "Delivery confirmation", "Require Splunk indexer acknowledgment", "Test Event HEC Delivery", "Cancel Discovery", "Delete this endpoint", "Needs Review", "Defer Review", "Return to Needs Review", "/review_workflow.js?v=test") {
 		t.Fatalf("body missing expected shell markers: %q", body)
 	}
 	for header, want := range map[string]string{
@@ -1277,6 +1380,12 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 			{IP: "10.0.0.3", Hostname: "three"},
 		},
 		DurationMs: 1234,
+		Evidence: discovery.Evidence{
+			Engine: discovery.EngineName, ProbeBackends: []string{"windows_icmp"}, LatencySources: []string{"windows_icmp_rtt"},
+			RequestedConcurrency: 400, ProbeWorkers: 256, DNSWorkers: 2,
+			HostsConsidered: 254, HostsProbed: 254, HostsObserved: 2, HostsNotObserved: 252,
+			DNSForwardConfirmed: 1, DNSUnresolved: 1,
+		},
 	}
 	if err := server.persistDiscoverySnapshot(request, &second); err != nil {
 		t.Fatal(err)
@@ -1296,6 +1405,12 @@ func TestDiscoveryEventsPreserveTruthfulObservedAndMissingEvidence(t *testing.T)
 	}
 	if scan.RecordType != "discovery_scan_summary" || scan.NewEndpoints != 1 || scan.MissingEndpoints != 1 || scan.Unchanged != 1 || !scan.BaselineAvailable {
 		t.Fatalf("scan event = %#v", scan)
+	}
+	if scan.DiscoveryEngine != discovery.EngineName || len(scan.ProbeBackends) != 1 || scan.ProbeBackends[0] != "windows_icmp" ||
+		scan.RequestedConcurrency != 400 || scan.ProbeWorkers != 256 || scan.DNSWorkers != 2 ||
+		scan.HostsConsidered != 254 || scan.HostsProbed != 254 || scan.HostsNotObserved != 252 || scan.HostsIndeterminate != 0 ||
+		scan.DNSForwardConfirmed != 1 || scan.DNSPtrOnly != 0 || scan.DNSUnresolved != 1 {
+		t.Fatalf("scan evidence = %#v", scan)
 	}
 	if scan.SubnetID != "lab" || scan.SubnetName != "Lab" || scan.SubnetVLAN != "100" || scan.SubnetLocation != "HQ" || scan.RoutingDomain != "corp" {
 		t.Fatalf("scan subnet metadata = %#v", scan)

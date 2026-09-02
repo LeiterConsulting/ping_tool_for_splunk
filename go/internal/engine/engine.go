@@ -120,6 +120,7 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 
 	jobs := make(chan endpointJob, cfg.ParallelThreads)
 	results := make(chan pingResult, cfg.ParallelThreads)
+	opts.Runtime.ConfigureMonitoringWorkers(cfg.ParallelThreads)
 
 	var wg sync.WaitGroup
 	for i := 0; i < cfg.ParallelThreads; i++ {
@@ -127,7 +128,11 @@ func Run(ctx context.Context, cfg config.Config, endpoints []models.Endpoint, op
 		go func() {
 			defer wg.Done()
 			for job := range jobs {
-				res := runEndpoint(ctx, cfg, collectorHost, collectorID, job.CycleID, job.Endpoint, pinger, evaluator)
+				opts.Runtime.MonitoringWorkerStarted()
+				res := func() pingResult {
+					defer opts.Runtime.MonitoringWorkerFinished()
+					return runEndpoint(ctx, cfg, collectorHost, collectorID, job.CycleID, job.Endpoint, pinger, evaluator)
+				}()
 				select {
 				case results <- res:
 				case <-ctx.Done():

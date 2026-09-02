@@ -28,6 +28,17 @@ type Writer struct {
 	ackURL   string
 }
 
+// DeliveryResult describes what Splunk confirmed for a completed HEC request.
+// A successful HTTP response is only an acceptance signal unless indexer
+// acknowledgment was requested and subsequently confirmed.
+type DeliveryResult struct {
+	StatusCode   int
+	ResponseBody string
+	ACKRequested bool
+	ACKID        string
+	ACKnowledged bool
+}
+
 func New(cfg config.HEC, hostname string, collectorID string) (*Writer, error) {
 	if strings.TrimSpace(cfg.URL) == "" || strings.TrimSpace(cfg.Token) == "" {
 		return nil, errors.New("hec enabled but url/token not configured")
@@ -94,8 +105,15 @@ func (w *Writer) SendEvents(ctx context.Context, events []json.RawMessage) error
 
 // SendPayloads sends already-formed HEC JSON envelopes as one request.
 func (w *Writer) SendPayloads(ctx context.Context, payloads []json.RawMessage) error {
+	_, err := w.SendPayloadsWithResult(ctx, payloads)
+	return err
+}
+
+// SendPayloadsWithResult sends already-formed HEC JSON envelopes and returns
+// the exact confirmation level reached by Splunk.
+func (w *Writer) SendPayloadsWithResult(ctx context.Context, payloads []json.RawMessage) (DeliveryResult, error) {
 	if len(payloads) == 0 {
-		return nil
+		return DeliveryResult{ACKRequested: w.cfg.UseACK}, nil
 	}
 	lines := make([][]byte, len(payloads))
 	for i := range payloads {
@@ -105,7 +123,7 @@ func (w *Writer) SendPayloads(ctx context.Context, payloads []json.RawMessage) e
 	return w.postWithRetry(ctx, body)
 }
 
-func (w *Writer) postWithRetry(ctx context.Context, body []byte) error {
+func (w *Writer) postWithRetry(ctx context.Context, body []byte) (DeliveryResult, error) {
 	maxAttempts := 1
 	baseDelay := 0
 	jitterPct := 0
@@ -121,10 +139,12 @@ func (w *Writer) postWithRetry(ctx context.Context, body []byte) error {
 	}
 
 	var lastErr error
+	var lastResult DeliveryResult
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := w.postOnce(ctx, body); err == nil {
-			return nil
+		if result, err := w.postOnce(ctx, body); err == nil {
+			return result, nil
 		} else {
+			lastResult = result
 			lastErr = err
 		}
 		if attempt == maxAttempts {
@@ -143,41 +163,49 @@ func (w *Writer) postWithRetry(ctx context.Context, body []byte) error {
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
-			return errors.Join(lastErr, ctx.Err())
+			return lastResult, errors.Join(lastErr, ctx.Err())
 		}
 	}
-	return fmt.Errorf("HEC delivery failed after %d attempt(s): %w", maxAttempts, lastErr)
+	return lastResult, fmt.Errorf("HEC delivery failed after %d attempt(s): %w", maxAttempts, lastErr)
 }
 
-func (w *Writer) postOnce(ctx context.Context, body []byte) error {
+func (w *Writer) postOnce(ctx context.Context, body []byte) (DeliveryResult, error) {
+	result := DeliveryResult{ACKRequested: w.cfg.UseACK}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.URL, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return result, err
 	}
 	w.setHeaders(req)
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return err
+		return result, err
 	}
 	responseBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	closeErr := resp.Body.Close()
+	result.StatusCode = resp.StatusCode
+	result.ResponseBody = strings.TrimSpace(string(responseBody))
 	if readErr != nil {
-		return readErr
+		return result, readErr
 	}
 	if closeErr != nil {
-		return closeErr
+		return result, closeErr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("HEC returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(responseBody)))
+		return result, fmt.Errorf("HEC returned HTTP %d: %s", resp.StatusCode, result.ResponseBody)
 	}
 	if !w.cfg.UseACK {
-		return nil
+		return result, nil
 	}
 	ackID, err := parseACKID(responseBody)
 	if err != nil {
-		return fmt.Errorf("HEC indexer acknowledgment response invalid: %w", err)
+		return result, fmt.Errorf("HEC indexer acknowledgment response invalid: %w", err)
 	}
-	return w.waitForACK(ctx, ackID)
+	result.ACKID = ackID
+	if err := w.waitForACK(ctx, ackID); err != nil {
+		return result, err
+	}
+	result.ACKnowledged = true
+	return result, nil
 }
 
 func (w *Writer) waitForACK(parent context.Context, ackID string) error {

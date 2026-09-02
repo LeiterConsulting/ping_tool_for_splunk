@@ -8,7 +8,6 @@ Set-StrictMode -Version Latest
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $scriptPath = Join-Path $repoRoot 'DiscoverEndpoints.ps1'
-$embeddedPath = Join-Path $repoRoot 'go\internal\webui\assets\DiscoverEndpoints.ps1'
 
 function Assert-True {
     param([bool]$Condition, [string]$Message)
@@ -191,8 +190,4 @@ $script:MockConfigurations = @(
 $script:MockRoutes = @()
 Assert-ThrowsLike { Get-LocalIPInfo } 'No usable active IPv4 interface.*TargetNetwork' 'Loopback and APIPA addresses must not be selected'
 
-$rootHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $scriptPath).Hash
-$embeddedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $embeddedPath).Hash
-Assert-Equal $rootHash $embeddedHash 'The downloadable and embedded discovery scripts must remain identical'
-
-Write-Host 'Discovery network-selection tests passed.' -ForegroundColor Green
+Write-Host 'Standalone PowerShell compatibility discovery tests passed.' -ForegroundColor Green

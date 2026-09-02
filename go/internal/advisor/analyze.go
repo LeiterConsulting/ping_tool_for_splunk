@@ -203,6 +203,19 @@ func analyzeDiscoverySchedules(report *Report, cfg config.Config) {
 		if len(scheduleConfig.Targets) == 0 {
 			report.Findings = append(report.Findings, blocker("DISCOVERY_TARGETS", "Discovery schedule has no targets", label, "Add at least one bounded IPv4 CIDR."))
 		}
+		if scheduleConfig.TimeoutMs < 100 || scheduleConfig.TimeoutMs > 60000 {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_TIMEOUT", "Discovery timeout is outside the supported boundary", fmt.Sprintf("%s: %d ms", label, scheduleConfig.TimeoutMs), "Use a timeout from 100 through 60000 milliseconds."))
+		}
+		if scheduleConfig.Concurrency < 1 {
+			report.Findings = append(report.Findings, blocker("DISCOVERY_CONCURRENCY", "Discovery concurrency is outside the supported boundary", fmt.Sprintf("%s: %d workers", label, scheduleConfig.Concurrency), "Use at least one discovery worker."))
+		} else if scheduleConfig.Concurrency > 256 {
+			report.Findings = append(report.Findings, Finding{
+				Code: "DISCOVERY_CONCURRENCY_CLAMPED", Severity: SeverityWarning, Category: "discovery",
+				Title:          "Discovery concurrency exceeds the safe effective ceiling",
+				Message:        fmt.Sprintf("%s requests %d workers; the native engine will safely use at most 256 ICMP workers and 128 DNS workers.", label, scheduleConfig.Concurrency),
+				Recommendation: "Set concurrency to 256 or less so configured and effective worker counts match exactly.",
+			})
+		}
 		for _, target := range scheduleConfig.Targets {
 			ip, network, err := net.ParseCIDR(target)
 			if err != nil || ip.To4() == nil {

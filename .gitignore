@@ -35,6 +35,7 @@ nssm.exe
 
 # Discovery output (generated)
 discovered_endpoints.csv
+/data/
 
 # Internal development documentation (not shipped)
 documentation/
@@ -61,10 +62,11 @@ Ping Tool for Splunk.code-workspace
 GPT5_2_PingMonitor_Refactor_Prompt.md
 GPT5_2_PingMonitor_v5_Go_Rewrite.md
 
-# Go (v5) build artifacts
+# Go build artifacts
 go/dist/
 go/bin/
 go/.cache/
+/dist/pingmonitor*
 
 # Python test caches
 __pycache__/

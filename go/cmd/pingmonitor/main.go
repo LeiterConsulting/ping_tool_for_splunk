@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,46 +26,86 @@ import (
 )
 
 func main() {
-	if handled, exitCode := runConfigCommand(os.Args[1:]); handled {
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return
+	exitCode := runCommand(os.Args[1:])
+	if exitCode != 0 {
+		os.Exit(exitCode)
 	}
-	if handled, exitCode := runAdvisorCommand(os.Args[1:]); handled {
-		if exitCode != 0 {
-			os.Exit(exitCode)
-		}
-		return
+}
+
+func runCommand(args []string) int {
+	if handled, exitCode := runDiscoveryCommand(args); handled {
+		return exitCode
 	}
+	if handled, exitCode := runConfigCommand(args); handled {
+		return exitCode
+	}
+	if handled, exitCode := runAdvisorCommand(args); handled {
+		return exitCode
+	}
+	if handled, exitCode := runServiceCommand(args); handled {
+		return exitCode
+	}
+	return runCollector(args, context.Background(), true, nil)
+}
+
+func runCollector(args []string, parent context.Context, registerSignals bool, ready func()) int {
+	flags := flag.NewFlagSet("pingmonitor", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
 	var (
-		configPath    = flag.String("config", "config.psd1", "Path to an existing config.psd1/config.yaml/config.json; new deployments use config.json")
-		endpointsPath = flag.String("endpoints", "endpoints.csv", "Path to endpoints.csv")
-		runOnce       = flag.Bool("run-once", false, "Run a single cycle and exit")
-		maxCycles     = flag.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
-		pingMode      = flag.String("ping-mode", "", "Ping mode: auto|raw|exec (empty = use config)")
-		discoveryPath = flag.String("discovery-script", "", "Optional explicit path to a custom DiscoverEndpoints.ps1; the version-matched embedded script is used by default")
-		uiListen      = flag.String("ui-listen", "", "Listen address for optional web UI (for example 0.0.0.0:8080)")
-		uiOnly        = flag.Bool("ui-only", false, "Serve the web UI without starting the monitoring engine (requires -ui-listen)")
-		validateOnly  = flag.Bool("validate", false, "Validate config, endpoints, and scheduler capacity, then exit without probing")
-		version       = flag.Bool("version", false, "Print version and exit")
+		configPath    = flags.String("config", "config.psd1", "Path to an existing config.psd1/config.yaml/config.json; new deployments use config.json")
+		endpointsPath = flags.String("endpoints", "endpoints.csv", "Path to endpoints.csv")
+		runOnce       = flags.Bool("run-once", false, "Run a single cycle and exit")
+		maxCycles     = flags.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
+		pingMode      = flags.String("ping-mode", "", "Ping mode: auto|raw|exec (empty = use config)")
+		discoveryPath = flags.String("discovery-script", "", "Deprecated compatibility override: run an external DiscoverEndpoints.ps1 instead of native Go discovery")
+		uiListen      = flags.String("ui-listen", "", "Listen address for optional web UI (for example 0.0.0.0:8080)")
+		uiOnly        = flags.Bool("ui-only", false, "Serve the web UI without starting the monitoring engine (requires -ui-listen)")
+		validateOnly  = flags.Bool("validate", false, "Validate config, endpoints, and scheduler capacity, then exit without probing")
+		version       = flags.Bool("version", false, "Print version and exit")
 	)
-	flag.Parse()
+	if err := flags.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	if flags.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "unexpected arguments: %s\n", strings.Join(flags.Args(), " "))
+		return 2
+	}
 
 	if *version {
-		fmt.Println("Ping Monitor v5 (Go) - " + buildinfo.Version)
-		return
+		fmt.Println("Ping Monitor (Go) - " + buildinfo.Version)
+		return 0
 	}
 	if *uiOnly && *uiListen == "" {
 		fmt.Fprintln(os.Stderr, "ui-only requires -ui-listen")
-		os.Exit(2)
+		return 2
 	}
 
 	exe, _ := os.Executable()
 	root := filepath.Dir(exe)
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	if registerSignals {
+		sigCh := make(chan os.Signal, 2)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
+		go func() {
+			select {
+			case <-sigCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
+	readyOnce := sync.Once{}
+	notifyReady := func() {
+		if ready != nil {
+			readyOnce.Do(ready)
+		}
+	}
 
 	resolvedConfigPath := resolveConfigRuntimePath(*configPath, root)
 	resolvedEndpointsPath := resolveRuntimePath(*endpointsPath, root, "endpoints.csv")
@@ -75,10 +116,10 @@ func main() {
 		})
 		advisor.WriteText(os.Stdout, report)
 		if !report.Summary.ReadyToRun {
-			os.Exit(2)
+			return 2
 		}
 		fmt.Printf("\nvalidation successful: config=%s endpoints=%d\n", report.ConfigSource, report.Inventory.SchedulableEndpoints)
-		return
+		return 0
 	}
 
 	var deploymentLock *singleinstance.Lock
@@ -88,7 +129,7 @@ func main() {
 		deploymentLock, lockErr = singleinstance.Acquire(lockPath)
 		if lockErr != nil {
 			fmt.Fprintf(os.Stderr, "startup blocked: %v (lock: %s)\n", lockErr, lockPath)
-			os.Exit(2)
+			return 2
 		}
 		defer deploymentLock.Close()
 	}
@@ -97,29 +138,22 @@ func main() {
 	collectorID, err = identity.LoadOrCreateCollectorID(resolvedConfigPath + ".collector_id")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "collector identity initialization failed: %v\n", err)
-		os.Exit(2)
+		return 2
 	}
 	collectorHost, _ := os.Hostname()
 	if strings.TrimSpace(collectorHost) == "" {
 		collectorHost = "unknown"
 	}
 
-	sigCh := make(chan os.Signal, 2)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		cancel()
-	}()
-
 	if *uiOnly {
 		cfg, _, loadErr := config.Load(ctx, resolvedConfigPath, root)
 		if loadErr != nil {
 			fmt.Fprintf(os.Stderr, "config load failed: %v\n", loadErr)
-			os.Exit(2)
+			return 2
 		}
 		if overrideErr := applyPingModeOverride(&cfg, *pingMode); overrideErr != nil {
 			fmt.Fprintln(os.Stderr, overrideErr)
-			os.Exit(2)
+			return 2
 		}
 		configRevision, _ := revision.File(resolvedConfigPath)
 		endpointsRevision, _ := revision.File(resolvedEndpointsPath)
@@ -128,7 +162,7 @@ func main() {
 		manager, managerErr := output.NewManager(cfg, collectorHost, collectorID)
 		if managerErr != nil {
 			fmt.Fprintf(os.Stderr, "output pipeline initialization failed: %v\n", managerErr)
-			os.Exit(2)
+			return 2
 		}
 		outputs := newOutputManagerStore(manager)
 		defer outputs.ClearAndClose()
@@ -140,24 +174,25 @@ func main() {
 			Runtime:             runtimeTracker, EffectiveConfig: &cfg, EmitDiscoveryEvents: outputs.Emit,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 		diagnostics.LogInfo("web ui only mode enabled", map[string]interface{}{"listen_addr": *uiListen, "ui_only": true})
+		notifyReady()
 		<-ctx.Done()
-		return
+		return 0
 	}
 
 	deployment, err := loadRuntimeDeployment(ctx, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(2)
+		return 2
 	}
 	runtimeTracker := runtimeinfo.New("monitor", deployment.ConfigRevision, deployment.EndpointsRevision, len(deployment.Endpoints))
 	effectiveConfig := newEffectiveConfigStore(deployment.Config)
 	manager, err := output.NewManager(deployment.Config, collectorHost, collectorID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "output pipeline initialization failed: %v\n", err)
-		os.Exit(2)
+		return 2
 	}
 	outputs := newOutputManagerStore(manager)
 	defer outputs.ClearAndClose()
@@ -190,7 +225,7 @@ func main() {
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
-			os.Exit(2)
+			return 2
 		}
 	} else {
 		webui.StartDiscoveryScheduler(ctx, webui.Options{
@@ -207,19 +242,21 @@ func main() {
 			EmitDiscoveryEvents:     outputs.Emit,
 		})
 	}
+	notifyReady()
 
 	err = runMonitorLoop(ctx, deployment, resolvedConfigPath, resolvedEndpointsPath, root, *pingMode, collectorHost, collectorID, *runOnce, *maxCycles, runtimeTracker, effectiveConfig, outputs, restartRequests)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Fprintln(os.Stderr, "shutdown requested")
-			return
+			return 0
 		}
 		runtimeTracker.Failed(err)
 		fmt.Fprintf(os.Stderr, "run failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	time.Sleep(25 * time.Millisecond) // allow log flush in some environments
+	return 0
 }
 
 func warnIfRemoteUI(address string) {

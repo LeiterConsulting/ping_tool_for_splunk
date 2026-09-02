@@ -11,8 +11,10 @@ The short answers below help route an incident. The numbered documents contain t
 | 0001 | Why does the Windows service enter Paused or fail to start while the executable runs manually? | The service changes from Stopped to Paused, `Start-Service` fails, or the interactive executable behaves differently from the managed instance. | [Windows Service Enters Paused State or Fails to Start](windows-service-paused-or-fails-to-start-0001.md) |
 | 0002 | Why is `Install-Service.ps1` missing `-Validate` or another documented parameter? | PowerShell rejects a parameter before validation begins, suggesting that the executable and service-management script came from different releases. | [Install-Service.ps1 Is Missing an Expected Parameter](install-service-script-version-mismatch-0002.md) |
 | 0003 | Why does discovery report that no active adapter with a default gateway was found? | Discovery stops before scanning, including when an explicit target was supplied or the scanner uses static routes or an isolated interface. | [Discovery Cannot Find an Adapter with a Default Gateway](discovery-no-default-gateway-0003.md) |
+| 0004 | How do I install or migrate the native v6 Windows service? | A new v6 deployment needs an SCM service, or an existing NSSM/direct/wrapper definition must be identified, validated, migrated, verified, and kept rollback-safe. | [Install or Migrate the Native v6 Windows Service](native-windows-service-v6-migration-0004.md) |
+| 0005 | How do I validate a working foreground v6 collector and cut it over to Windows SCM safely? | A clean v6 deployment is already running interactively and needs an isolated lifecycle canary, guarded port-owner check, native service installation, and post-cutover signal verification. | [Validate and Cut Over Ping Monitor v6 to a Native Windows Service](native-v6-service-validation-and-cutover-0005.md) |
 
-Catalog coverage: Troubleshooting 0001 through 0003.
+Catalog coverage: Troubleshooting 0001 through 0005.
 
 ## The service is Paused. Is it actually paused by an operator?
 
@@ -41,7 +43,7 @@ This commonly happens when only `pingmonitor.exe` was upgraded and an older serv
 
 ## Should I always download the newest `Install-Service.ps1`?
 
-Use the script from the release tag matching the installed executable, not an unversioned copy from the default branch. A script that is newer than the executable can be just as misleading as one that is older.
+For v5/NSSM and legacy PowerShell deployments, use the script from the release tag matching the installed executable, not an unversioned copy from the default branch. A script that is newer than the executable can be just as misleading as one that is older. Native v6 service deployments use the executable's `service` commands and do not need this script.
 
 First run:
 
@@ -56,14 +58,15 @@ Then obtain `Install-Service.ps1` from that exact tag. [Troubleshooting 0002](in
 Not necessarily.
 
 - If the executable was replaced in place and the persisted application, arguments, working directory, and log paths still match, validate and restart the service.
-- If the binary path, deployment directory, arguments, wrapper, or service settings changed, rebuild the definition using `-ForceReinstall`.
-- If `pingmonitor.exe` was registered directly with `New-Service` or `sc.exe create`, replace that unsupported native registration with NSSM, Task Scheduler, or another approved wrapper.
+- If the binary path, deployment directory, arguments, wrapper, or service settings changed, rebuild the definition using the controller appropriate to that version and host.
+- For v6, use `pingmonitor.exe service status --json` to identify the host and [Troubleshooting 0004](native-windows-service-v6-migration-0004.md) to migrate safely.
+- A raw `New-Service` or `sc.exe create` command is not a supported v6 installation method; use `pingmonitor.exe service install` so the required dispatcher arguments and recovery policy are complete.
 
 Use the decision procedure in [Troubleshooting 0001](windows-service-paused-or-fails-to-start-0001.md) before changing service state.
 
 ## Can I validate the deployment if the installer script is old?
 
-Yes. The current Go executable has a read-only validation command:
+Yes. Every current Go executable has a read-only collector validation command:
 
 ```powershell
 ./pingmonitor.exe --validate `
@@ -71,13 +74,13 @@ Yes. The current Go executable has a read-only validation command:
   --endpoints "$PWD\endpoints.csv"
 ```
 
-This validates the executable's configuration, endpoint inventory, and scheduler capacity. It does not validate the Windows service's persisted paths or execution account. After correcting the script mismatch, run the installer-level validation described in [Troubleshooting 0002](install-service-script-version-mismatch-0002.md).
+This validates the executable's configuration, endpoint inventory, and scheduler capacity. For v6, use `pingmonitor.exe service validate` with the intended service arguments and continue with [Troubleshooting 0004](native-windows-service-v6-migration-0004.md). For v5/NSSM, correct the script mismatch and run the installer-level validation described in [Troubleshooting 0002](install-service-script-version-mismatch-0002.md).
 
 ## Why does discovery require a default gateway for a remote target?
 
-It should not. Ping Monitor v5.11.0 evaluated the local adapter before it evaluated an explicit discovery target, so isolated scanners and statically routed hosts could fail before scanning. Ping Monitor v5.11.1 corrected the script, but an older adjacent script could still override the embedded fix after an executable-only upgrade. Ping Monitor v5.11.2 corrects both the network-selection logic and the upgrade path by making its version-matched embedded script authoritative by default.
+It should not. Ping Monitor v5.11.0 evaluated the local adapter before it evaluated an explicit discovery target, so isolated scanners and statically routed hosts could fail before scanning. Ping Monitor v5.11.1 corrected the script, and v5.11.2 prevented stale adjacent scripts from overriding it. Ping Monitor v5.12.0 removes the PowerShell dependency from default discovery entirely: explicit targets go directly to the native Go worker pool, while automatic local selection remains fail-closed when ambiguous.
 
-Use [Troubleshooting 0003](discovery-no-default-gateway-0003.md) to identify the affected script, upgrade the standalone and embedded copies correctly, verify explicit-target behavior, and collect sanitized route evidence if automatic local discovery remains ambiguous.
+Use [Troubleshooting 0003](discovery-no-default-gateway-0003.md) to identify the affected version, verify the native discovery engine, validate explicit-target behavior, and collect sanitized interface evidence if automatic local discovery remains ambiguous.
 
 ## Which issue should I fix first when both symptoms occur?
 
@@ -88,6 +91,20 @@ Fix the installer/runtime mismatch first:
 3. Follow [Troubleshooting 0001](windows-service-paused-or-fails-to-start-0001.md) to inspect and repair the managed service definition.
 
 An old installer cannot reliably report or repair a service installed for a newer deployment.
+
+## Does v6 still require NSSM or `Install-Service.ps1`?
+
+No. The v6 Windows executable is a native SCM host and includes read-only validation/status plus elevated install/start/stop/restart/uninstall commands. Existing NSSM-hosted v5 services remain supported until an operator explicitly migrates them.
+
+Use [Troubleshooting 0004](native-windows-service-v6-migration-0004.md) for clean installation, host detection, migration, verification, rollback, and escalation evidence. Keep `Install-Service.ps1` with v5/NSSM or legacy PowerShell deployments; do not use both installers for the same service name.
+
+## How do I prove the native service before replacing a working foreground collector?
+
+Use [Troubleshooting 0005](native-v6-service-validation-and-cutover-0005.md). It keeps the foreground collector running while a uniquely named canary verifies install, start, readiness, restart, stop, forced replacement, bounded logging, uninstall, and cleanup. Only after that test and production validation pass does the procedure identify the port owner, stop the expected foreground process, and install the production service.
+
+The canary intentionally tests that a non-forced reinstall is rejected, so a `service already exists` line can be expected during a passing run. The required final result is `Native Windows service lifecycle integration test passed.`
+
+After installation, an HTTP 200 response from `/healthz` proves process readiness but not the complete monitoring signal. The guide therefore also requires a completed observation cycle, endpoint-count reconciliation, delivery checks, service-log inspection, and an optional production restart check during a maintenance window.
 
 ## What information is safe and useful in a troubleshooting report?
 

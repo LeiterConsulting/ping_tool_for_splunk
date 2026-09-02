@@ -46,11 +46,40 @@ func TestWriterWaitsForIndexerACK(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload, _ := json.Marshal(map[string]interface{}{"timestamp": time.Now().UTC().Format(time.RFC3339Nano), "event_id": "one"})
-	if err := writer.SendEvents(context.Background(), []json.RawMessage{payload}); err != nil {
+	result, err := writer.SendPayloadsWithResult(context.Background(), []json.RawMessage{payload})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if result.StatusCode != http.StatusOK || !result.ACKRequested || !result.ACKnowledged || result.ACKID != "7" {
+		t.Fatalf("delivery result = %#v", result)
 	}
 	if ackPolls.Load() < 2 {
 		t.Fatalf("ack polls = %d, want at least 2", ackPolls.Load())
+	}
+}
+
+func TestWriterReportsAcceptedOnlyWithoutIndexerACK(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if channel := r.Header.Get("X-Splunk-Request-Channel"); channel != "" {
+			t.Fatalf("unexpected request channel %q", channel)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"text":"Success","code":0}`))
+	}))
+	defer server.Close()
+
+	writer, err := New(config.HEC{
+		URL: server.URL, Token: "token", VerifySSL: true, BatchSize: 100,
+	}, "collector", "collector-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := writer.SendPayloadsWithResult(context.Background(), []json.RawMessage{json.RawMessage(`{"event":"probe"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.StatusCode != http.StatusCreated || result.ACKRequested || result.ACKnowledged {
+		t.Fatalf("delivery result = %#v", result)
 	}
 }
 

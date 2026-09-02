@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -31,9 +32,17 @@ func testSummary(cycleID string) models.SummaryEvent {
 
 func TestManagerDecouplesProbeResultFromSlowHEC(t *testing.T) {
 	var requests atomic.Int32
+	requestStarted := make(chan struct{}, 1)
+	releaseHEC := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseHEC) }) }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		requests.Add(1)
-		time.Sleep(150 * time.Millisecond)
+		select {
+		case requestStarted <- struct{}{}:
+		default:
+		}
+		<-releaseHEC
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
@@ -53,9 +62,11 @@ func TestManagerDecouplesProbeResultFromSlowHEC(t *testing.T) {
 		t.Fatalf("NewManager() error = %v", err)
 	}
 	defer manager.Close()
+	defer release()
 
-	start := time.Now()
-	err = manager.HandleResult(context.Background(), nil, models.SummaryEvent{
+	handleCtx, cancelHandle := context.WithTimeout(context.Background(), time.Second)
+	defer cancelHandle()
+	err = manager.HandleResult(handleCtx, nil, models.SummaryEvent{
 		SchemaVersion: models.SchemaVersion,
 		CycleID:       "cycle-slow-hec",
 		EventID:       "event-slow-hec",
@@ -65,17 +76,25 @@ func TestManagerDecouplesProbeResultFromSlowHEC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HandleResult() error = %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
-		t.Fatalf("HandleResult() blocked for %s", elapsed)
-	}
 
-	flushStart := time.Now()
-	if err := manager.FlushCycle(context.Background()); err != nil {
-		t.Fatalf("FlushCycle() error = %v", err)
+	flushCtx, cancelFlush := context.WithTimeout(context.Background(), time.Second)
+	defer cancelFlush()
+	flushDone := make(chan error, 1)
+	go func() { flushDone <- manager.FlushCycle(flushCtx) }()
+	select {
+	case err := <-flushDone:
+		if err != nil {
+			t.Fatalf("FlushCycle() error = %v", err)
+		}
+	case <-flushCtx.Done():
+		t.Fatal("durable FlushCycle() waited for the blocked HEC response")
 	}
-	if elapsed := time.Since(flushStart); elapsed > 100*time.Millisecond {
-		t.Fatalf("durable FlushCycle() waited for slow HEC for %s", elapsed)
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("asynchronous HEC delivery did not start")
 	}
+	release()
 	waitForDeliveryState(t, manager, "healthy")
 	if requests.Load() != 1 {
 		t.Fatalf("HEC requests = %d, want 1", requests.Load())
@@ -323,5 +342,29 @@ func TestDeliveryConfirmationModeIsExplicit(t *testing.T) {
 	cfg.Metrics.UseACK = false
 	if got := deliveryConfirmationMode(cfg, true, true); got != "mixed" {
 		t.Fatalf("mode = %q", got)
+	}
+}
+
+func TestManagerIdleStartupDoesNotInventDeliverySuccess(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("idle manager unexpectedly sent a request")
+	}))
+	defer server.Close()
+
+	cfg := config.Defaults(t.TempDir())
+	cfg.OutputMode = "hec"
+	cfg.HEC.Enabled = true
+	cfg.HEC.URL = server.URL
+	cfg.HEC.Token = "token"
+	cfg.Delivery.SpoolPath = filepath.Join(t.TempDir(), "outbox")
+	manager, err := NewManager(cfg, "collector", "collector-idle")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	status := manager.DeliveryStatus()
+	if status.State != "healthy" || status.LastSuccessAt != nil {
+		t.Fatalf("idle startup status = %#v; want healthy with no delivery success timestamp", status)
 	}
 }

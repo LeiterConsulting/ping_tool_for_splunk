@@ -1,12 +1,12 @@
-# Ping Monitor v5 (Go)
+# Ping Monitor v6 (Go)
 
-Ping Monitor v5.11.2 is the current Go runtime. It retains the v5.11 discovery and CMDB workflow, makes the version-matched embedded discovery script authoritative by default, and prevents a stale adjacent script from silently overriding collector hotfixes.
+Ping Monitor v6.0.0 is the current release. It retains the discovery and CMDB workflow while moving Windows service hosting, configuration parsing, discovery, and runtime observability into the Go process.
 
 ## Current Go Release
 
-- Version: `v5.11.2`
-- Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.11.2.md](../RELEASE_NOTES_v5.11.2.md)
+- Version: `v6.0.0`
+- Primary runtime status: released 2026-09-02
+- Top-level release notes: [../RELEASE_NOTES_v6.0.0.md](../RELEASE_NOTES_v6.0.0.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -18,14 +18,18 @@ Ping Monitor v5.11.2 is the current Go runtime. It retains the v5.11 discovery a
 - Configuration Advisor with tolerant multi-error CSV inspection, worst-case capacity evidence, operating profiles, safe inventory cleanup, and confirmed config optimization.
 - Fsynced, bounded HEC/metrics outbox with asynchronous delivery, restart recovery, per-sink progress, and optional indexer acknowledgment.
 - Continuous result-log rotation with archive retention and optional gzip compression.
+- Native Go manual and scheduled discovery with a Windows-safe ceiling of 256 ICMP and 128 context-aware Go DNS workers, context cancellation between probes, in-flight platform calls bounded by the millisecond ICMP timeout, structured DNS verification, and no PowerShell runtime dependency. Higher legacy concurrency settings remain valid, are clamped at execution, and retain requested-versus-effective evidence.
 - Durable indexed discovery snapshots, bounded retention, CSV export, FQDN evidence, actionable target deltas, schedule health, and weekly schedules.
 - Scan summaries and truthful observed/not-observed discovery evidence delivered through the same serialized file/HEC event pipeline as monitoring output.
 - Probe suppression through explicit monitoring and maintenance policy, independent of dev/prod classification.
+- Native non-executing PSD1 parsing with source locations and duplicate-key rejection; PowerShell is not invoked to load collector configuration.
+- A low-overhead System dashboard/API with observed Windows process/host counters, Go runtime state, and active/configured/peak worker pools.
+- Native Windows SCM hosting and lifecycle commands with delayed start, graceful stop, recovery actions, and bounded service logging; NSSM remains a migration-compatible legacy host, not a v6 prerequisite.
 
 ## Runtime Compatibility
 
 - Uses existing `config.psd1`, flat JSON/YAML, and `endpoints.csv` fields without requiring migration.
-- Emits schema v4 events with stable identities, measured-versus-censored latency, FQDN, and monitoring-policy metadata. Core summary and ping `record_type` values remain compatible.
+- Emits schema v5 events with stable identities, measured-versus-censored latency, FQDN, and monitoring-policy metadata. Core summary and ping `record_type` values remain compatible.
 - Maintains metrics compatibility behavior through `metrics.compat_mode`.
 
 ## Quick Start
@@ -57,7 +61,7 @@ With the default file names, the binary prefers `config.psd1` and `endpoints.csv
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
-| `--discovery-script` | Explicitly use a custom external discovery script; the embedded version-matched script is authoritative when omitted |
+| `--discovery-script` | Deprecated compatibility override that explicitly runs an external PowerShell discovery script; omission uses native Go discovery |
 | `--ui-listen` | Bind address for the local admin UI |
 | `--ui-only` | Serve the local admin UI without starting the monitor engine |
 | `--validate` | Validate config, endpoints, and worst-case scheduler capacity without probing |
@@ -75,6 +79,14 @@ Advisor subcommands are separate from legacy runtime flags:
 ```
 
 Use `--format json` with `analyze`, `optimize`, or `benchmark` for automation. Analysis is read-only. The benchmark is explicitly non-SLA: it exercises config/inventory parsing, the schedule planner, temporary writes beside the deployment config, and three probes to `127.0.0.1` using the configured backend. It does not probe monitored endpoints, update health state, or contact Splunk.
+
+Run the same native discovery engine without the web UI:
+
+```powershell
+.\pingmonitor.exe discovery --target 192.168.1.0/24 --timeout-ms 500 --concurrency 64 --format csv --output .\discovered_endpoints.csv
+```
+
+Use `--format json` for scan metadata and evidence. Existing outputs are protected unless `--force` is supplied.
 
 ## Configuration Model
 
@@ -143,13 +155,14 @@ It provides:
 
 The browser UI serves these page routes:
 
-- `GET /`, `/advisor`, `/endpoints`, and `/discovery`
+- `GET /`, `/advisor`, `/endpoints`, `/discovery`, and `/system`
 - `GET /settings`, `/settings/appearance`, `/settings/discovery`, `/settings/splunk`, and `/settings/diagnostics`
 
 The UI serves these key API routes:
 
 - `GET /healthz`
 - `GET /api/status`
+- `GET /api/system`
 - `GET` and `PUT /api/ui-preferences`
 - `GET` and `PUT /api/endpoints`
 - `GET` and `PUT /api/config`
@@ -169,7 +182,7 @@ Operational notes:
 - Stale config or endpoint drafts are rejected with `409 Conflict` instead of overwriting a newer file revision.
 - Config edits saved in the UI are written back to the active config file, but engine-level config changes still require a process or service restart.
 - When saving over an existing config or endpoint file, the UI creates a timestamped `.bak` backup first.
-- The discovery workflow ships through an embedded PowerShell script fallback, so drop-in deployments do not need a separate `DiscoverEndpoints.ps1` file just to use the UI.
+- Manual and scheduled discovery run natively in Go and do not require PowerShell or a separate script. `DiscoverEndpoints.ps1` remains available only for direct legacy use or an explicit `--discovery-script` compatibility override.
 
 ## Ping Mode
 
@@ -207,7 +220,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.2`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v6.0.0`
 - Bash: `./go/build.sh dist`
 
 Current default targets:
@@ -222,50 +235,43 @@ Current default targets:
 
 ### Windows
 
-Validate the intended deployment from a non-elevated PowerShell 7.4+ session:
+The Windows binary is its own native Service Control Manager host. Validation and status are read-only; install, start, stop, restart, and uninstall require an elevated terminal.
 
 ```powershell
-.\Install-Service.ps1 -Validate `
-  -BinaryPath D:\pingmonitor\pingmonitor.exe `
-  -ConfigPath D:\pingmonitor\config.psd1 `
-  -EndpointsPath D:\pingmonitor\endpoints.csv
+# Run from the deployment directory. Existing PSD1/JSON/YAML configs remain valid.
+.\pingmonitor.exe service validate `
+  --config .\config.psd1 `
+  --endpoints .\endpoints.csv `
+  --ui-listen 0.0.0.0:8080
 ```
 
-Then use an elevated session to install and control it:
+Then use an elevated terminal to install and control the service:
 
 ```powershell
-.\Install-Service.ps1 -Install `
-  -BinaryPath D:\pingmonitor\pingmonitor.exe `
-  -ConfigPath D:\pingmonitor\config.psd1 `
-  -EndpointsPath D:\pingmonitor\endpoints.csv
-.\Install-Service.ps1 -Status
-.\Install-Service.ps1 -Restart
-.\Install-Service.ps1 -Stop
-.\Install-Service.ps1 -Start
-.\Install-Service.ps1 -Uninstall
+.\pingmonitor.exe service install `
+  --config .\config.psd1 `
+  --endpoints .\endpoints.csv `
+  --ui-listen 0.0.0.0:8080
+
+.\pingmonitor.exe service status
+.\pingmonitor.exe service status --json
+.\pingmonitor.exe service restart
+.\pingmonitor.exe service stop
+.\pingmonitor.exe service start
+.\pingmonitor.exe service uninstall
 ```
 
-Do not point a manually created `New-Service` or `sc.exe create` definition directly at `pingmonitor.exe`. The Go runtime is a console application and does not implement the native Windows Service Control Manager dispatcher. Use the shipped NSSM installer or Task Scheduler.
+The install command persists absolute configuration and endpoint paths, defaults to delayed automatic start, validates the complete deployment before changing SCM state, reports Running only after collector initialization, accepts Stop and Shutdown controls without exposing a misleading Pause state, applies escalating recovery delays, and rotates `service.log` at 10 MiB with five archives.
 
-The shipped installer:
+Use `--startup auto` or `--startup manual` to override delayed automatic start, `--disable-ui` for a headless service, `--log-dir` to relocate the bounded service log, and `--no-start` to stage an installation. Use `--force` only after `service status --json` confirms the existing definition and you intend to replace it.
 
-- installs the Go runtime as the default Windows service target
-- defaults the working directory to the selected binary's deployment folder
-- verifies persisted NSSM application, arguments, working-directory, and log settings
-- uses delayed automatic start, graceful console shutdown, NSSM restart, and SCM recovery actions
-- rotates service stdout/stderr logs
-- enables the admin UI on `0.0.0.0:8080` by default
-- supports `-UIListen` to select a different bind address or port
-- accepts loopback and non-loopback UI binds; `-AllowRemoteUI` remains a compatibility no-op in v5.9
-- supports `-DisableUI` for a headless service
-- supports `-ForceReinstall` when a binary or deployment path changes
-- runs the complete advisor during validation and surfaces recent service stdout/stderr automatically when a start fails
+`service status --json` classifies the installed host as `native_go_v6`, `nssm`, `direct_legacy_or_unknown`, or `other_wrapper`. An existing NSSM-hosted v5 service remains operable. Validate the v6 command line first, stop the old service, and use `service install --force` only when intentionally migrating that SCM definition to the native host. Configuration, endpoint, history, and log data are not deleted by service replacement.
 
-When standard filenames are used, the installer can auto-detect the config and `endpoints.csv` in the binary's working directory. Pass an explicit absolute `-ConfigPath` when both a legacy PSD1 and an upgraded JSON file exist. `-DisableUI` disables the HTTP listener but does not disable configured discovery schedules.
+The existing [../Install-Service.ps1](../Install-Service.ps1) remains available for v5/NSSM and legacy PowerShell-runtime deployments. It is not required for a native v6 installation. Do not mix its NSSM installation action with the v6 native install command for the same service name.
 
-For an in-place upgrade, validate the replacement binary, stop the service, replace the existing binary, and restart the service. If the executable path changes, reinstall with `-ForceReinstall` so NSSM's persisted definition is checked again.
+For an in-place upgrade of an already-native v6 service, validate the replacement binary against the persisted config and endpoints, stop the service, replace the executable at the same path, and start it. Reinstall only when the executable path, arguments, startup policy, or host model must change.
 
-Run `tests\Test-ServiceInstaller.ps1` for safe definition tests. An elevated `tests\Test-WindowsServiceLifecycle.ps1` performs a complete temporary create/start/health/restart/stop/remove canary.
+Go tests exercise the service handler start/readiness/health/stop path without mutating SCM. An elevated [../tests/Test-NativeWindowsServiceLifecycle.ps1](../tests/Test-NativeWindowsServiceLifecycle.ps1) creates a uniquely named canary service and verifies install, status, health, restart with PID replacement, stop, bounded logging, uninstall, and cleanup. Never give the canary a production service name.
 
 ### Linux
 

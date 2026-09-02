@@ -2,7 +2,7 @@
 
 Document ID: Troubleshooting 0001
 
-Applies to: Ping Monitor v5.7 or newer on Windows when launched by NSSM, another service wrapper, a manually created Windows service, or Task Scheduler
+Applies to: Ping Monitor v5.7 or newer on Windows when launched by the native v6 service host, NSSM, another service wrapper, a manually created Windows service, or Task Scheduler
 
 Default service name: `SplunkPingMonitor`
 
@@ -33,11 +33,14 @@ Get-CimInstance Win32_Service -Filter "Name='SplunkPingMonitor'" |
 Interpret `BINARY_PATH_NAME` or `PathName` as follows:
 
 - A path involving `nssm.exe`, or a service whose parameters can be read with `nssm get`, uses NSSM.
-- A path pointing directly to `pingmonitor.exe` is a native SCM registration created with a command such as `New-Service` or `sc.exe create`.
+- A `pingmonitor.exe` command containing `service-run` is a native v6 service created by `pingmonitor.exe service install`.
+- A path pointing to `pingmonitor.exe` without `service-run` is a raw direct registration created with a command such as `New-Service` or `sc.exe create`.
 - A path involving WinSW, `srvany.exe`, or another host uses that service wrapper. Its configuration and logs must be checked using that wrapper's documentation.
 - A Scheduled Task is not a Windows service. It must be inspected in Task Scheduler or with `Get-ScheduledTask`; `Get-Service` and `Start-Service` do not control it.
 
-The current Ping Monitor Go executable is a long-running console application. It does not implement the native Windows Service Control Manager dispatcher and must not be registered directly with `New-Service` or `sc.exe create`. A direct registration can fail with a service-control timeout even though the same executable runs correctly from PowerShell.
+Ping Monitor v6 implements the native Windows Service Control Manager dispatcher, but the definition must be created with `pingmonitor.exe service install`; a raw `New-Service` or `sc.exe create` command omits the required internal arguments and recovery policy. Ping Monitor v5 remains a console application that requires NSSM, Task Scheduler, or another approved wrapper. An incorrect raw registration can fail with a service-control timeout even though the same executable runs correctly from PowerShell.
+
+For native v6 installation or migration, use [Troubleshooting 0004](native-windows-service-v6-migration-0004.md). The NSSM-specific procedure below remains applicable to existing v5 services.
 
 ## Why does an NSSM-hosted service show Paused?
 
@@ -45,7 +48,7 @@ The shipped installer hosts Ping Monitor through NSSM and configures NSSM to res
 
 NSSM reports the service as **Paused** while it is waiting for the next restart. Repeated short-lived startup failures increase this backoff period. For an NSSM-hosted installation, Paused therefore usually means that the Ping Monitor child process started and then exited; it does not normally mean that an operator manually paused monitoring.
 
-Other wrappers may report failures differently. A direct SCM registration normally fails during service startup because Ping Monitor does not provide the native service-control handshake. Therefore, verify the hosting model before treating Paused as proof of NSSM restart backoff.
+Other wrappers and native v6 report failures differently. A raw direct registration normally fails because it lacks either the v5 wrapper or v6 `service-run` dispatcher arguments. Therefore, verify the hosting model before treating Paused as proof of NSSM restart backoff.
 
 NSSM documents this restart-delay and throttling behavior in its [official usage guide](https://www.nssm.cc/usage).
 
@@ -79,7 +82,7 @@ Replace that path if Ping Monitor is installed elsewhere.
 
 Run the `sc.exe qc` and `Get-CimInstance Win32_Service` commands above and record the complete executable path.
 
-If the service points directly to `pingmonitor.exe`, proceed to **Replace a direct native service registration** under Step 5. Do not spend time adjusting worker counts to repair the SCM handshake.
+If the service command contains `service-run`, follow [Troubleshooting 0004](native-windows-service-v6-migration-0004.md). If it points directly to `pingmonitor.exe` without `service-run`, proceed to **Replace a raw direct service registration** under Step 5. Do not spend time adjusting worker counts to repair the SCM handshake.
 
 If the service uses NSSM, continue through every step below. For another service wrapper, use the validation commands in Step 2, then inspect that wrapper's persisted executable, arguments, working directory, account, and logs.
 
@@ -87,7 +90,16 @@ If Ping Monitor is a Scheduled Task, confirm its action, arguments, start-in dir
 
 ## Step 2: Confirm that the intended binary and files validate
 
-Run the Configuration Advisor without changing the service:
+For v6, run the native service preflight without changing the service:
+
+```powershell
+./pingmonitor.exe service validate `
+  --config "$PWD\config.psd1" `
+  --endpoints "$PWD\endpoints.csv" `
+  --ui-listen 0.0.0.0:8080
+```
+
+For a v5 NSSM deployment, run the matching installer preflight:
 
 ```powershell
 ./Install-Service.ps1 -Validate `
@@ -155,7 +167,7 @@ Get-CimInstance Win32_Process -Filter "Name='pingmonitor.exe'" |
   Select-Object ProcessId, ExecutablePath, CommandLine
 ```
 
-### Direct native service registration
+### Raw direct service registration
 
 Capture the complete `Start-Service` error and query recent Service Control Manager events:
 
@@ -175,7 +187,7 @@ Get-WinEvent -FilterHashtable @{
   Select-Object TimeCreated, Id, LevelDisplayName, Message
 ```
 
-A timeout or failure to connect to the service controller is expected when the console executable was registered directly. Replace that definition with a supported wrapper rather than repeatedly retrying it.
+A timeout or failure to connect to the service controller is expected when the executable was registered without the required hosting arguments. Replace the definition with `pingmonitor.exe service install` for v6 or a supported wrapper for v5 rather than repeatedly retrying it.
 
 ### Task Scheduler or another wrapper
 
@@ -213,9 +225,13 @@ Reinstall the service definition explicitly:
 
 Reinstallation is recommended after an upgrade when the binary or deployment directory changed. It is not inherently required when the binary was replaced in place and the persisted service definition still matches.
 
-### Replace a direct native service registration
+### Replace a raw direct service registration
 
-If `sc.exe qc` shows `pingmonitor.exe` directly in `BINARY_PATH_NAME`, replace the unsupported native registration with the shipped NSSM definition.
+If `sc.exe qc` shows `pingmonitor.exe` without `service-run` in `BINARY_PATH_NAME`, replace the incomplete registration with the version-appropriate host.
+
+For v6, follow [Troubleshooting 0004](native-windows-service-v6-migration-0004.md) and use `pingmonitor.exe service install --force` after validation.
+
+For v5, record the existing definition and run the matching NSSM installer from an elevated PowerShell session:
 
 First record the existing definition and confirm the service name. Then run the installer from an elevated PowerShell session:
 
@@ -229,7 +245,7 @@ First record the existing definition and confirm the service name. Then run the 
 
 The force-reinstall operation removes the existing Windows service registration and replaces it with the verified NSSM-hosted definition. It does not delete the deployment files.
 
-If NSSM is intentionally not permitted, use Task Scheduler or an approved service wrapper and configure it with the same absolute binary, config, endpoint, and working-directory paths. Direct SCM registration is not supported by the Go runtime.
+If NSSM is intentionally not permitted for v5, use Task Scheduler or an approved service wrapper and configure it with the same absolute binary, config, endpoint, and working-directory paths. Do not improvise a raw SCM definition for either version.
 
 ### When Ping Monitor is a Scheduled Task
 

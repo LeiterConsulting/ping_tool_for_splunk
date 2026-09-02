@@ -113,7 +113,7 @@ func NewManager(cfg config.Config, collectorHost string, collectorID string) (*M
 			return nil, statsErr
 		} else if stats.PendingEnvelopes > 0 {
 			m.signalDelivery()
-		} else if statusErr := m.setDeliveryHealthy(); statusErr != nil {
+		} else if statusErr := m.setDeliveryIdle(); statusErr != nil {
 			m.Close()
 			return nil, statusErr
 		}
@@ -373,7 +373,7 @@ func (m *Manager) drain(ctx context.Context) error {
 		return err
 	}
 	if len(items) == 0 {
-		return m.setDeliveryHealthy()
+		return m.setDeliveryIdle()
 	}
 
 	for _, original := range items {
@@ -484,6 +484,21 @@ func (m *Manager) setDeliveryHealthy() error {
 		status.State = "healthy"
 	}
 	status.LastSuccessAt = &now
+	status.LastError = ""
+	m.storeStatus(status)
+	return m.outbox.WriteStatus(status)
+}
+
+func (m *Manager) setDeliveryIdle() error {
+	status, err := m.statusWithStats()
+	if err != nil {
+		return err
+	}
+	if status.PendingEnvelopes > 0 {
+		status.State = "backlogged"
+	} else {
+		status.State = "healthy"
+	}
 	status.LastError = ""
 	m.storeStatus(status)
 	return m.outbox.WriteStatus(status)

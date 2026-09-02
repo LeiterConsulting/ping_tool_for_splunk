@@ -2,7 +2,9 @@
 
 Document ID: Troubleshooting 0002
 
-Applies to: Ping Monitor on Windows when the executable and service-management script may have come from different releases
+Applies to: Ping Monitor v5/NSSM or legacy PowerShell deployments on Windows when the executable and service-management script may have come from different releases
+
+Ping Monitor v6 does not require `Install-Service.ps1` for its native Go service. If `pingmonitor.exe --version` reports v6, use `pingmonitor.exe service validate` and [Troubleshooting 0004](native-windows-service-v6-migration-0004.md) instead. Keep this procedure for an intentionally retained v5/NSSM or PowerShell-runtime service.
 
 ## What is the symptom?
 

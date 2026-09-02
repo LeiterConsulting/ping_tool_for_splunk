@@ -16,6 +16,9 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "endpoints.csv")
 	discoveryLatency := 12.75
+	discoveryResolution := 0.001
+	discoveryUpperBound := 1.0
+	discoveryElapsed := 13.2
 	input := []models.Endpoint{
 		{
 			IP: "10.0.0.1", Hostname: "edge-router", FQDN: "edge-router.example.com",
@@ -24,13 +27,17 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 			DNSStatus: "forward_confirmed", DNSForwardConfirmed: true,
 			DiscoveredAt: "2026-07-27T12:00:00Z", DiscoveryScanID: "scan-123",
 			DiscoverySource: "icmp_subnet_scan", DiscoveryLatencyMs: &discoveryLatency,
+			DiscoveryProbeBackend: "windows_icmp", DiscoveryLatencySource: "windows_icmp_rtt",
+			DiscoveryLatencyResolutionMs: &discoveryResolution, DiscoveryProbeElapsedMs: &discoveryElapsed,
 			DeviceMode: models.DeviceModeProduction, AlertingEnabled: models.Bool(false), AlertingReason: "planned silence",
 			AssetID: "asset-100", DynamicAddress: true, ClassificationSource: "rule:network",
 			DiscoveryReviewState: models.DiscoveryReviewApproved, DiscoveryReviewedAt: "2026-08-25T12:00:00Z", DiscoveryReviewNote: "Added to inventory",
 			SubnetID: "users", SubnetName: "User LAN", SubnetVLAN: "230", SubnetLocation: "NYC",
 			AddressingMode: "dhcp", RoutingDomain: "corp",
 		},
-		{IP: "10.0.0.25", Hostname: "qa-api", Group: "development", Description: "QA API", EntityType: "service", Device: "vm", Vendor: "VMware", AdditionalNotes: "Excluded", Dev: true},
+		{IP: "10.0.0.25", Hostname: "qa-api", Group: "development", Description: "QA API", EntityType: "service", Device: "vm", Vendor: "VMware", AdditionalNotes: "Excluded", Dev: true,
+			DiscoveryProbeBackend: "windows_icmp", DiscoveryLatencySource: "windows_icmp_rtt", DiscoveryLatencyResolutionMs: &discoveryUpperBound,
+			DiscoveryLatencyCensored: true, DiscoveryLatencyUpperBoundMs: &discoveryUpperBound},
 	}
 
 	if err := SaveEndpoints(path, input); err != nil {
@@ -53,8 +60,16 @@ func TestSaveEndpoints_RoundTrip(t *testing.T) {
 	if loaded[0].FQDN != "edge-router.example.com" || loaded[0].DNSStatus != "forward_confirmed" ||
 		!loaded[0].DNSForwardConfirmed || loaded[0].DiscoveredAt != "2026-07-27T12:00:00Z" ||
 		loaded[0].DiscoveryScanID != "scan-123" || loaded[0].DiscoverySource != "icmp_subnet_scan" ||
-		loaded[0].DiscoveryLatencyMs == nil || *loaded[0].DiscoveryLatencyMs != discoveryLatency {
+		loaded[0].DiscoveryLatencyMs == nil || *loaded[0].DiscoveryLatencyMs != discoveryLatency ||
+		loaded[0].DiscoveryProbeBackend != "windows_icmp" || loaded[0].DiscoveryLatencySource != "windows_icmp_rtt" ||
+		loaded[0].DiscoveryLatencyResolutionMs == nil || *loaded[0].DiscoveryLatencyResolutionMs != discoveryResolution ||
+		loaded[0].DiscoveryLatencyCensored || loaded[0].DiscoveryLatencyUpperBoundMs != nil || loaded[0].DiscoveryProbeElapsedMs == nil ||
+		*loaded[0].DiscoveryProbeElapsedMs != discoveryElapsed {
 		t.Fatalf("discovery evidence did not survive endpoint round trip: %#v", loaded[0])
+	}
+	if !loaded[1].DiscoveryLatencyCensored || loaded[1].DiscoveryLatencyMs != nil || loaded[1].DiscoveryLatencyUpperBoundMs == nil ||
+		*loaded[1].DiscoveryLatencyUpperBoundMs != discoveryUpperBound {
+		t.Fatalf("censored discovery evidence did not survive endpoint round trip: %#v", loaded[1])
 	}
 	if loaded[0].DeviceMode != models.DeviceModeProduction || loaded[0].IsAlertingEnabled() ||
 		loaded[0].AlertingReason != "planned silence" || loaded[0].AssetID != "asset-100" ||

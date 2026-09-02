@@ -34,6 +34,10 @@
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4M11 7v4l3 2"/></svg>
           <span class="nav-label">Discovery</span>
         </a>
+        <a class="nav-item" href="/system" data-route="/system" title="System">
+          <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4M7 11l2-2 2 2 3-4 3 3"/></svg>
+          <span class="nav-label">System</span>
+        </a>
         <a class="nav-item" href="/settings" data-route="/settings" title="Settings">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.1A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.1A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.17.38.47.7.85.9.24.13.5.2.78.2H21v4h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>
           <span class="nav-label">Settings</span>
@@ -496,7 +500,7 @@
               <summary class="collapsible-panel-summary">
                 <div>
                   <h3 class="panel-title">Discovery Controls</h3>
-                  <p class="summary-note">These values map to the existing discovery script parameters.</p>
+                  <p class="summary-note">Native Go discovery uses a bounded worker pool and the collector's configured ICMP probe mode.</p>
                 </div>
                 <svg class="panel-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
               </summary>
@@ -514,7 +518,7 @@
                 </label>
                 <label class="field-group">
                   <span>Timeout (ms)</span>
-                  <input id="discovery-timeout-ms" class="text-input" type="number" min="100" value="500">
+                  <input id="discovery-timeout-ms" class="text-input" type="number" min="100" max="60000" value="500">
                 </label>
                 <label class="field-group">
                   <span>Throttle Limit</span>
@@ -755,6 +759,124 @@
           </article>
         </section>
 
+        <section id="system" class="section-stack app-page" data-page="/system" hidden>
+          <div class="page-context-row">
+            <div class="system-sample-meta">
+              <span class="meta-chip" id="system-platform-chip">Loading platform...</span>
+              <span class="meta-chip" id="system-sample-chip">Waiting for resource sample...</span>
+            </div>
+            <button class="secondary-button" id="refresh-system-button" type="button">Refresh Metrics</button>
+          </div>
+
+          <div id="system-banner" class="message-banner hidden" role="status" aria-live="polite"></div>
+
+          <div class="summary-grid system-summary-grid">
+            <article class="summary-card accent-teal">
+              <p class="summary-label">Host CPU</p>
+              <p class="summary-value summary-value-text" id="system-host-cpu">--</p>
+              <p class="summary-note" id="system-host-cpu-note">Warming the first CPU sample...</p>
+            </article>
+            <article class="summary-card">
+              <p class="summary-label">Collector CPU</p>
+              <p class="summary-value summary-value-text" id="system-process-cpu">--</p>
+              <p class="summary-note" id="system-process-cpu-note">Share of total host CPU capacity</p>
+            </article>
+            <article class="summary-card accent-amber">
+              <p class="summary-label">Collector RAM</p>
+              <p class="summary-value summary-value-text" id="system-process-memory">--</p>
+              <p class="summary-note" id="system-process-memory-note">Current process working set</p>
+            </article>
+            <article class="summary-card accent-slate">
+              <p class="summary-label">Host RAM</p>
+              <p class="summary-value summary-value-text" id="system-host-memory">--</p>
+              <p class="summary-note" id="system-host-memory-note">Installed physical memory</p>
+            </article>
+          </div>
+
+          <div class="system-dashboard-grid">
+            <article class="panel section-stack system-workers-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Worker Utilization</h3>
+                  <p class="summary-note">Live work is distinct from configured pool capacity and process-lifetime peak.</p>
+                </div>
+              </div>
+              <div class="worker-list">
+                <div class="worker-row">
+                  <div class="worker-heading"><strong>Monitoring</strong><span id="system-monitor-workers">--</span></div>
+                  <div class="usage-track" role="meter" aria-label="Monitoring worker utilization" aria-valuemin="0" id="system-monitor-workers-meter"><span></span></div>
+                  <p class="summary-note" id="system-monitor-workers-note">Configured from parallel_threads.</p>
+                </div>
+                <div class="worker-row">
+                  <div class="worker-heading"><strong>Discovery probes</strong><span id="system-discovery-probe-workers">--</span></div>
+                  <div class="usage-track" role="meter" aria-label="Discovery probe worker utilization" aria-valuemin="0" id="system-discovery-probe-workers-meter"><span></span></div>
+                  <p class="summary-note" id="system-discovery-probe-workers-note">Created only while a scan is probing addresses.</p>
+                </div>
+                <div class="worker-row">
+                  <div class="worker-heading"><strong>Discovery DNS</strong><span id="system-discovery-dns-workers">--</span></div>
+                  <div class="usage-track" role="meter" aria-label="Discovery DNS worker utilization" aria-valuemin="0" id="system-discovery-dns-workers-meter"><span></span></div>
+                  <p class="summary-note" id="system-discovery-dns-workers-note">Separate ceiling prevents resolver pressure from tracking ICMP fan-out.</p>
+                </div>
+              </div>
+            </article>
+
+            <article class="panel section-stack system-memory-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Memory Evidence</h3>
+                  <p class="summary-note">Host, process, and Go heap values describe different boundaries and are never substituted for one another.</p>
+                </div>
+              </div>
+              <dl class="metric-definition-grid">
+                <div><dt>Host available</dt><dd id="system-host-available">--</dd></div>
+                <div><dt>Host used</dt><dd id="system-host-used">--</dd></div>
+                <div><dt>Process private</dt><dd id="system-process-private">--</dd></div>
+                <div><dt>Process peak resident</dt><dd id="system-process-committed">--</dd></div>
+                <div><dt>Go heap allocated</dt><dd id="system-go-heap">--</dd></div>
+                <div><dt>Go runtime reserved</dt><dd id="system-go-sys">--</dd></div>
+                <div><dt>Go memory limit</dt><dd id="system-go-limit">--</dd></div>
+                <div><dt>Next GC target</dt><dd id="system-go-next-gc">--</dd></div>
+              </dl>
+            </article>
+
+            <article class="panel section-stack system-runtime-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Runtime Capacity</h3>
+                  <p class="summary-note">Current process shape and the monitoring workload active in this deployment.</p>
+                </div>
+              </div>
+              <dl class="metric-definition-grid">
+                <div><dt>Active endpoints</dt><dd id="system-active-endpoints">--</dd></div>
+                <div><dt>Pings per cycle</dt><dd id="system-pings-per-cycle">--</dd></div>
+                <div><dt>Cycle interval</dt><dd id="system-cycle-interval">--</dd></div>
+                <div><dt>Per-ping timeout</dt><dd id="system-timeout">--</dd></div>
+                <div><dt>Logical CPUs</dt><dd id="system-logical-cpus">--</dd></div>
+                <div><dt>GOMAXPROCS</dt><dd id="system-gomaxprocs">--</dd></div>
+                <div><dt>Goroutines</dt><dd id="system-goroutines">--</dd></div>
+                <div><dt>OS threads</dt><dd id="system-threads">--</dd></div>
+                <div><dt>Windows handles</dt><dd id="system-handles">--</dd></div>
+                <div><dt>GC cycles</dt><dd id="system-gc-cycles">--</dd></div>
+                <div><dt>Last GC pause</dt><dd id="system-gc-pause">--</dd></div>
+                <div><dt>Process ID</dt><dd id="system-pid">--</dd></div>
+              </dl>
+            </article>
+
+            <article class="panel section-stack system-truth-panel">
+              <div class="panel-header compact-panel-header">
+                <div>
+                  <h3 class="panel-title">Measurement Truth</h3>
+                  <p class="summary-note">What this dashboard can prove—and what it deliberately leaves unavailable.</p>
+                </div>
+              </div>
+              <p id="system-measurement-truth">System evidence has not loaded yet.</p>
+              <ul class="finding-list compact-finding-list" id="system-unavailable-fields">
+                <li>Waiting for the first cached sample.</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
         <section id="settings" class="section-stack app-page" data-page="/settings" hidden>
           <div class="page-context-row">
             <span class="meta-chip" id="settings-source-chip">Loading config source...</span>
@@ -763,8 +885,6 @@
               <details class="action-menu" id="config-actions-menu">
                 <summary class="icon-button" aria-label="Open configuration actions" title="Configuration actions">•••</summary>
                 <div class="action-menu-popover action-menu-popover-right">
-                  <button class="menu-action" id="test-hec-button" type="button">Test Event HEC</button>
-                  <button class="menu-action" id="test-metrics-button" type="button">Test Metrics HEC</button>
                   <button class="menu-action" id="reload-config-button" type="button">Reload configuration from disk</button>
                   <button class="menu-action" id="reset-config-button" type="button">Reset unsaved changes</button>
                 </div>
@@ -1021,7 +1141,7 @@
                     </label>
                     <label class="field-group">
                       <span>Timeout (ms)</span>
-                      <input id="cfg-discovery-schedule-timeout" class="text-input" type="number" min="100" value="500">
+                      <input id="cfg-discovery-schedule-timeout" class="text-input" type="number" min="100" max="60000" value="500">
                     </label>
                     <label class="field-group">
                       <span>Concurrency</span>
@@ -1108,6 +1228,17 @@
                     <input id="cfg-hec-enabled" type="checkbox">
                     <span>Enable Splunk HEC event delivery.</span>
                   </label>
+                  <div class="confirmation-control">
+                    <div>
+                      <strong>Delivery confirmation</strong>
+                      <p class="summary-note" id="hec-confirmation-summary">HEC acceptance only. Splunk indexing is not confirmed.</p>
+                    </div>
+                    <label class="checkbox-row">
+                      <input id="cfg-hec-use-ack" type="checkbox">
+                      <span>Require Splunk indexer acknowledgment.</span>
+                    </label>
+                    <button class="secondary-button connection-test-button" id="test-hec-button" type="button">Test Event HEC Delivery</button>
+                  </div>
                   <div class="field-grid">
                     <label class="field-group field-span-2">
                       <span>HEC URL</span>
@@ -1171,10 +1302,6 @@
                       <input id="cfg-hec-retry-enabled" type="checkbox">
                       <span>Enable structured retry policy.</span>
                     </label>
-                    <label class="checkbox-row">
-                      <input id="cfg-hec-use-ack" type="checkbox">
-                      <span>Require Splunk indexer acknowledgment.</span>
-                    </label>
                   </div>
                   <div class="field-grid">
                     <label class="field-group">
@@ -1207,6 +1334,17 @@
                     <input id="cfg-metrics-enabled" type="checkbox">
                     <span>Enable metrics delivery.</span>
                   </label>
+                  <div class="confirmation-control">
+                    <div>
+                      <strong>Delivery confirmation</strong>
+                      <p class="summary-note" id="metrics-confirmation-summary">HEC acceptance only. Splunk indexing is not confirmed.</p>
+                    </div>
+                    <label class="checkbox-row">
+                      <input id="cfg-metrics-use-ack" type="checkbox">
+                      <span>Require Splunk indexer acknowledgment.</span>
+                    </label>
+                    <button class="secondary-button connection-test-button" id="test-metrics-button" type="button">Test Metrics HEC Delivery</button>
+                  </div>
                   <div class="field-grid">
                     <label class="field-group">
                       <span>Metrics Mode</span>
@@ -1276,10 +1414,6 @@
                     <label class="checkbox-row">
                       <input id="cfg-metrics-use-metrics-index" type="checkbox">
                       <span>Use Splunk metrics index semantics.</span>
-                    </label>
-                    <label class="checkbox-row">
-                      <input id="cfg-metrics-use-ack" type="checkbox">
-                      <span>Require Splunk indexer acknowledgment.</span>
                     </label>
                   </div>
                 </article>

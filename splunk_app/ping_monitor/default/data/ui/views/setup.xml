@@ -97,6 +97,33 @@
     </panel>
   </row>
 
+  <row>
+    <panel>
+      <title>Health lookup automation</title>
+      <html>
+        <p>The packaged <strong>Ping Monitor - Update Health Lookup</strong> search runs every minute by default. It keeps the correlation lookup inside the collector's normal freshness window; alert searches remain disabled until an administrator enables them deliberately.</p>
+      </html>
+    </panel>
+    <panel>
+      <title>Health lookup freshness</title>
+      <table>
+        <search>
+          <query>| inputlookup ping_health_lookup
+| stats count AS rows max(last_updated) AS newest_update
+| eval updated_epoch=strptime(newest_update, "%Y-%m-%d %H:%M:%S"), age_seconds=now()-updated_epoch
+| eval status=case(rows=0, "Waiting for first scheduled update", isnull(updated_epoch), "Timestamp unavailable", age_seconds&gt;180, "Stale - inspect the updater search", true(), "Current")
+| eval newest_update=coalesce(newest_update, "Never")
+| table status, rows, newest_update
+| rename status AS "Status", rows AS "Rows", newest_update AS "Newest Update"</query>
+          <earliest>-24h</earliest>
+          <latest>now</latest>
+        </search>
+        <option name="drilldown">none</option>
+        <option name="count">5</option>
+      </table>
+    </panel>
+  </row>
+
   <fieldset submitButton="false" autoRun="false">
     <input type="text" token="form_index" searchWhenChanged="false">
       <label>Events Index</label>
@@ -197,7 +224,8 @@
         <ol>
           <li>Open <strong>Ping Monitor Overview</strong> and confirm that event or metrics data is appearing with the values above.</li>
           <li>Open <strong>Asset Health Correlation</strong> to confirm it resolves the same configuration.</li>
-          <li>Enable packaged saved searches and alerts only after these settings match your deployment.</li>
+          <li>Confirm that <strong>Health lookup freshness</strong> becomes Current after the next one-minute update.</li>
+          <li>Enable packaged alert searches only after these settings and alert actions match your deployment.</li>
         </ol>
       </html>
     </panel>

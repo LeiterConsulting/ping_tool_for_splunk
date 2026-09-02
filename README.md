@@ -4,11 +4,25 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Current Release
 
-- Go runtime: `v5.11.2`
-- Splunk app: `3.2.0` build `44`
-- Current runtime release notes: [RELEASE_NOTES_v5.11.2.md](RELEASE_NOTES_v5.11.2.md)
-- Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.2.0.md](RELEASE_NOTES_splunk_app_3.2.0.md)
+- Go runtime: `v6.0.0`
+- Splunk app: `3.4.0` build `46`
+- Runtime release notes: [RELEASE_NOTES_v6.0.0.md](RELEASE_NOTES_v6.0.0.md)
+- Splunk app release notes: [RELEASE_NOTES_splunk_app_3.4.0.md](RELEASE_NOTES_splunk_app_3.4.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
+
+The latest tagged runtime is `v6.0.0`. The v5.12 native-discovery work was incorporated into v6 rather than published as a separate customer release.
+
+## v6.0.0 Platform Highlights
+
+Version 6 removes PowerShell and NSSM from the default Windows runtime path. The same Go executable now hosts monitoring, manual and scheduled discovery, configuration parsing, the administration UI, and a native Windows Service Control Manager service. Existing PSD1/JSON/YAML configurations, endpoint inventories, discovery history, and explicit PowerShell discovery overrides remain supported.
+
+The new System dashboard exposes observed host and collector CPU, host and process memory, the Go memory limit and garbage-collector state, process handles and threads, and active/configured/peak monitoring, discovery-probe, and DNS workers. OS counters that cannot be measured remain visibly unavailable rather than being reported as healthy zeros. Sampling is cached for two seconds so additional dashboard tabs do not multiply operating-system queries.
+
+## v5.12.0 Native Discovery Highlights
+
+Version 5.12.0 moves manual and scheduled discovery into the Go runtime. Discovery now uses the collector's configured ping family, bounded goroutine workers, millisecond timeout semantics, context cancellation with in-flight platform probes bounded by their configured timeout, a context-aware Go DNS resolver, and direct structured results without a PowerShell child process or temporary CSV. Each observation records its probe backend and measured-versus-censored latency provenance. A backend failure makes the scan indeterminate and blocks missing-device delta calculation instead of turning a measurement failure into false absence.
+
+Existing PSD1/JSON/YAML configurations, endpoint CSVs, discovery history, schedules, and API request shapes remain valid. Native discovery safely limits each scan to 256 ICMP workers and 128 DNS workers; higher legacy concurrency values remain accepted, are clamped at execution, and are exposed alongside the effective worker counts in scan evidence. `DiscoverEndpoints.ps1` remains a standalone compatibility utility, and an explicitly configured `--discovery-script` still selects the deprecated PowerShell compatibility path. Adjacent scripts are ignored by default.
 
 ## v5.11.2 Hotfix Highlights
 
@@ -26,21 +40,23 @@ Version 5.11.0 adds explicit Production/Maintenance/Legacy Dev modes, independen
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.11.2 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
+| Go v6.0.0 | Current release | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
 
-## What The Current Release Includes
+## What The Current Codebase Includes
 
 - Configuration Advisor with multi-error inventory validation, deterministic worst-case schedule modeling, operating profiles, revision-safe fixes, and a bounded non-SLA host benchmark.
 - Live size-based result-log rotation with count/age retention, optional compression, and runtime/advisor evidence.
-- FQDN-enriched discovery with CSV export, bounded indexed scan history, actionable target deltas, schedule health, and timezone-aware weekly schedules.
+- Native Go, FQDN-enriched discovery with bounded concurrency, cancellation, CSV export, indexed scan history, actionable target deltas, schedule health, and timezone-aware weekly schedules.
 - Durable discovery scan summaries and per-IP evidence through the configured event pipeline, with a dedicated Splunk Discovery Inventory view.
 - Independent monitoring policy and maintenance windows that suppress probes explicitly rather than fabricating downtime.
 - A versioned config upgrade workflow that leaves legacy files untouched until an operator activates the generated config.
 - Versioned, non-cacheable admin UI assets so browser sessions cannot mix an upgraded API with stale controls.
 - Operator-focused embedded admin UI with live collector/cycle/delivery truth, revision-safe endpoint and config editing, discovery, dev/prod marking, and HEC connectivity tests.
+- A System dashboard with low-overhead observed resource counters and live worker-pool utilization.
+- Native Windows SCM service install, validation, status, start, stop, restart, and uninstall commands with bounded service-log rotation and recovery actions.
 - Drop-in reuse of existing deployment files when the runtime starts next to `config.psd1` and `endpoints.csv`.
 - Automatic `endpoints.csv` hot reload between monitoring cycles with last-known-good protection on invalid edits.
 - Dev/test endpoint segmentation with dedicated Prod Devices and Dev Devices dashboards that keep platform and pool-specific views separate.
@@ -79,8 +95,21 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
-| `--discovery-script` | Explicitly opt into a custom external discovery script; otherwise the version-matched embedded script is used |
+| `--discovery-script` | Deprecated compatibility override that explicitly runs an external `DiscoverEndpoints.ps1`; omission uses native Go discovery |
 | `--version` | Print the runtime version |
+
+Native discovery is also available without starting the monitor or web UI:
+
+```powershell
+.\pingmonitor.exe discovery `
+  --target 192.168.1.0/24 `
+  --timeout-ms 500 `
+  --concurrency 64 `
+  --format csv `
+  --output .\discovered_endpoints.csv
+```
+
+The command uses the same bounded Go ICMP/DNS engine as the UI. It refuses to overwrite an existing output unless `--force` is explicit and can emit structured JSON with `--format json`.
 
 ### Configuration Advisor
 
@@ -147,8 +176,8 @@ ip,hostname,dev
 Extended inventory formats may add the following optional policy, identity, subnet, and discovery-evidence columns to the legacy fields:
 
 ```csv
-ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,asset_id,device_mode,dev,monitoring_enabled,alerting_enabled,alerting_reason,maintenance_until,maintenance_reason,dynamic_address,classification_source,discovery_review_state,discovery_reviewed_at,discovery_review_note,subnet_id,subnet_name,subnet_vlan,subnet_location,addressing_mode,routing_domain,dns_status,dns_forward_confirmed,discovered_at,discovery_scan_id,discovery_source,discovery_latency_ms
-192.168.1.1,router,router.example.com,network,Edge router,infrastructure,router,Cisco,Core gateway,,CMDB-1001,production,false,true,true,,,,false,rule:network,approved,2026-08-25T12:00:00Z,Approved after discovery review,core,Core Network,100,Headquarters,static,corp,forward_confirmed,true,2026-07-27T12:00:00Z,scan-example,icmp_subnet_scan,1.25
+ip,hostname,fqdn,group,description,entitytype,device,vendor,additional_notes,endpoint_id,asset_id,device_mode,dev,monitoring_enabled,alerting_enabled,alerting_reason,maintenance_until,maintenance_reason,dynamic_address,classification_source,discovery_review_state,discovery_reviewed_at,discovery_review_note,subnet_id,subnet_name,subnet_vlan,subnet_location,addressing_mode,routing_domain,dns_status,dns_forward_confirmed,discovered_at,discovery_scan_id,discovery_source,discovery_latency_ms,discovery_probe_backend,discovery_latency_source,discovery_latency_resolution_ms,discovery_latency_censored,discovery_latency_upper_bound_ms,discovery_probe_elapsed_ms
+192.168.1.1,router,router.example.com,network,Edge router,infrastructure,router,Cisco,Core gateway,,CMDB-1001,production,false,true,true,,,,false,rule:network,approved,2026-08-25T12:00:00Z,Approved after discovery review,core,Core Network,100,Headquarters,static,corp,forward_confirmed,true,2026-09-02T12:00:00Z,scan-example,192.168.1.0/24,1.25,windows_icmp,windows_icmp_rtt,1,false,,1.47
 ```
 
 Endpoint file rules:
@@ -158,7 +187,7 @@ Endpoint file rules:
 - The `ip` value must be a literal IPv4 or IPv6 address. DNS names, incomplete rows, invalid `dev` values, duplicate canonical IPs, duplicate endpoint IDs, and duplicate nonblank Asset IDs are rejected.
 - `endpoint_id` is optional; the runtime derives a stable target-based ID when it is blank.
 - `fqdn`, operational-policy, CMDB identity, subnet metadata, and discovery-evidence fields are optional.
-- Reviewed discovery evidence (`dns_status`, forward confirmation, discovery time, scan ID, source, and latency) survives UI import and endpoint save/load.
+- Reviewed discovery evidence—including DNS status, scan identity, probe backend, measured/censored latency semantics, resolution, upper bound, and elapsed probe time—survives UI import and endpoint save/load.
 - Missing `monitoring_enabled` or `alerting_enabled` means `true`, so old endpoint files keep being monitored and remain eligible for packaged alerts.
 - `device_mode=maintenance`, `monitoring_enabled=false`, or a future RFC 3339 `maintenance_until` suppresses probing without fabricating packet loss. Maintenance evidence uses `record_type=monitoring_control` and `measurement_valid=false`.
 - `alerting_enabled=false` does not suppress probing, health evaluation, dashboards, or reports. It marks the signal ineligible for packaged Down, packet-loss, and latency alerts.
@@ -171,7 +200,7 @@ Endpoint file rules:
 
 The current Go runtime separates endpoint hot reload from engine configuration loading:
 
-- The admin UI is divided into URL-backed Overview, Advisor, Endpoints, Discovery, and Settings pages instead of one anchor-scrolled document. Settings has dedicated Appearance, Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages.
+- The admin UI is divided into URL-backed Overview, Advisor, Endpoints, Discovery, System, and Settings pages instead of one anchor-scrolled document. Settings has dedicated Appearance, Runtime, Discovery and CMDB, Splunk Delivery, and Diagnostics subpages.
 - Primary actions remain visible while selection, export, reset, test, reorder, and destructive actions use contextual dropdowns or overflow menus. Draft endpoint/config state remains in memory while moving between pages.
 - The Endpoints page gives the inventory table the full workspace width and places a collapsible editor below it. A row highlight identifies the single editor target, while independent checkboxes build a multi-device bulk selection; the current editor target and an Open Editor shortcut remain visible above the table.
 - Discovery Controls can be collapsed from its visible caret, and Discovery Results uses the full workspace width below it so large review tables are not constrained by a side-by-side layout.
@@ -195,7 +224,7 @@ The UI supports:
 - advisor analysis, current-versus-proposed schedule evidence, safe fixes, confirmed profile application, and a bounded local benchmark
 - full endpoint CRUD through a full-width inventory and compact four-column desktop editor, with explicit single-device and multi-device selection cues
 - explicitly selected bulk Production/Maintenance, alert eligibility, pause/resume, and delete actions, with confirmations for signal-affecting changes
-- cancellable discovery with host-count preflight, FQDN and forward-confirmation evidence, complete CSV export, DHCP-safe scan deltas, and merge or overwrite workflows
+- cancellable native discovery with host-count preflight, structured probe/DNS evidence, complete CSV export, DHCP-safe scan deltas, and merge or overwrite workflows
 - durable Needs Review, Deferred, and Ignored discovery queues, explicit Production/Maintenance assignment before staging, per-result Asset ID entry, and bulk review for CMDB fields, address-allocation policy, alert policy, and previewed naming-rule application
 - an ordered regex match/assignment builder with named captures, fill-blank/overwrite policy, reordering, sample tests, exact change previews, and classification provenance
 - a discovery subnet catalog for subnet name, VLAN, location, routing domain, and static/DHCP behavior
@@ -273,7 +302,7 @@ Enable `use_ack` only after [indexer acknowledgment is enabled on the correspond
 
 ### Splunk App
 
-Install the current packaged app from `splunk_app/dist/ping_monitor_3.2.0_build44_20260825.tar.gz`, then:
+Install the current candidate app from `splunk_app/dist/ping_monitor_3.4.0_build46_20260902.tar.gz`, then:
 
 1. Open **Ping Monitor -> Setup**.
 2. Save the events index, sourcetype, and metrics index.
@@ -287,96 +316,51 @@ If you prefer file output, configure a Splunk monitor input for the runtime log 
 
 ## Running As A Service
 
-### Windows (Go Runtime, Shipped Installer)
+### Windows (Native Go Service)
 
-The repository ships [Install-Service.ps1](Install-Service.ps1), which installs the Go runtime through NSSM with delayed automatic start, graceful shutdown, application restart, Windows Service Control Manager recovery, and rotating stdout/stderr logs.
+The v6 Windows executable implements the Service Control Manager dispatcher directly. It does not require NSSM or a PowerShell service wrapper. Validation and status are read-only; lifecycle mutations require an elevated terminal.
 
-Do not register `pingmonitor.exe` directly with `New-Service` or `sc.exe create`. The current Go binary is a long-running console application, not a native Windows Service Control Manager executable, and does not implement the SCM service dispatcher. Use the shipped NSSM installer for a Windows service, or use Task Scheduler when a service wrapper is not desired.
-
-Prerequisites are PowerShell 7.4+, administrator rights for lifecycle mutations, and a vetted NSSM 2.24+ `nssm.exe` either on `PATH` or beside `Install-Service.ps1`. The installer does not download or execute a remote binary automatically.
-
-Run validation first from any PowerShell 7.4+ session. Validation does not change service state and does not require elevation:
+Validate first from the deployment directory:
 
 ```powershell
-# Validate a deployment folder and show the exact service definition
-.\Install-Service.ps1 -Validate `
-  -BinaryPath D:\pingmonitor\pingmonitor.exe `
-  -ConfigPath D:\pingmonitor\config.psd1 `
-  -EndpointsPath D:\pingmonitor\endpoints.csv
+.\pingmonitor.exe service validate `
+  --config .\config.psd1 `
+  --endpoints .\endpoints.csv `
+  --ui-listen 0.0.0.0:8080
 ```
 
-Open PowerShell with **Run as administrator** for installation and lifecycle operations:
+Then open PowerShell or Windows Terminal with **Run as administrator**:
 
 ```powershell
-# Install, verify, and start the service. The UI listens on 0.0.0.0:8080 by default.
-.\Install-Service.ps1 -Install `
-  -BinaryPath D:\pingmonitor\pingmonitor.exe `
-  -ConfigPath D:\pingmonitor\config.psd1 `
-  -EndpointsPath D:\pingmonitor\endpoints.csv
+# Install with delayed automatic start and start immediately.
+.\pingmonitor.exe service install `
+  --config .\config.psd1 `
+  --endpoints .\endpoints.csv `
+  --ui-listen 0.0.0.0:8080
 
-# Inspect persisted NSSM paths, arguments, log files, process ID, and status
-.\Install-Service.ps1 -Status
-.\Install-Service.ps1 -Status -Json
+# Inspect and control the persisted service.
+.\pingmonitor.exe service status --json
+.\pingmonitor.exe service restart
+.\pingmonitor.exe service stop
+.\pingmonitor.exe service start
 
-# Control the verified service instance
-.\Install-Service.ps1 -Stop
-.\Install-Service.ps1 -Start
-.\Install-Service.ps1 -Restart
-
-# Replace an existing definition after changing paths or service settings
-.\Install-Service.ps1 -Install `
-  -BinaryPath D:\pingmonitor\pingmonitor.exe `
-  -ConfigPath D:\pingmonitor\config.psd1 `
-  -EndpointsPath D:\pingmonitor\endpoints.csv `
-  -ForceReinstall
-
-# Remove the service without deleting deployment data or logs
-.\Install-Service.ps1 -Uninstall
+# Remove only the SCM definition; deployment data and logs remain.
+.\pingmonitor.exe service uninstall
 ```
 
-The default working directory is the directory containing the selected Go binary. Therefore a service installed from the repository can safely target a separate deployment directory; relative runtime paths continue to resolve beside that deployed binary. Override this with `-WorkingDirectory` or place service output elsewhere with `-LogDirectory`.
+The install command stores absolute config and endpoint paths, waits for collector readiness, uses delayed automatic start and SCM recovery by default, and rotates `service.log` at 10 MiB with five retained archives. `--disable-ui`, `--startup auto|manual`, `--log-dir`, `--no-start`, and `--wait` customize the definition. Existing relative paths inside the selected config still resolve from that config's directory.
 
-`-ConfigPath` and `-EndpointsPath` may be omitted when the deployment files use standard names in that working directory. The installer checks `config.psd1`, `config.json`, `config.yaml`, and `config.yml` in compatibility order and requires `endpoints.csv`. Use explicit absolute paths when more than one config exists—especially after generating an upgraded JSON config—so the persisted service definition cannot select the wrong file.
+Use `service status --json` before migration. It identifies native v6, NSSM, direct legacy, and other-wrapper definitions. Existing v5 NSSM services remain valid. To migrate, validate the intended v6 paths, stop the old service, and run `service install --force`; the replacement changes only the SCM definition and preserves configuration, endpoint, discovery, and log data. [Install-Service.ps1](Install-Service.ps1) remains the legacy v5/NSSM controller and must not be used to install a second host under the same service name.
 
-By default the service:
-
-- runs as `LocalSystem` through NSSM;
-- starts using `AutomaticDelayedStart`;
-- restarts the monitored application after 10 seconds;
-- has SCM restart actions for failures of the NSSM service process;
-- gives the console application 15 seconds to shut down cleanly;
-- rotates `service_stdout.log` and `service_stderr.log` at 10 MB and at least daily;
-- binds the optional admin UI to `0.0.0.0:8080`.
-
-Use a different address/port or disable the UI when required:
+The native service has two test layers. The ordinary Go suite tests service readiness, health, and graceful stop in process. The elevated lifecycle test creates a uniquely named canary, verifies install/status/start/restart/PID replacement/stop/logging/uninstall, and removes it in a `finally` block:
 
 ```powershell
-# Bind the UI to a different address or port
-.\Install-Service.ps1 -Install -UIListen 0.0.0.0:8090
-
-# Run without the embedded UI
-.\Install-Service.ps1 -Install -DisableUI
+.\tests\Test-NativeWindowsServiceLifecycle.ps1 -BinaryPath D:\pingmonitor\pingmonitor.exe
 ```
 
-`-DisableUI` disables only the HTTP administration listener. Configured discovery schedules and the monitoring engine continue to run.
+Never give the canary a production service name.
 
-Version 5.9 does not require `-AllowRemoteUI` for non-loopback listeners; the switch remains accepted for command-line compatibility. Authentication and access-policy enforcement are deferred to v6 or later, so operators should treat the configured listener as an administrative endpoint.
-
-`-Validate` now runs the full Configuration Advisor preflight and shows all blockers and recommendations before NSSM is changed. Start, restart, and install operations include a startup stabilization check; failures automatically include the recent NSSM stdout/stderr tail when available.
-
-Before an upgrade, validate the replacement binary, stop the service, replace the binary, and restart it. If the executable path changes, use `-ForceReinstall` so the persisted NSSM definition is verified again.
-
-The repository includes two service tests:
-
-```powershell
-# Safe definition/path/argument tests; does not require elevation
-.\tests\Test-ServiceInstaller.ps1 -BinaryPath D:\pingmonitor\pingmonitor.exe
-
-# Full create/start/health/restart/stop/remove canary; requires elevation
-.\tests\Test-WindowsServiceLifecycle.ps1 -BinaryPath D:\pingmonitor\pingmonitor.exe
-```
-
-The lifecycle test creates a uniquely named temporary deployment and service, verifies `/healthz`, and removes both in a `finally` block. Do not give it the name of a production service.
+For the complete customer-facing sequence—including production input validation, isolated canary interpretation, guarded foreground shutdown, clean SCM installation, full-cycle signal verification, maintenance-window restart validation, rollback boundaries, and escalation evidence—use [Validate and Cut Over Ping Monitor v6 to a Native Windows Service](documents/troubleshooting/native-v6-service-validation-and-cutover-0005.md).
 
 ### Linux (Go Runtime Under systemd)
 

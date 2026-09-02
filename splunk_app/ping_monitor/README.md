@@ -2,6 +2,27 @@
 
 Enterprise network availability monitoring with native Splunk dashboards, KV Store-backed setup, and Cloud-ready packaging.
 
+## Version 3.4.0
+
+### What's New in v3.4.0
+
+- The default Events view reuses one normalized base search across its twelve Overview summary panels, sharply reducing dashboard search concurrency.
+- The Overview issue count uses each endpoint's latest coherent, freshness-aware state.
+- Current metrics views use the collector-emitted observation epoch for freshness instead of treating a five-minute metrics bucket boundary as an exact timestamp.
+- Current-state searches clear latency when the newest observation reports no reply, no successful ping, or an invalid measurement, preventing an older latency sample from being paired with a newer Down or probe-error state.
+- The health correlation lookup is enabled by default, refreshed every minute, and carries health, observation, signal-quality, state-source, and freshness-source evidence.
+- Discovery Inventory reuses two bounded base searches across its panels and defaults to a seven-day evidence window, substantially reducing redundant historical scans.
+- Existing metric history remains usable through an explicitly labeled legacy bucket upper-bound fallback; no reindex is required.
+
+## Version 3.3.0
+
+### What's New in v3.3.0
+
+- Discovery Inventory now exposes native-engine, probe-backend, latency-source, host-accounting, indeterminate, and DNS-evidence fields emitted by Ping Monitor v5.12.0.
+- Censored discovery latency is rendered as an upper bound such as `<1 ms` instead of as a fabricated zero or a missing value.
+- Scan History distinguishes addresses with no ICMP observation from indeterminate probe failures and retains the established rule that absence is not monitoring state.
+- Historical discovery events remain searchable and are labeled `legacy/unknown` when backend provenance was not emitted by the older collector.
+
 ## Version 3.2.0
 
 ### What's New in v3.2.0
@@ -74,13 +95,13 @@ Enterprise network availability monitoring with native Splunk dashboards, KV Sto
 
 ## Quick Start
 
-1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_3.2.0_build44_20260825.tar.gz`
+1. **Install the App**: Upload the packaged archive from `splunk_app/dist/` via Splunk Web → Manage Apps → Install from File. Current release artifact: `ping_monitor_3.4.0_build46_20260902.tar.gz`
 2. **Run Setup**: Navigate to **Ping Monitor → Setup** and configure your events index, sourcetype, and metrics index
 3. **Start Monitoring**: Start the Go runtime service or process, and dashboards will display data automatically
 
 ## Paired Go Runtime
 
-This Splunk app is intended to pair with the current Go runtime release, `v5.11.0`.
+This Splunk app is intended to pair with the current Go runtime release, `v6.0.0`.
 
 - Drop `pingmonitor.exe` into an existing deployment folder and it will pick up the co-located `config.psd1` and `endpoints.csv` on startup.
 - If the embedded admin UI is enabled, those active files are loaded into the UI immediately so the existing deployment can be managed without rebuilding configuration by hand.
@@ -143,7 +164,7 @@ All saved searches automatically read configuration from KV store.
 
 | Search | Schedule | Description |
 |--------|----------|-------------|
-| Update Health Lookup | Every 5 min | Maintains lookup for correlation |
+| Update Health Lookup | Every 1 min | Maintains a coherent, freshness-aware lookup for correlation |
 | Endpoint Down Alert | Every 5 min | 100% packet loss |
 | High Packet Loss Alert | Every 5 min | >25% packet loss |
 | High Latency Alert | Every 5 min | >200ms latency |

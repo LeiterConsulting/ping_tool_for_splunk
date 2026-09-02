@@ -131,8 +131,16 @@ func SaveConfig(ctx context.Context, preferredPath string, root string, cfg Conf
 }
 
 func SaveEndpoints(path string, endpoints []models.Endpoint) error {
-	if err := ValidateEndpoints(endpoints); err != nil {
+	encoded, err := EncodeEndpointsCSV(endpoints)
+	if err != nil {
 		return err
+	}
+	return writeWithBackup(path, encoded)
+}
+
+func EncodeEndpointsCSV(endpoints []models.Endpoint) ([]byte, error) {
+	if err := ValidateEndpoints(endpoints); err != nil {
+		return nil, err
 	}
 
 	var buf bytes.Buffer
@@ -144,8 +152,10 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 		"discovery_review_state", "discovery_reviewed_at", "discovery_review_note",
 		"subnet_id", "subnet_name", "subnet_vlan", "subnet_location", "addressing_mode", "routing_domain",
 		"dns_status", "dns_forward_confirmed", "discovered_at", "discovery_scan_id", "discovery_source", "discovery_latency_ms",
+		"discovery_probe_backend", "discovery_latency_source", "discovery_latency_resolution_ms",
+		"discovery_latency_censored", "discovery_latency_upper_bound_ms", "discovery_probe_elapsed_ms",
 	}); err != nil {
-		return err
+		return nil, err
 	}
 	for _, endpoint := range endpoints {
 		group := strings.TrimSpace(endpoint.Group)
@@ -188,16 +198,22 @@ func SaveEndpoints(path string, endpoints []models.Endpoint) error {
 			strings.TrimSpace(endpoint.DiscoveryScanID),
 			strings.TrimSpace(endpoint.DiscoverySource),
 			formatOptionalFloat(endpoint.DiscoveryLatencyMs),
+			strings.TrimSpace(endpoint.DiscoveryProbeBackend),
+			strings.TrimSpace(endpoint.DiscoveryLatencySource),
+			formatOptionalFloat(endpoint.DiscoveryLatencyResolutionMs),
+			strconv.FormatBool(endpoint.DiscoveryLatencyCensored),
+			formatOptionalFloat(endpoint.DiscoveryLatencyUpperBoundMs),
+			formatOptionalFloat(endpoint.DiscoveryProbeElapsedMs),
 		}
 		if err := writer.Write(record); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	writer.Flush()
 	if err := writer.Error(); err != nil {
-		return err
+		return nil, err
 	}
-	return writeWithBackup(path, buf.Bytes())
+	return buf.Bytes(), nil
 }
 
 func formatOptionalFloat(value *float64) string {

@@ -11,6 +11,8 @@ const initialUIPreferences = themeSystem
 
 const state = {
   status: null,
+  system: null,
+  systemRefreshPending: false,
   endpoints: [],
   savedEndpoints: [],
   endpointsRevision: '',
@@ -111,6 +113,49 @@ const elements = {
   configSourceCopy: document.getElementById('config-source-copy'),
   discoveryStatusLabel: document.getElementById('discovery-status-label'),
   discoveryStatusCopy: document.getElementById('discovery-status-copy'),
+  systemBanner: document.getElementById('system-banner'),
+  systemPlatformChip: document.getElementById('system-platform-chip'),
+  systemSampleChip: document.getElementById('system-sample-chip'),
+  refreshSystemButton: document.getElementById('refresh-system-button'),
+  systemHostCPU: document.getElementById('system-host-cpu'),
+  systemHostCPUNote: document.getElementById('system-host-cpu-note'),
+  systemProcessCPU: document.getElementById('system-process-cpu'),
+  systemProcessCPUNote: document.getElementById('system-process-cpu-note'),
+  systemProcessMemory: document.getElementById('system-process-memory'),
+  systemProcessMemoryNote: document.getElementById('system-process-memory-note'),
+  systemHostMemory: document.getElementById('system-host-memory'),
+  systemHostMemoryNote: document.getElementById('system-host-memory-note'),
+  systemHostAvailable: document.getElementById('system-host-available'),
+  systemHostUsed: document.getElementById('system-host-used'),
+  systemProcessPrivate: document.getElementById('system-process-private'),
+  systemProcessCommitted: document.getElementById('system-process-committed'),
+  systemGoHeap: document.getElementById('system-go-heap'),
+  systemGoSys: document.getElementById('system-go-sys'),
+  systemGoLimit: document.getElementById('system-go-limit'),
+  systemGoNextGC: document.getElementById('system-go-next-gc'),
+  systemActiveEndpoints: document.getElementById('system-active-endpoints'),
+  systemPingsPerCycle: document.getElementById('system-pings-per-cycle'),
+  systemCycleInterval: document.getElementById('system-cycle-interval'),
+  systemTimeout: document.getElementById('system-timeout'),
+  systemLogicalCPUs: document.getElementById('system-logical-cpus'),
+  systemGOMAXPROCS: document.getElementById('system-gomaxprocs'),
+  systemGoroutines: document.getElementById('system-goroutines'),
+  systemThreads: document.getElementById('system-threads'),
+  systemHandles: document.getElementById('system-handles'),
+  systemGCCycles: document.getElementById('system-gc-cycles'),
+  systemGCPause: document.getElementById('system-gc-pause'),
+  systemPID: document.getElementById('system-pid'),
+  systemMeasurementTruth: document.getElementById('system-measurement-truth'),
+  systemUnavailableFields: document.getElementById('system-unavailable-fields'),
+  systemMonitorWorkers: document.getElementById('system-monitor-workers'),
+  systemMonitorWorkersMeter: document.getElementById('system-monitor-workers-meter'),
+  systemMonitorWorkersNote: document.getElementById('system-monitor-workers-note'),
+  systemDiscoveryProbeWorkers: document.getElementById('system-discovery-probe-workers'),
+  systemDiscoveryProbeWorkersMeter: document.getElementById('system-discovery-probe-workers-meter'),
+  systemDiscoveryProbeWorkersNote: document.getElementById('system-discovery-probe-workers-note'),
+  systemDiscoveryDNSWorkers: document.getElementById('system-discovery-dns-workers'),
+  systemDiscoveryDNSWorkersMeter: document.getElementById('system-discovery-dns-workers-meter'),
+  systemDiscoveryDNSWorkersNote: document.getElementById('system-discovery-dns-workers-note'),
   contentScroll: document.querySelector('.content-scroll'),
   refreshButton: document.getElementById('refresh-button'),
   restartCollectorButton: document.getElementById('restart-collector-button'),
@@ -269,6 +314,8 @@ const elements = {
   settingsPanels: Array.from(document.querySelectorAll('[data-settings-panel]')),
   testHECButton: document.getElementById('test-hec-button'),
   testMetricsButton: document.getElementById('test-metrics-button'),
+  hecConfirmationSummary: document.getElementById('hec-confirmation-summary'),
+  metricsConfirmationSummary: document.getElementById('metrics-confirmation-summary'),
   reloadConfigButton: document.getElementById('reload-config-button'),
   resetConfigButton: document.getElementById('reset-config-button'),
   saveConfigButton: document.getElementById('save-config-button'),
@@ -379,6 +426,12 @@ const pageRoutes = {
     title: 'Discovery',
     description: 'Scan, review, classify, and stage discovered assets using explicit CMDB evidence.',
   },
+  '/system': {
+    section: 'system',
+    eyebrow: 'Runtime Observability',
+    title: 'System Dashboard',
+    description: 'Observed collector load, process memory, Go runtime pressure, and worker-pool utilization.',
+  },
   '/settings': {
     section: 'settings',
     settingsTab: 'runtime',
@@ -421,6 +474,7 @@ const legacyHashRoutes = {
   '#advisor': '/advisor',
   '#inventory': '/endpoints',
   '#discovery': '/discovery',
+  '#system': '/system',
   '#settings': '/settings',
 };
 
@@ -659,9 +713,12 @@ const settingsFieldHelp = {
   ),
   'cfg-discovery-concurrency': helpTopic(
     'Scheduled Discovery Concurrency',
-    'Caps how many target addresses the discovery script probes concurrently within one network.',
+    'Requests how many target addresses the native Go discovery worker pool probes concurrently within one network.',
     positiveIntegerFormat,
-    ['Higher values shorten scans but increase burst load on the collector and network. Scheduled target networks are processed one at a time.'],
+    [
+      'Use 256 or less. The Windows-safe native engine uses at most 256 ICMP workers and 128 DNS workers, and records both requested and effective counts in scan evidence.',
+      'Existing higher settings remain valid and are safely clamped rather than preventing the collector from starting. Scheduled target networks are processed one at a time.',
+    ],
   ),
   'cfg-diagnostics-enabled': helpTopic(
     'Enable Runtime Diagnostics Output',
@@ -953,6 +1010,42 @@ const settingsFieldHelp = {
 };
 
 const interfacePanelHelp = {
+  'Worker Utilization': panelHelp(
+    'Worker Utilization',
+    'Reports actual active work separately from configured pool capacity and the highest concurrency observed since this process started.',
+    [
+      'Monitoring configured is parallel_threads. Active counts workers currently probing an endpoint; idle worker goroutines are not counted as load.',
+      'Discovery probe and DNS pools exist only during the corresponding scan phase. Their hard ceilings prevent an oversized request from exhausting the host.',
+      'A low peak can be correct when dispatch pacing, a small endpoint set, fast replies, or few discovered hosts leave most capacity unused.',
+    ],
+  ),
+  'Memory Evidence': panelHelp(
+    'Memory Evidence',
+    'Separates physical host memory, the collector process working set and private commit, and memory managed by the Go runtime.',
+    [
+      'Working set is memory currently resident for this process; private memory is committed exclusively to it. Neither is interchangeable with Go heap allocated.',
+      'Go memory limit is an explicit runtime ceiling when configured. Unlimited means the Go runtime has no lower application cap and remains constrained by the operating system and host.',
+      'The dashboard never substitutes zero for a measurement the platform could not obtain.',
+    ],
+  ),
+  'Runtime Capacity': panelHelp(
+    'Runtime Capacity',
+    'Shows the current process shape alongside the active monitoring configuration.',
+    [
+      'Goroutines are lightweight Go tasks and are not operating-system threads.',
+      'GOMAXPROCS is the maximum number of CPU threads that can execute Go code simultaneously; it does not cap ICMP worker goroutines.',
+      'Configured probe counts and timeouts describe potential load. The Advisor remains the authoritative preflight for worst-case schedule feasibility.',
+    ],
+  ),
+  'Measurement Truth': panelHelp(
+    'Measurement Truth',
+    'Documents the age and availability of the current resource evidence so missing platform support cannot masquerade as a healthy zero.',
+    [
+      'CPU percentages require two samples; a fresh process may briefly show Warming up.',
+      'Collector CPU as host capacity is normalized across all logical CPUs. Core equivalent can exceed 100% when the process uses more than one logical CPU.',
+      'Resource samples are cached briefly so multiple dashboards do not create measurement-driven load.',
+    ],
+  ),
   'Interface Theme': panelHelp(
     'Interface Theme',
     'Applies a curated Ping Monitor palette through the same semantic theme contract used by the SNMP interface.',
@@ -1001,7 +1094,9 @@ const interfacePanelHelp = {
     'Discovery Controls',
     'Runs a bounded, operator-initiated IPv4 ICMP scan and stages responding addresses for review.',
     [
+      'Native Go discovery uses the same configured probe family as continuous monitoring and records the exact backend and latency semantics with each observation.',
       'Discovery records an observation, latency, and DNS evidence. No response is not proof that an asset does not exist.',
+      'A backend or measurement failure makes the scan indeterminate and blocks missing-device delta calculation instead of treating the failure as absence.',
       'Running a scan never changes endpoints.csv by itself.',
     ],
   ),
@@ -1188,9 +1283,12 @@ const interfaceFieldHelp = {
   ),
   'discovery-throttle-limit': helpTopic(
     'Manual Discovery Throttle',
-    'Caps concurrent address probes during a manual scan.',
+    'Requests concurrent address probes during a manual scan.',
     positiveIntegerFormat,
-    ['Increase carefully: higher concurrency finishes sooner but creates a larger local and network burst.'],
+    [
+      'Use 256 or less. The native engine enforces an effective ceiling of 256 ICMP workers and 128 DNS workers to bound Windows thread and handle pressure.',
+      'The scan records requested_concurrency, probe_workers, and dns_workers so the actual execution is auditable.',
+    ],
   ),
   'discovery-merge-mode': helpTopic(
     'Duplicate Handling',
@@ -1291,6 +1389,36 @@ function effectiveDeviceMode(endpoint) {
     return explicit;
   }
   return endpoint?.dev ? 'legacy_dev' : 'production';
+}
+
+function formatBytes(value, fallback = 'Unavailable') {
+  if (value === null || value === undefined || !Number.isFinite(Number(value)) || Number(value) < 0) {
+    return fallback;
+  }
+  const bytes = Number(value);
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let scaled = bytes;
+  let unit = 0;
+  while (scaled >= 1024 && unit < units.length - 1) {
+    scaled /= 1024;
+    unit += 1;
+  }
+  const digits = unit === 0 ? 0 : (scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2);
+  return `${scaled.toFixed(digits)} ${units[unit]}`;
+}
+
+function formatPercent(value, fallback = 'Warming up') {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return fallback;
+  }
+  return `${Number(value).toFixed(Number(value) >= 10 ? 1 : 2)}%`;
+}
+
+function formatCount(value, fallback = 'Unavailable') {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+    return fallback;
+  }
+  return Number(value).toLocaleString();
 }
 
 function effectiveDiscoveryReviewState(endpoint) {
@@ -1683,7 +1811,7 @@ function initializeSettingsHelp() {
     <div class="settings-help-surface">
       <div class="settings-help-header">
         <div class="settings-help-heading">
-          <p class="eyebrow">Settings Help</p>
+          <p class="eyebrow">Context Help</p>
           <h3 class="settings-help-title" data-help-title>Help</h3>
         </div>
         <button class="secondary-button settings-help-close" type="button" data-help-close>Close</button>
@@ -1735,11 +1863,11 @@ function initializeAdvancedSettings() {
   const groups = [
     {
       anchor: 'cfg-hec-enabled',
-      fields: ['cfg-hec-ssl-protocol', 'cfg-hec-batch-size', 'cfg-hec-max-buffer-events', 'cfg-hec-max-buffer-bytes', 'cfg-hec-retry-count', 'cfg-hec-retry-delay-ms', 'cfg-hec-ack-timeout', 'cfg-hec-ack-poll', 'cfg-hec-channel', 'cfg-hec-verify-ssl', 'cfg-hec-retry-enabled', 'cfg-hec-use-ack', 'cfg-hec-max-attempts', 'cfg-hec-base-delay-ms', 'cfg-hec-jitter-pct', 'cfg-hec-backoff'],
+      fields: ['cfg-hec-ssl-protocol', 'cfg-hec-batch-size', 'cfg-hec-max-buffer-events', 'cfg-hec-max-buffer-bytes', 'cfg-hec-retry-count', 'cfg-hec-retry-delay-ms', 'cfg-hec-ack-timeout', 'cfg-hec-ack-poll', 'cfg-hec-channel', 'cfg-hec-verify-ssl', 'cfg-hec-retry-enabled', 'cfg-hec-max-attempts', 'cfg-hec-base-delay-ms', 'cfg-hec-jitter-pct', 'cfg-hec-backoff'],
     },
     {
       anchor: 'cfg-metrics-enabled',
-      fields: ['cfg-metrics-ssl-protocol', 'cfg-metrics-sourcetype', 'cfg-metrics-event-name', 'cfg-metrics-batch-size', 'cfg-metrics-max-buffer-events', 'cfg-metrics-max-buffer-bytes', 'cfg-metrics-ack-timeout', 'cfg-metrics-ack-poll', 'cfg-metrics-channel', 'cfg-metrics-verify-ssl', 'cfg-metrics-compat-mode', 'cfg-metrics-use-metrics-index', 'cfg-metrics-use-ack'],
+      fields: ['cfg-metrics-ssl-protocol', 'cfg-metrics-sourcetype', 'cfg-metrics-event-name', 'cfg-metrics-batch-size', 'cfg-metrics-max-buffer-events', 'cfg-metrics-max-buffer-bytes', 'cfg-metrics-ack-timeout', 'cfg-metrics-ack-poll', 'cfg-metrics-channel', 'cfg-metrics-verify-ssl', 'cfg-metrics-compat-mode', 'cfg-metrics-use-metrics-index'],
     },
     {
       anchor: 'cfg-delivery-spool-path',
@@ -2150,6 +2278,9 @@ function renderRoute(pathname, historyMode = '') {
   if (elements.contentScroll) {
     elements.contentScroll.scrollTop = 0;
   }
+  if (route === '/system') {
+    refreshSystemMetrics(false);
+  }
 }
 
 function initializeRouting() {
@@ -2265,11 +2396,17 @@ function renderStatus() {
   }
 
   elements.runtimeDelivery.textContent = titleCase(deliveryState);
+  const deliveryConfirmation = delivery.confirmation_mode || 'unknown';
+  const deliverySuccessLabel = deliveryConfirmation === 'indexed_acknowledged'
+    ? 'Last indexed and acknowledged'
+    : (deliveryConfirmation === 'hec_accepted_only'
+      ? 'Last accepted by HEC (indexing not confirmed)'
+      : (deliveryConfirmation === 'mixed' ? 'Last mixed-confirmation delivery completed' : 'Last delivery completed'));
   elements.runtimeDeliveryNote.textContent = delivery.last_success_at
-    ? `Last success ${formatTimestamp(delivery.last_success_at)}.`
+    ? `${deliverySuccessLabel} ${formatTimestamp(delivery.last_success_at)}.`
     : (delivery.last_error || 'No completed delivery recorded yet.');
   elements.runtimePending.textContent = String(delivery.pending_envelopes || 0);
-  elements.runtimePendingNote.textContent = `${delivery.pending_bytes || 0} bytes waiting in the durable outbox.`;
+  elements.runtimePendingNote.textContent = `${delivery.pending_bytes || 0} bytes waiting in the durable outbox · ${titleCase(deliveryConfirmation)}.`;
 
   elements.configSourceLabel.textContent = restartRequired ? 'Restart Required' : 'Active Configuration';
   elements.configSourceCopy.textContent = restartRequired
@@ -2290,8 +2427,10 @@ function renderStatus() {
 
   elements.discoveryStatusLabel.textContent = state.status.discovery_available ? 'Discovery Ready' : 'Discovery Unavailable';
   elements.discoveryStatusCopy.textContent = state.status.discovery_available
-    ? (state.status.discovery_script_path || 'Using companion discovery workflow.')
-    : 'Discovery needs the companion workflow available in this deployment.';
+    ? (state.status.discovery_engine === 'native_go'
+      ? 'Native Go discovery uses the collector probe backend and structured DNS evidence.'
+      : `${state.status.discovery_script_path || 'External script'} · PowerShell compatibility mode`)
+    : 'The explicitly configured PowerShell compatibility script or pwsh runtime is unavailable.';
   elements.discoveryAvailability.textContent = state.status.discovery_available ? 'Discovery Available' : 'Discovery Not Available';
   elements.settingsSourceChip.textContent = `${formatLabel} · ${state.status.config_path}`;
 
@@ -2310,6 +2449,115 @@ function renderStatus() {
   } else {
     setMessage(elements.runtimeBanner, '', '');
   }
+}
+
+function renderWorkerPool(poolValue, fallbackConfigured, hardMaximum, valueElement, meterElement, noteElement) {
+  const pool = poolValue || {};
+  const configured = Math.max(0, Number(pool.configured ?? fallbackConfigured) || 0);
+  const active = Math.max(0, Number(pool.active) || 0);
+  const peak = Math.max(0, Number(pool.peak) || 0);
+  const meterMaximum = Math.max(1, configured || hardMaximum || 1);
+  const usage = Math.min(100, active / meterMaximum * 100);
+  valueElement.textContent = `${active.toLocaleString()} active / ${configured.toLocaleString()} configured`;
+  meterElement.setAttribute('aria-valuemax', String(meterMaximum));
+  meterElement.setAttribute('aria-valuenow', String(active));
+  meterElement.querySelector('span').style.width = `${usage}%`;
+  noteElement.textContent = hardMaximum
+    ? `Peak ${peak.toLocaleString()} since process start · native safety ceiling ${hardMaximum.toLocaleString()}.`
+    : `Peak ${peak.toLocaleString()} since process start · ${configured.toLocaleString()} configured.`;
+}
+
+function renderSystem() {
+  if (!state.system) {
+    return;
+  }
+  const resources = state.system.resources || {};
+  const process = resources.process || {};
+  const host = resources.host || {};
+  const goRuntime = resources.go_runtime || {};
+  const runtime = state.system.runtime || {};
+  const capacity = state.system.capacity || {};
+
+  elements.systemPlatformChip.textContent = `${titleCase(resources.platform)} · ${String(resources.architecture || 'unknown')} · PID ${formatCount(process.pid)}`;
+  elements.systemSampleChip.textContent = `Observed ${formatTimestamp(resources.observed_at)} · ${formatCount(resources.sample_age_ms, '0')} ms old`;
+
+  elements.systemHostCPU.textContent = formatPercent(host.cpu_percent);
+  elements.systemHostCPUNote.textContent = host.cpu_percent == null
+    ? 'CPU rates require two cached observations.'
+    : `Across ${formatCount(resources.logical_cpus)} logical CPUs.`;
+  elements.systemProcessCPU.textContent = formatPercent(process.cpu_host_capacity_percent);
+  elements.systemProcessCPUNote.textContent = process.cpu_core_equivalent_percent == null
+    ? 'CPU rates require two cached observations.'
+    : `${formatPercent(process.cpu_core_equivalent_percent)} of one logical CPU equivalent.`;
+  elements.systemProcessMemory.textContent = formatBytes(process.working_set_bytes);
+  elements.systemProcessMemoryNote.textContent = 'Resident process working set; not Go heap alone.';
+  elements.systemHostMemory.textContent = formatPercent(host.memory_used_percent, 'Unavailable');
+  elements.systemHostMemoryNote.textContent = host.total_memory_bytes == null
+    ? 'Physical memory counters are unavailable.'
+    : `${formatBytes(host.total_memory_bytes)} installed physical memory.`;
+
+  elements.systemHostAvailable.textContent = formatBytes(host.available_memory_bytes);
+  elements.systemHostUsed.textContent = host.total_memory_bytes == null || host.available_memory_bytes == null
+    ? 'Unavailable'
+    : formatBytes(Math.max(0, Number(host.total_memory_bytes) - Number(host.available_memory_bytes)));
+  elements.systemProcessPrivate.textContent = formatBytes(process.private_bytes);
+  elements.systemProcessCommitted.textContent = formatBytes(process.peak_working_set_bytes);
+  elements.systemGoHeap.textContent = formatBytes(goRuntime.heap_alloc_bytes);
+  elements.systemGoSys.textContent = formatBytes(goRuntime.total_sys_bytes);
+  elements.systemGoLimit.textContent = goRuntime.memory_limit_bytes == null
+    ? 'Unlimited (host constrained)'
+    : `${formatBytes(goRuntime.memory_limit_bytes)} · ${goRuntime.memory_limit_source || 'runtime configured'}`;
+  elements.systemGoNextGC.textContent = formatBytes(goRuntime.next_gc_bytes);
+
+  elements.systemActiveEndpoints.textContent = formatCount(capacity.active_endpoints);
+  elements.systemPingsPerCycle.textContent = formatCount(capacity.pings_per_cycle);
+  elements.systemCycleInterval.textContent = `${formatCount(capacity.cycle_interval_seconds)} s`;
+  elements.systemTimeout.textContent = `${formatCount(capacity.timeout_ms)} ms`;
+  elements.systemLogicalCPUs.textContent = formatCount(resources.logical_cpus);
+  elements.systemGOMAXPROCS.textContent = formatCount(goRuntime.gomaxprocs);
+  elements.systemGoroutines.textContent = formatCount(goRuntime.goroutines);
+  elements.systemThreads.textContent = formatCount(process.thread_count);
+  elements.systemHandles.textContent = formatCount(process.handle_count);
+  elements.systemGCCycles.textContent = formatCount(goRuntime.gc_cycles);
+  elements.systemGCPause.textContent = goRuntime.gc_last_pause_ms == null ? 'No completed GC' : `${Number(goRuntime.gc_last_pause_ms).toFixed(3)} ms`;
+  elements.systemPID.textContent = formatCount(process.pid);
+
+  renderWorkerPool(
+    runtime.monitoring_workers,
+    capacity.monitoring_workers_configured,
+    0,
+    elements.systemMonitorWorkers,
+    elements.systemMonitorWorkersMeter,
+    elements.systemMonitorWorkersNote,
+  );
+  renderWorkerPool(
+    runtime.discovery_probe_workers,
+    0,
+    capacity.discovery_probe_worker_maximum,
+    elements.systemDiscoveryProbeWorkers,
+    elements.systemDiscoveryProbeWorkersMeter,
+    elements.systemDiscoveryProbeWorkersNote,
+  );
+  renderWorkerPool(
+    runtime.discovery_dns_workers,
+    0,
+    capacity.discovery_dns_worker_maximum,
+    elements.systemDiscoveryDNSWorkers,
+    elements.systemDiscoveryDNSWorkersMeter,
+    elements.systemDiscoveryDNSWorkersNote,
+  );
+
+  elements.systemMeasurementTruth.textContent = `Resource data is an observed ${titleCase(resources.platform)} process sample cached for two seconds. Missing OS counters remain unavailable rather than being reported as zero. Monitoring state is process-local and resets when the service process restarts.`;
+  elements.systemUnavailableFields.replaceChildren();
+  const unavailable = Array.isArray(resources.unavailable_fields) ? resources.unavailable_fields : [];
+  const messages = unavailable.length > 0
+    ? unavailable
+    : ['All resource counters supported by this platform were available in the current sample.'];
+  messages.forEach((message) => {
+    const item = document.createElement('li');
+    item.textContent = message;
+    elements.systemUnavailableFields.appendChild(item);
+  });
 }
 
 function renderSummary() {
@@ -2557,7 +2805,11 @@ function renderDiscovery() {
         <td><span class="mode-badge ${endpoint.alerting_enabled === false ? 'dev' : 'production'}">${endpoint.alerting_enabled === false ? 'Disabled' : 'Enabled'}</span></td>
         <td>${endpoint.dynamic_address ? 'DHCP / Dynamic' : 'Static'}</td>
         <td>${escapeHtml(endpoint.dns_status || 'unresolved')}</td>
-        <td>${endpoint.discovery_latency_ms == null ? '-' : `${escapeHtml(endpoint.discovery_latency_ms)} ms`}</td>
+        <td title="${escapeHtml(endpoint.discovery_probe_backend || '')}">${endpoint.discovery_latency_ms == null
+          ? (endpoint.discovery_latency_censored && endpoint.discovery_latency_upper_bound_ms != null
+            ? `&lt;${escapeHtml(endpoint.discovery_latency_upper_bound_ms)} ms`
+            : '-')
+          : `${escapeHtml(endpoint.discovery_latency_ms)} ms`}</td>
       </tr>
     `;
   }).join('');
@@ -2944,6 +3196,7 @@ function loadConfigForm(cfg, secrets = {}) {
   elements.settingsFields.deliveryMaxBytes.value = delivery.max_spool_bytes || '512MB';
   elements.settingsFields.deliveryMaxEnvelopes.value = delivery.max_envelopes ?? 10000;
   elements.settingsFields.deliveryDrainMax.value = delivery.drain_max_envelopes ?? 100;
+  renderConfirmationControls();
 }
 
 function readConfigForm() {
@@ -3194,6 +3447,9 @@ function renderOutputTestDetails(result) {
     `HTTP Status: ${result.status_code || 'n/a'}`,
     `Duration (ms): ${result.duration_ms}`,
     `Success: ${result.success ? 'true' : 'false'}`,
+    `Confirmation: ${titleCase(result.confirmation || 'unknown')}`,
+    `Indexer ACK requested: ${result.ack_requested ? 'yes' : 'no'}`,
+    `Indexer ACK confirmed: ${result.acknowledged ? 'yes' : 'no'}`,
   ];
   if (warnings) {
     details.push('', 'Warnings:', warnings);
@@ -3203,6 +3459,30 @@ function renderOutputTestDetails(result) {
   }
   elements.outputTestDetails.textContent = details.join('\n');
   elements.outputTestDetails.classList.remove('hidden');
+}
+
+function outputTestLabels(target) {
+  const ackRequired = target === 'hec'
+    ? elements.settingsFields.hecUseACK.checked
+    : elements.settingsFields.metricsUseACK.checked;
+  const kind = target === 'hec' ? 'Event' : 'Metrics';
+  return {
+    idle: ackRequired ? `Test ${kind} HEC + ACK` : `Test ${kind} HEC Acceptance`,
+    active: ackRequired ? `Testing ${kind} HEC + ACK...` : `Testing ${kind} HEC Acceptance...`,
+  };
+}
+
+function renderConfirmationControls() {
+  const eventACK = elements.settingsFields.hecUseACK.checked;
+  const metricsACK = elements.settingsFields.metricsUseACK.checked;
+  elements.hecConfirmationSummary.textContent = eventACK
+    ? 'Indexer ACK required. Success means Splunk confirmed that the event reached its indexing pipeline.'
+    : 'HEC acceptance only. An HTTP success does not prove that Splunk indexed the event.';
+  elements.metricsConfirmationSummary.textContent = metricsACK
+    ? 'Indexer ACK required. Success means Splunk confirmed that the metric reached its indexing pipeline.'
+    : 'HEC acceptance only. An HTTP success does not prove that Splunk indexed the metric.';
+  elements.testHECButton.textContent = outputTestLabels('hec').idle;
+  elements.testMetricsButton.textContent = outputTestLabels('metrics').idle;
 }
 
 function scheduleMarkup(plan) {
@@ -3382,13 +3662,15 @@ async function reloadAllData(showSuccess = false, reloadAppearance = false) {
   elements.refreshButton.textContent = 'Reloading...';
   const appearanceReload = reloadAppearance ? loadUIPreferences(showSuccess) : Promise.resolve();
   try {
-    const [status, endpointsPayload, configPayload] = await Promise.all([
+    const [status, endpointsPayload, configPayload, systemPayload] = await Promise.all([
       fetchJson('/api/status'),
       fetchJson('/api/endpoints'),
       fetchJson('/api/config'),
+      fetchJson('/api/system'),
     ]);
 
     state.status = status;
+    state.system = systemPayload;
     state.endpoints = normalizeEndpoints(endpointsPayload.items || []);
     state.savedEndpoints = deepClone(state.endpoints);
     state.endpointsRevision = endpointsPayload.revision || '';
@@ -3432,6 +3714,8 @@ async function reloadAllData(showSuccess = false, reloadAppearance = false) {
 
 function renderAll() {
   renderStatus();
+  renderSystem();
+  renderConfirmationControls();
   renderSummary();
   renderEndpointTable();
   renderEndpointEditor();
@@ -3542,10 +3826,35 @@ async function refreshRuntimeStatus() {
   try {
     state.status = await fetchJson('/api/status');
     renderStatus();
+    if (state.activeRoute === '/system') {
+      await refreshSystemMetrics(false);
+    }
   } catch (error) {
     setMessage(elements.runtimeBanner, 'error', error instanceof Error ? error.message : 'Unable to refresh collector status.');
   } finally {
     state.runtimeRefreshPending = false;
+  }
+}
+
+async function refreshSystemMetrics(showSuccess = false) {
+  if (state.systemRefreshPending) {
+    return;
+  }
+  state.systemRefreshPending = true;
+  elements.refreshSystemButton.disabled = true;
+  elements.refreshSystemButton.textContent = 'Refreshing...';
+  try {
+    state.system = await fetchJson('/api/system');
+    renderSystem();
+    if (showSuccess) {
+      setMessage(elements.systemBanner, 'success', 'Resource evidence refreshed from the collector process.');
+    }
+  } catch (error) {
+    setMessage(elements.systemBanner, 'error', error instanceof Error ? error.message : 'Unable to refresh system metrics.');
+  } finally {
+    state.systemRefreshPending = false;
+    elements.refreshSystemButton.disabled = false;
+    elements.refreshSystemButton.textContent = 'Refresh Metrics';
   }
 }
 
@@ -3752,10 +4061,9 @@ async function saveConfig() {
 
 async function testOutput(target) {
   const button = target === 'hec' ? elements.testHECButton : elements.testMetricsButton;
-  const idleLabel = target === 'hec' ? 'Test Event HEC' : 'Test Metrics HEC';
-  const activeLabel = target === 'hec' ? 'Testing Event HEC...' : 'Testing Metrics HEC...';
+	const labels = outputTestLabels(target);
   button.disabled = true;
-  button.textContent = activeLabel;
+	button.textContent = labels.active;
   try {
     const payload = await postJson('/api/output/test', {
       target,
@@ -3768,7 +4076,7 @@ async function testOutput(target) {
     setMessage(elements.settingsBanner, 'error', error instanceof Error ? error.message : 'Unable to test output settings.');
   } finally {
     button.disabled = false;
-    button.textContent = idleLabel;
+	button.textContent = labels.idle;
   }
 }
 
@@ -4021,6 +4329,12 @@ function mergeEndpointRecords(existingEndpoint, incomingEndpoint, mode) {
     'discovery_scan_id',
     'discovery_source',
     'discovery_latency_ms',
+    'discovery_probe_backend',
+    'discovery_latency_source',
+    'discovery_latency_resolution_ms',
+    'discovery_latency_censored',
+    'discovery_latency_upper_bound_ms',
+    'discovery_probe_elapsed_ms',
     'subnet_id',
     'subnet_name',
     'subnet_vlan',
@@ -4279,6 +4593,7 @@ elements.refreshButton.addEventListener('click', () => {
     reloadAllData(true, true);
   }
 });
+elements.refreshSystemButton.addEventListener('click', () => refreshSystemMetrics(true));
 elements.restartCollectorButton.addEventListener('click', restartCollector);
 
 elements.advisorAnalyzeButton.addEventListener('click', () => loadAdvisor(true));
@@ -4626,6 +4941,7 @@ elements.settingsForm.addEventListener('input', (event) => {
     }
   }
   state.configDirty = true;
+  renderConfirmationControls();
   renderConfigButtons();
   renderStatus();
 });
@@ -4634,6 +4950,7 @@ elements.settingsForm.addEventListener('change', (event) => {
     return;
   }
   state.configDirty = true;
+  renderConfirmationControls();
   renderConfigButtons();
   renderStatus();
 });

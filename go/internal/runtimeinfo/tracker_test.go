@@ -50,3 +50,26 @@ func TestTrackerRecordsControlledRestart(t *testing.T) {
 		t.Fatalf("failed restart snapshot = %#v", failed)
 	}
 }
+
+func TestTrackerRecordsWorkerUtilizationAndPeak(t *testing.T) {
+	tracker := New("monitor", "cfg-a", "end-a", 2)
+	tracker.ConfigureMonitoringWorkers(8)
+	tracker.MonitoringWorkerStarted()
+	tracker.MonitoringWorkerStarted()
+	tracker.MonitoringWorkerFinished()
+	tracker.ConfigureDiscoveryProbeWorkers(32)
+	tracker.DiscoveryProbeWorkerStarted()
+	tracker.DiscoveryProbeWorkerFinished()
+	tracker.ConfigureDiscoveryDNSWorkers(12)
+
+	snapshot := tracker.Snapshot()
+	if snapshot.MonitoringWorkers.Configured != 8 || snapshot.MonitoringWorkers.Active != 1 || snapshot.MonitoringWorkers.Peak != 2 {
+		t.Fatalf("monitoring workers = %#v", snapshot.MonitoringWorkers)
+	}
+	if snapshot.DiscoveryProbeWorkers.Configured != 32 || snapshot.DiscoveryProbeWorkers.Active != 0 || snapshot.DiscoveryProbeWorkers.Peak != 1 {
+		t.Fatalf("discovery probe workers = %#v", snapshot.DiscoveryProbeWorkers)
+	}
+	if snapshot.DiscoveryDNSWorkers.Configured != 12 || snapshot.DiscoveryDNSWorkers.Active != 0 {
+		t.Fatalf("discovery DNS workers = %#v", snapshot.DiscoveryDNSWorkers)
+	}
+}

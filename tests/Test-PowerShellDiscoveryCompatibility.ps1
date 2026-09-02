@@ -6,7 +6,9 @@ param(
     [string]$BinaryPath,
 
     [ValidateRange(1024, 65535)]
-    [int]$UIPort = 18082
+    [int]$UIPort = 18086,
+
+    [string]$ExpectedVersion = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,7 +17,7 @@ Set-StrictMode -Version Latest
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedBinary = (Resolve-Path -LiteralPath $BinaryPath).Path
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$testRoot = Join-Path $tempRoot "PingMonitorEmbeddedDiscovery-$([Guid]::NewGuid().ToString('N'))"
+$testRoot = Join-Path $tempRoot "PingMonitorPowerShellDiscovery-$([Guid]::NewGuid().ToString('N'))"
 $process = $null
 
 try {
@@ -26,17 +28,13 @@ try {
     [IO.Directory]::CreateDirectory($testRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $repoRoot 'config.example.json') -Destination (Join-Path $testRoot 'config.json')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'endpoints.example.csv') -Destination (Join-Path $testRoot 'endpoints.csv')
-    [IO.File]::WriteAllText(
-        (Join-Path $testRoot 'DiscoverEndpoints.ps1'),
-        "# Version: 2.5.2`r`nthrow 'No active network adapter with a default gateway found'`r`n",
-        [Text.UTF8Encoding]::new($false)
-    )
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'DiscoverEndpoints.ps1') -Destination (Join-Path $testRoot 'DiscoverEndpoints.ps1')
 
     $stdoutPath = Join-Path $testRoot 'runtime_stdout.log'
     $stderrPath = Join-Path $testRoot 'runtime_stderr.log'
     $process = Start-Process `
         -FilePath $resolvedBinary `
-        -ArgumentList @('-ui-only', '-ui-listen', "127.0.0.1:$UIPort", '-config', 'config.json', '-endpoints', 'endpoints.csv') `
+        -ArgumentList @('-ui-only', '-ui-listen', "127.0.0.1:$UIPort", '-config', 'config.json', '-endpoints', 'endpoints.csv', '-discovery-script', 'DiscoverEndpoints.ps1') `
         -WorkingDirectory $testRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput $stdoutPath `
@@ -47,7 +45,7 @@ try {
     for ($attempt = 0; $attempt -lt 40; $attempt++) {
         if ($process.HasExited) {
             $stderr = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
-            throw "Hotfix runtime exited before becoming ready: $stderr"
+            throw "PowerShell compatibility runtime exited before becoming ready: $stderr"
         }
         try {
             $status = Invoke-RestMethod -Uri "http://127.0.0.1:$UIPort/api/status" -TimeoutSec 2
@@ -58,13 +56,13 @@ try {
         }
     }
     if ($null -eq $status) {
-        throw "Hotfix runtime did not become ready on port $UIPort"
+        throw "PowerShell compatibility runtime did not become ready on port $UIPort"
     }
-    if ($status.version -ne 'v5.11.2') {
-        throw "Expected runtime v5.11.2, got '$($status.version)'"
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedVersion) -and $status.version -ne $ExpectedVersion) {
+        throw "Expected runtime $ExpectedVersion, got '$($status.version)'"
     }
-    if ($status.discovery_script_path -ne 'embedded:DiscoverEndpoints.ps1') {
-        throw "Expected the embedded discovery script, got '$($status.discovery_script_path)'"
+    if ($status.discovery_engine -ne 'powershell_compat' -or -not $status.discovery_available) {
+        throw "Expected available powershell_compat discovery, got $($status | ConvertTo-Json -Compress)"
     }
 
     $body = @{
@@ -80,14 +78,11 @@ try {
         -Body $body `
         -TimeoutSec 30
 
-    if (@($result.items).Count -lt 1) {
-        throw 'Embedded discovery returned no loopback observations'
-    }
-    if ([string]$result.logs -notmatch 'Skipping local adapter detection because an explicit discovery target was supplied') {
-        throw 'Embedded discovery logs do not prove that explicit-target adapter detection was bypassed'
+    if (@($result.items).Count -lt 1 -or $result.evidence.engine -ne 'powershell_compat') {
+        throw "PowerShell compatibility discovery did not return expected evidence: $($result | ConvertTo-Json -Depth 4 -Compress)"
     }
 
-    Write-Host "Embedded discovery hotfix passed: version=$($status.version), target=$($result.target), observations=$(@($result.items).Count)." -ForegroundColor Green
+    Write-Host "PowerShell discovery compatibility passed: version=$($status.version), observations=$(@($result.items).Count)." -ForegroundColor Green
 }
 finally {
     if ($null -ne $process -and -not $process.HasExited) {
@@ -97,7 +92,7 @@ finally {
 
     $resolvedTestRoot = [IO.Path]::GetFullPath($testRoot)
     if ($resolvedTestRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase) -and
-        [IO.Path]::GetFileName($resolvedTestRoot).StartsWith('PingMonitorEmbeddedDiscovery-', [StringComparison]::Ordinal)) {
+        [IO.Path]::GetFileName($resolvedTestRoot).StartsWith('PingMonitorPowerShellDiscovery-', [StringComparison]::Ordinal)) {
         Remove-Item -LiteralPath $resolvedTestRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 }

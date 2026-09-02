@@ -74,6 +74,11 @@ func buildPayload(sum models.SummaryEvent, cfg config.Metrics, hostname string) 
 	}
 
 	fields := map[string]interface{}{
+		// Metric aggregation timestamps such as _time are bucket boundaries, not
+		// necessarily the time of the observation selected by latest(). Emit the
+		// collector timestamp as a metric value so Splunk can make exact freshness
+		// decisions without mistaking a live endpoint for a stale one.
+		"metric_name:ping.observed_at_epoch":   unix,
 		"metric_name:ping.pings_sent":          sum.PingsSent,
 		"metric_name:ping.pings_successful":    sum.PingsSuccessful,
 		"metric_name:ping.measurement_valid":   boolMetric(sum.MeasurementValid),
