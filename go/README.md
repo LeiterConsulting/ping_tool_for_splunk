@@ -1,12 +1,12 @@
 # Ping Monitor v5 (Go)
 
-Ping Monitor v5.11.1 is the current Go runtime. It retains the v5.11 discovery and CMDB workflow while correcting explicit-target and automatic local-adapter selection on hosts without a conventionally exposed IPv4 default gateway.
+Ping Monitor v5.11.2 is the current Go runtime. It retains the v5.11 discovery and CMDB workflow, makes the version-matched embedded discovery script authoritative by default, and prevents a stale adjacent script from silently overriding collector hotfixes.
 
 ## Current Go Release
 
-- Version: `v5.11.1`
+- Version: `v5.11.2`
 - Primary runtime status: current and recommended
-- Top-level release notes: [../RELEASE_NOTES_v5.11.1.md](../RELEASE_NOTES_v5.11.1.md)
+- Top-level release notes: [../RELEASE_NOTES_v5.11.2.md](../RELEASE_NOTES_v5.11.2.md)
 - Historical runtime notes: [../past_versions.md](../past_versions.md)
 
 ## What The Go Runtime Includes
@@ -57,6 +57,7 @@ With the default file names, the binary prefers `config.psd1` and `endpoints.csv
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
+| `--discovery-script` | Explicitly use a custom external discovery script; the embedded version-matched script is authoritative when omitted |
 | `--ui-listen` | Bind address for the local admin UI |
 | `--ui-only` | Serve the local admin UI without starting the monitor engine |
 | `--validate` | Validate config, endpoints, and worst-case scheduler capacity without probing |
@@ -206,7 +207,7 @@ ping = @{
 
 Build all current Go release targets:
 
-- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.1`
+- PowerShell: `pwsh -File .\go\build.ps1 -Version v5.11.2`
 - Bash: `./go/build.sh dist`
 
 Current default targets:

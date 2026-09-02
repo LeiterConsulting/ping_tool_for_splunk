@@ -25,7 +25,7 @@ Reinstalling the Windows service does not repair this condition. The failing com
 
 ## Goal
 
-Use Ping Monitor v5.11.1 or newer so explicit targets bypass local adapter detection and automatic discovery selects an interface from truthful Windows route evidence without guessing when multiple choices are equally plausible.
+Use Ping Monitor v5.11.2 or newer so explicit targets bypass local adapter detection, automatic discovery selects an interface from truthful Windows route evidence, and a stale adjacent script cannot silently shadow the corrected embedded workflow.
 
 ## Identify the installed versions
 
@@ -41,18 +41,20 @@ Check the companion script header:
 Select-String -LiteralPath ./DiscoverEndpoints.ps1 -Pattern 'Version:'
 ```
 
-The corrected discovery script reports version `2.5.3`. A v5.11.0 executable or script version 2.5.2 is affected.
+The corrected discovery script reports version `2.5.3`. A v5.11.0 executable or script version 2.5.2 is affected. A v5.11.1 executable can still show the old line 86 error when an adjacent version 2.5.2 script takes precedence; the UI version identifies the executable, not the selected external script.
 
 ## Upgrade safely
 
-1. Download the v5.11.1 Windows ZIP from the tagged GitHub release.
-2. Verify it against `SHA256SUMS_v5.11.1.txt`.
+1. Download the v5.11.2 Windows ZIP from the tagged GitHub release.
+2. Verify it against `SHA256SUMS_v5.11.2.txt`.
 3. Stop the collector or service.
 4. Replace `pingmonitor.exe` and any standalone `DiscoverEndpoints.ps1` in the deployment directory.
 5. Preserve `config.psd1` or `config.json`, `endpoints.csv`, `ui_preferences.json`, and the discovery data directory.
-6. Start the collector and confirm `/api/status` reports v5.11.1.
+6. Start the collector and confirm `/api/status` reports v5.11.2 and `discovery_script_path` reports `embedded:DiscoverEndpoints.ps1`.
 
-The collector resolves its discovery-script location at startup. If a standalone script exists beside the executable, configuration, or endpoints file, it takes precedence over the embedded fallback. Replace that file as well as the executable, then restart the collector. A service reinstall is unnecessary when deployment paths and service arguments are unchanged.
+In v5.11.2 and newer, the version-matched embedded script is authoritative by default. A standalone adjacent script is used by the collector only when its path is deliberately supplied with `--discovery-script`. This prevents an old file from silently overriding a binary hotfix. A service reinstall is unnecessary when deployment paths and service arguments are unchanged.
+
+For immediate recovery while still on v5.11.1, replace the adjacent `DiscoverEndpoints.ps1` with version 2.5.3 or rename/remove it and restart the collector so the embedded copy is selected.
 
 Direct command-line users can replace only `DiscoverEndpoints.ps1` for immediate recovery, but should align the executable and script at the next maintenance opportunity.
 
@@ -76,7 +78,7 @@ The scan may find no responsive hosts if the example network is not routed in th
 
 ## Understand automatic local selection
 
-When `-TargetNetwork` is omitted, v5.11.1:
+When `-TargetNetwork` is omitted, the corrected discovery workflow:
 
 1. considers only Up adapters with usable non-loopback, non-APIPA IPv4 addresses;
 2. correlates them with active IPv4 default routes;
@@ -105,8 +107,9 @@ Internal IP addresses and interface names may be sensitive. Redact them accordin
 
 ## Success criteria
 
-- `pingmonitor.exe --version` reports v5.11.1 or newer.
+- `pingmonitor.exe --version` reports v5.11.2 or newer.
 - The standalone script, if present, reports version 2.5.3 or newer.
+- `/api/status` reports `embedded:DiscoverEndpoints.ps1` unless a custom external script was deliberately configured.
 - Explicit targets start without local adapter detection.
 - Automatic local discovery either selects a route with a stated reason or stops with actionable ambiguity evidence.
 - Discovery produces review-only output without modifying `endpoints.csv` until an operator explicitly stages and saves approved results.

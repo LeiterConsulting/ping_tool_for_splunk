@@ -719,7 +719,7 @@ func TestConfigAPI_RejectsStaleRevision(t *testing.T) {
 	}
 }
 
-func TestStatusAPI_ResolvesDiscoveryScriptAdjacentToConfig(t *testing.T) {
+func TestStatusAPI_UsesExplicitDiscoveryScript(t *testing.T) {
 	tempDir := t.TempDir()
 	rootDir := filepath.Join(tempDir, "bin")
 	if err := os.MkdirAll(rootDir, 0o755); err != nil {
@@ -738,7 +738,10 @@ func TestStatusAPI_ResolvesDiscoveryScriptAdjacentToConfig(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: rootDir, Version: "test"})
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: rootDir,
+		DiscoveryScriptPath: discoveryPath, Version: "test",
+	})
 	if err != nil {
 		t.Fatalf("newHandler() error = %v", err)
 	}
@@ -760,6 +763,70 @@ func TestStatusAPI_ResolvesDiscoveryScriptAdjacentToConfig(t *testing.T) {
 	}
 	if payload.DiscoveryScriptPath != discoveryPath {
 		t.Fatalf("discovery_script_path = %q, want %q", payload.DiscoveryScriptPath, discoveryPath)
+	}
+}
+
+func TestStatusAPI_DefaultsToEmbeddedWhenAdjacentScriptExists(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	discoveryPath := filepath.Join(tempDir, "DiscoverEndpoints.ps1")
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, config.Defaults(tempDir)); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.WriteFile(discoveryPath, []byte("throw \"stale adjacent discovery script\"\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	handler, err := newHandler(Options{ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir, Version: "test"})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	var payload statusResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if !payload.DiscoveryAvailable || payload.DiscoveryScriptPath != embeddedDiscoveryScriptPath {
+		t.Fatalf("unexpected discovery status: available=%v path=%q", payload.DiscoveryAvailable, payload.DiscoveryScriptPath)
+	}
+}
+
+func TestStatusAPI_MissingExplicitDiscoveryScriptDoesNotFallback(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "config.psd1")
+	endpointsPath := filepath.Join(tempDir, "endpoints.csv")
+	missingPath := filepath.Join(tempDir, "missing-discovery.ps1")
+	if _, err := config.SaveConfig(context.Background(), configPath, tempDir, config.Defaults(tempDir)); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if err := os.WriteFile(endpointsPath, []byte("ip,hostname\n10.0.0.1,host-a\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	handler, err := newHandler(Options{
+		ConfigPath: configPath, EndpointsPath: endpointsPath, RootDir: tempDir,
+		DiscoveryScriptPath: missingPath, Version: "test",
+	})
+	if err != nil {
+		t.Fatalf("newHandler() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	var payload statusResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if payload.DiscoveryAvailable || payload.DiscoveryScriptPath != missingPath {
+		t.Fatalf("unexpected discovery status: available=%v path=%q", payload.DiscoveryAvailable, payload.DiscoveryScriptPath)
 	}
 }
 

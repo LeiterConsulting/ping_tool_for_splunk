@@ -4,11 +4,15 @@ Enterprise-grade network availability monitoring for Splunk with a primary Go ru
 
 ## Current Release
 
-- Go runtime: `v5.11.1`
+- Go runtime: `v5.11.2`
 - Splunk app: `3.2.0` build `44`
-- Current runtime release notes: [RELEASE_NOTES_v5.11.1.md](RELEASE_NOTES_v5.11.1.md)
+- Current runtime release notes: [RELEASE_NOTES_v5.11.2.md](RELEASE_NOTES_v5.11.2.md)
 - Current Splunk app release notes: [RELEASE_NOTES_splunk_app_3.2.0.md](RELEASE_NOTES_splunk_app_3.2.0.md)
 - Historical version details: [past_versions.md](past_versions.md)
+
+## v5.11.2 Hotfix Highlights
+
+Version 5.11.2 makes the discovery script embedded in the executable authoritative by default. A stale `DiscoverEndpoints.ps1` left beside an upgraded executable can no longer silently shadow the corrected embedded workflow. Advanced operators can still opt into a custom external script with `--discovery-script`; missing explicit overrides fail visibly instead of falling back.
 
 ## v5.11.1 Hotfix Highlights
 
@@ -22,7 +26,7 @@ Version 5.11.0 adds explicit Production/Maintenance/Legacy Dev modes, independen
 
 | Runtime | Status | Platforms | Config |
 |---------|--------|-----------|--------|
-| Go v5.11.1 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
+| Go v5.11.2 | Primary runtime | Windows, Linux, macOS | versioned `config.json` for new deployments; existing PSD1/JSON/YAML files remain supported |
 | `ping_monitor.sh` v2.0.0 | Supported alternate Unix runtime | POSIX shell environments | `config.conf` |
 
 The top-level README now describes the current published release only. Older PowerShell generations, earlier Go milestones, and archived changelog entries live in [past_versions.md](past_versions.md).
@@ -75,6 +79,7 @@ Open `http://<collector-address>:8080` to manage the live deployment.
 | `--run-once` | Run a single cycle and exit |
 | `--max-cycles` | Stop after a fixed number of cycles |
 | `--ping-mode` | Override `ping.mode` with `auto`, `raw`, or `exec` |
+| `--discovery-script` | Explicitly opt into a custom external discovery script; otherwise the version-matched embedded script is used |
 | `--version` | Print the runtime version |
 
 ### Configuration Advisor

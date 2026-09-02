@@ -26,6 +26,11 @@ try {
     [IO.Directory]::CreateDirectory($testRoot) | Out-Null
     Copy-Item -LiteralPath (Join-Path $repoRoot 'config.example.json') -Destination (Join-Path $testRoot 'config.json')
     Copy-Item -LiteralPath (Join-Path $repoRoot 'endpoints.example.csv') -Destination (Join-Path $testRoot 'endpoints.csv')
+    [IO.File]::WriteAllText(
+        (Join-Path $testRoot 'DiscoverEndpoints.ps1'),
+        "# Version: 2.5.2`r`nthrow 'No active network adapter with a default gateway found'`r`n",
+        [Text.UTF8Encoding]::new($false)
+    )
 
     $stdoutPath = Join-Path $testRoot 'runtime_stdout.log'
     $stderrPath = Join-Path $testRoot 'runtime_stderr.log'
@@ -55,8 +60,8 @@ try {
     if ($null -eq $status) {
         throw "Hotfix runtime did not become ready on port $UIPort"
     }
-    if ($status.version -ne 'v5.11.1') {
-        throw "Expected runtime v5.11.1, got '$($status.version)'"
+    if ($status.version -ne 'v5.11.2') {
+        throw "Expected runtime v5.11.2, got '$($status.version)'"
     }
     if ($status.discovery_script_path -ne 'embedded:DiscoverEndpoints.ps1') {
         throw "Expected the embedded discovery script, got '$($status.discovery_script_path)'"

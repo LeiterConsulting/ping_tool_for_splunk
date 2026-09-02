@@ -2,12 +2,13 @@
 
 This file archives the historical runtime notes, older release summaries, and changelog entries that were previously mixed into the top-level README.
 
-For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.11.1.md](RELEASE_NOTES_v5.11.1.md).
+For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.11.2.md](RELEASE_NOTES_v5.11.2.md).
 
 ## Historical Runtime Summary
 
 | Runtime | Version | Status | Notes |
 |---------|---------|--------|-------|
+| Ping Monitor v5 (Go) | `v5.11.1` | Superseded by `v5.11.2` | Route-aware discovery selection and explicit-target gateway bypass |
 | Ping Monitor v5 (Go) | `v5.11.0` | Superseded by `v5.11.1` | Discovery review, DHCP-safe identity, naming conventions, and multi-page administration |
 | Ping Monitor v5 (Go) | `v5.10.0` | Superseded by `v5.11.0` | Scheduled discovery and CMDB workflow foundations |
 | Ping Monitor v5 (Go) | `v5.9.0` | Superseded by `v5.10.0` | Structured configuration, discovery export, DNS evidence, and log rotation |
@@ -26,6 +27,7 @@ For the current release, use [README.md](README.md) and [RELEASE_NOTES_v5.11.1.m
 
 ## Archived Release Notes
 
+- [RELEASE_NOTES_v5.11.1.md](RELEASE_NOTES_v5.11.1.md)
 - [RELEASE_NOTES_v5.11.0.md](RELEASE_NOTES_v5.11.0.md)
 - [RELEASE_NOTES_v5.10.0.md](RELEASE_NOTES_v5.10.0.md)
 - [RELEASE_NOTES_v5.9.0.md](RELEASE_NOTES_v5.9.0.md)

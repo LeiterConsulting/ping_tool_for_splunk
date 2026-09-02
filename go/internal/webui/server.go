@@ -455,16 +455,17 @@ func newAPIServer(opts Options) *apiServer {
 
 func resolveDiscoveryScriptPath(opts Options) string {
 	if opts.DiscoveryScriptPath != "" {
-		candidate := cleanPathForStatus(opts.DiscoveryScriptPath)
-		if discoveryScriptAvailable(candidate) {
-			return candidate
-		}
-		if hasEmbeddedDiscoveryScript() {
-			return embeddedDiscoveryScriptPath
-		}
-		return candidate
+		return cleanPathForStatus(opts.DiscoveryScriptPath)
 	}
 
+	// The embedded script is versioned with the binary and is the authoritative
+	// default. Automatically preferring an adjacent script lets a stale file
+	// silently shadow a collector hotfix after an executable-only upgrade.
+	if hasEmbeddedDiscoveryScript() {
+		return embeddedDiscoveryScriptPath
+	}
+
+	// This fallback only applies to builds where the embedded asset is absent.
 	candidates := []string{
 		filepath.Join(opts.RootDir, "DiscoverEndpoints.ps1"),
 		filepath.Join(filepath.Dir(opts.ConfigPath), "DiscoverEndpoints.ps1"),
@@ -480,10 +481,6 @@ func resolveDiscoveryScriptPath(opts Options) string {
 		if discoveryScriptAvailable(cleaned) {
 			return cleanPathForStatus(cleaned)
 		}
-	}
-
-	if hasEmbeddedDiscoveryScript() {
-		return embeddedDiscoveryScriptPath
 	}
 
 	return cleanPathForStatus(candidates[0])

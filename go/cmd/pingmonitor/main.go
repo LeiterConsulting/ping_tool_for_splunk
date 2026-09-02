@@ -43,6 +43,7 @@ func main() {
 		runOnce       = flag.Bool("run-once", false, "Run a single cycle and exit")
 		maxCycles     = flag.Int("max-cycles", 0, "Maximum cycles to run (0 = unlimited)")
 		pingMode      = flag.String("ping-mode", "", "Ping mode: auto|raw|exec (empty = use config)")
+		discoveryPath = flag.String("discovery-script", "", "Optional explicit path to a custom DiscoverEndpoints.ps1; the version-matched embedded script is used by default")
 		uiListen      = flag.String("ui-listen", "", "Listen address for optional web UI (for example 0.0.0.0:8080)")
 		uiOnly        = flag.Bool("ui-only", false, "Serve the web UI without starting the monitoring engine (requires -ui-listen)")
 		validateOnly  = flag.Bool("validate", false, "Validate config, endpoints, and scheduler capacity, then exit without probing")
@@ -135,7 +136,8 @@ func main() {
 		if err := webui.Start(ctx, webui.Options{
 			ListenAddr: *uiListen, ConfigPath: resolvedConfigPath, EndpointsPath: resolvedEndpointsPath,
 			RootDir: root, Version: buildinfo.Version, CollectorID: collectorID, CollectorHost: collectorHost,
-			Runtime: runtimeTracker, EffectiveConfig: &cfg, EmitDiscoveryEvents: outputs.Emit,
+			DiscoveryScriptPath: *discoveryPath,
+			Runtime:             runtimeTracker, EffectiveConfig: &cfg, EmitDiscoveryEvents: outputs.Emit,
 		}); err != nil {
 			fmt.Fprintf(os.Stderr, "web ui start failed: %v\n", err)
 			os.Exit(2)
@@ -176,6 +178,7 @@ func main() {
 			ConfigPath:              resolvedConfigPath,
 			EndpointsPath:           resolvedEndpointsPath,
 			RootDir:                 root,
+			DiscoveryScriptPath:     *discoveryPath,
 			Version:                 buildinfo.Version,
 			CollectorID:             collectorID,
 			CollectorHost:           collectorHost,
@@ -194,6 +197,7 @@ func main() {
 			ConfigPath:              resolvedConfigPath,
 			EndpointsPath:           resolvedEndpointsPath,
 			RootDir:                 root,
+			DiscoveryScriptPath:     *discoveryPath,
 			Version:                 buildinfo.Version,
 			CollectorID:             collectorID,
 			CollectorHost:           collectorHost,

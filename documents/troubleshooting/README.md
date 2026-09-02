@@ -75,7 +75,7 @@ This validates the executable's configuration, endpoint inventory, and scheduler
 
 ## Why does discovery require a default gateway for a remote target?
 
-It should not. Ping Monitor v5.11.0 evaluated the local adapter before it evaluated an explicit discovery target, so isolated scanners and statically routed hosts could fail before scanning. Ping Monitor v5.11.1 corrects that ordering and makes automatic interface selection route-aware and ambiguity-safe.
+It should not. Ping Monitor v5.11.0 evaluated the local adapter before it evaluated an explicit discovery target, so isolated scanners and statically routed hosts could fail before scanning. Ping Monitor v5.11.1 corrected the script, but an older adjacent script could still override the embedded fix after an executable-only upgrade. Ping Monitor v5.11.2 corrects both the network-selection logic and the upgrade path by making its version-matched embedded script authoritative by default.
 
 Use [Troubleshooting 0003](discovery-no-default-gateway-0003.md) to identify the affected script, upgrade the standalone and embedded copies correctly, verify explicit-target behavior, and collect sanitized route evidence if automatic local discovery remains ambiguous.
 
